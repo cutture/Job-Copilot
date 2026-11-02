@@ -16,6 +16,7 @@ def run_once() -> bool:
         ).fetchone()
         if job is None:
             return False
+        # ponytail: an unknown kind blocks the queue; add failed-job handling with the second kind.
         if job["kind"] != "process_posting":
             raise ValueError(f"Unknown job kind: {job['kind']}")
         conn.execute(

@@ -59,6 +59,27 @@ describe("pasting a Job Posting", () => {
     );
   });
 
+  it("clears the text and doesn't invite a retry when only the refresh fails", async () => {
+    let lists = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === "POST") return new Response("{}", { status: 201 });
+        lists += 1;
+        return lists === 1 ? new Response("[]") : new Response("{}", { status: 500 });
+      }),
+    );
+    render(<App />);
+    await screen.findByText("No Job Postings yet.");
+    const field = screen.getByLabelText<HTMLTextAreaElement>("Paste a Job Posting");
+
+    fireEvent.change(field, { target: { value: "Saved once" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add posting" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("was saved");
+    expect(field.value).toBe("");
+  });
+
   it("shows an error and keeps the text when saving fails", async () => {
     vi.stubGlobal(
       "fetch",

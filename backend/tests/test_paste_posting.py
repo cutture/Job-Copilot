@@ -58,8 +58,12 @@ def test_a_person_sees_only_their_own_postings(client: TestClient) -> None:
     app.dependency_overrides[current_user_id] = lambda: other
     try:
         assert client.get("/api/job-postings").json() == []
+        client.post("/api/job-postings", json={"text": "Other person's posting"})
+        assert len(client.get("/api/job-postings").json()) == 1
     finally:
         app.dependency_overrides.clear()
+
+    assert [p["text"] for p in client.get("/api/job-postings").json()] == [POSTING]
 
 
 def test_every_table_carries_a_user_id() -> None:

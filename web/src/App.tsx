@@ -38,10 +38,16 @@ export function App() {
         body: JSON.stringify({ text }),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      setPostings(await fetchPostings());
-      setText("");
     } catch {
       setError("We couldn't save this posting. Your text is still here, so try again.");
+      setSaving(false);
+      return;
+    }
+    setText("");
+    try {
+      setPostings(await fetchPostings());
+    } catch {
+      setError("Your posting was saved, but we couldn't refresh the list. Try refreshing the page.");
     } finally {
       setSaving(false);
     }
@@ -49,7 +55,7 @@ export function App() {
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
-      <h1>Job listings</h1>
+      <h1>Job Copilot</h1>
       <form onSubmit={addPosting}>
         <label htmlFor="posting" style={{ display: "block", fontWeight: 600 }}>
           Paste a Job Posting
