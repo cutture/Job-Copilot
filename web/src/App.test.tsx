@@ -59,6 +59,28 @@ describe("pasting a Job Posting", () => {
     );
   });
 
+  it("updates the title by itself once the worker has processed the posting", async () => {
+    const processed = { ...posting, title: "GenAI Developer at Northwind Labs", status: "received" };
+    const fetchMock = respondWith([[], [posting], [processed]]);
+    render(<App />);
+    await screen.findByText("No Job Postings yet.");
+
+    fireEvent.change(screen.getByLabelText("Paste a Job Posting"), {
+      target: { value: "Senior GenAI Engineer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add posting" }));
+
+    expect(await screen.findByText("Working on the title…")).toBeTruthy();
+    expect(
+      await screen.findByText("GenAI Developer at Northwind Labs", {}, { timeout: 4000 }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Working on the title…")).toBeNull();
+
+    const callsWhenDone = fetchMock.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(fetchMock.mock.calls.length).toBe(callsWhenDone);
+  }, 10000);
+
   it("clears the text and doesn't invite a retry when only the refresh fails", async () => {
     let lists = 0;
     vi.stubGlobal(

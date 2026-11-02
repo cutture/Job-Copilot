@@ -9,6 +9,8 @@ type JobPosting = {
   created_at: string;
 };
 
+const REFRESH_MS = 2000;
+
 async function fetchPostings(): Promise<JobPosting[]> {
   const response = await fetch("/api/job-postings");
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -26,6 +28,19 @@ export function App() {
       .then(setPostings)
       .catch(() => setError("We couldn't load your Job Postings. Try refreshing the page."));
   }, []);
+
+  const processing = postings?.some((posting) => posting.status === "queued") ?? false;
+
+  useEffect(() => {
+    if (!processing) return;
+    // A failed refresh just tries again on the next tick.
+    const timer = setInterval(() => {
+      fetchPostings()
+        .then(setPostings)
+        .catch(() => {});
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [processing]);
 
   async function addPosting(event: FormEvent) {
     event.preventDefault();
@@ -84,6 +99,7 @@ export function App() {
         {postings?.map((posting) => (
           <li key={posting.id}>
             <strong>{posting.title}</strong> <span>{posting.source}</span>
+            {posting.status === "queued" && <em> Working on the title…</em>}
           </li>
         ))}
       </ul>
