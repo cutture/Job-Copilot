@@ -14,6 +14,10 @@ _Avoid_: Job, listing, ad, vacancy
 Where a Job Posting came from, such as an employer's job board, a job feed, or the Manual Source.
 _Avoid_: Provider, board, site
 
+**Search Window**:
+The maximum age, 15 days from the search date, of a posting a search can add.
+_Avoid_: Date range, freshness limit
+
 **Watchlist**:
 The employers a person has chosen to follow by adding their careers page.
 _Avoid_: Target list, favourites
