@@ -126,16 +126,17 @@ def test_a_failed_model_call_keeps_the_posting_and_clears_the_queue(
     assert worker.run_once() is False
 
 
-def test_a_blank_model_answer_keeps_the_pasted_title(
+def test_a_blank_model_answer_is_shown_as_unavailable_and_keeps_the_pasted_title(
     client: TestClient, provider: FakeProvider
 ) -> None:
     provider.text = " \n "
+    provider.output_tokens = 60
     client.post("/api/job-postings", json={"text": POSTING})
 
     worker.run_once()
 
     listed = client.get("/api/job-postings").json()[0]
-    assert (listed["title"], listed["status"]) == ("Senior GenAI Engineer", "received")
+    assert (listed["title"], listed["status"]) == ("Senior GenAI Engineer", "model_unavailable")
 
 
 def test_control_characters_in_a_model_answer_are_removed(
