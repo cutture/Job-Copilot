@@ -53,7 +53,8 @@ def _process_posting(user_id: UUID, posting_id: str) -> None:
         raise ValueError("The model returned no title")
     with connect() as conn:
         conn.execute(
-            "UPDATE job_postings SET status = 'received', title = %s WHERE id = %s AND user_id = %s",
+            """UPDATE job_postings SET status = 'received', title = %s
+               WHERE id = %s AND user_id = %s""",
             (title, posting_id, user_id),
         )
 
