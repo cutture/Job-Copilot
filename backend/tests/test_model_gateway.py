@@ -136,7 +136,7 @@ def test_provider_errors_and_logs_never_contain_the_text(
         ask(HAIKU, DataClass.PERSONAL, RESUME_TEXT)
 
     assert RESUME_TEXT not in str(raised.value)
-    assert raised.value.__cause__ is None and raised.value.__suppress_context__
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
     assert RESUME_TEXT not in caplog.text
 
 
@@ -203,7 +203,8 @@ def test_a_tracing_failure_does_not_lose_the_answer(
     monkeypatch.setattr(gateway, "send_trace", broken)
 
     assert ask(HAIKU, DataClass.PERSONAL).text == provider.text
-    assert calls()[0][4] is None
+    # A failed send may still have been delivered, so keep the ID for later deletion.
+    assert calls()[0][4] is not None
 
 
 def test_the_provider_adapter_reads_litellm_responses(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,3 +219,17 @@ def test_the_provider_adapter_reads_litellm_responses(monkeypatch: pytest.Monkey
 
     assert answer.text == "Adapter answer"
     assert answer.input_tokens > 0
+
+
+def test_the_cost_is_recorded_before_tracing_can_fail(
+    provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://eu.langfuse.example.com")
+    seen: list[int] = []
+    monkeypatch.setattr(gateway, "send_trace", lambda *_: seen.append(len(calls())))
+
+    ask(HAIKU, DataClass.PERSONAL)
+
+    assert seen == [1]

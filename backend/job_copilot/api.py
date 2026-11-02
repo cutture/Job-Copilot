@@ -29,9 +29,9 @@ class PastedPosting(BaseModel):
     @field_validator("text")
     @classmethod
     def not_blank(cls, value: str) -> str:
-        if not value.strip():
+        if not value.replace(chr(0), "").strip():
             raise ValueError("Paste the Job Posting text")
-        return value
+        return value.replace(chr(0), "")  # Postgres can't store NUL characters.
 
 
 class JobPosting(BaseModel):

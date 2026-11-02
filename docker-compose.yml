@@ -1,8 +1,10 @@
 # Local mode: only the dashboard is published, and only to this machine.
+x-database-url: &database-url postgresql://job_copilot:${POSTGRES_PASSWORD:-job_copilot}@db:5432/job_copilot
+
 x-backend: &backend
   build: ./backend
   environment:
-    DATABASE_URL: postgresql://job_copilot:${POSTGRES_PASSWORD:-job_copilot}@db:5432/job_copilot
+    DATABASE_URL: *database-url
   restart: unless-stopped
 
 services:
@@ -38,7 +40,7 @@ services:
     <<: *backend
     command: python -m job_copilot.worker
     environment:
-      DATABASE_URL: postgresql://job_copilot:${POSTGRES_PASSWORD:-job_copilot}@db:5432/job_copilot
+      DATABASE_URL: *database-url
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}

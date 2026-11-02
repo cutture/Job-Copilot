@@ -1,6 +1,7 @@
 from uuid import UUID
 
 import psycopg
+import pytest
 from fastapi.testclient import TestClient
 
 from job_copilot import worker
@@ -135,3 +136,54 @@ def test_a_blank_model_answer_keeps_the_pasted_title(
 
     listed = client.get("/api/job-postings").json()[0]
     assert (listed["title"], listed["status"]) == ("Senior GenAI Engineer", "received")
+
+
+def test_control_characters_in_a_model_answer_are_removed(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    provider.text = "Title\x00 with\x07 controls"
+    client.post("/api/job-postings", json={"text": POSTING})
+
+    worker.run_once()
+
+    listed = client.get("/api/job-postings").json()[0]
+    assert (listed["title"], listed["status"]) == ("Title with controls", "received")
+
+
+def test_nul_characters_in_pasted_text_are_removed(client: TestClient) -> None:
+    created = client.post("/api/job-postings", json={"text": "Engineer\x00 role"})
+
+    assert created.status_code == 201
+    assert created.json()["text"] == "Engineer role"
+
+
+def test_an_unexpected_error_after_a_model_call_is_not_retried(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(_: str) -> str:
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(worker, "_clean_title", broken)
+    client.post("/api/job-postings", json={"text": POSTING})
+
+    assert worker.run_once() is True
+
+    assert client.get("/api/job-postings").json()[0]["status"] == "model_unavailable"
+    assert worker.run_once() is False
+    assert len(provider.received) == 1
+
+
+def test_an_unknown_job_kind_does_not_block_the_queue(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        conn.execute(
+            """INSERT INTO jobs (user_id, kind, payload)
+               VALUES ('00000000-0000-0000-0000-000000000001', 'mystery', '{}')"""
+        )
+    client.post("/api/job-postings", json={"text": POSTING})
+
+    assert worker.run_once() is True
+    assert worker.run_once() is True
+
+    assert client.get("/api/job-postings").json()[0]["status"] == "received"

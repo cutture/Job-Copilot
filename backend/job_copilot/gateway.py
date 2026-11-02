@@ -85,7 +85,7 @@ def call_provider(model: str, messages: list[dict[str, str]], max_tokens: int) -
 
     litellm.suppress_debug_info = True
     litellm.telemetry = False
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
     response: Any = litellm.completion(
         model=model, messages=messages, max_tokens=max_tokens, timeout=CALL_TIMEOUT_SECONDS
     )
@@ -155,15 +155,11 @@ def _check_cap(
         raise CapReached("The monthly paid API cap has been reached")
 
 
-def _trace(settings: TraceSettings | None, event: dict[str, Any]) -> str | None:
-    if settings is None:
-        return None
+def _trace(settings: TraceSettings, event: dict[str, Any]) -> None:
     try:
         send_trace(settings, event)
     except Exception as error:  # Tracing must never lose an answer that was paid for.
         log.warning("Trace not sent: %s", type(error).__name__)
-        return None
-    return str(event["trace_id"])
 
 
 def complete(
@@ -182,33 +178,41 @@ def complete(
         _check_cap(user_id, rule, messages, max_output_tokens)
 
     started = time.monotonic()
+    failure = ""
     try:
         answer = call_provider(model, messages, max_output_tokens)
     except Exception as error:
+        failure = type(error).__name__
+    if failure:
         # Provider errors can quote the request, so only the error's type goes any further.
-        log.warning("Model call failed: step=%s model=%s %s", step, model, type(error).__name__)
-        raise ModelUnavailable(f"{model} failed: {type(error).__name__}") from None
+        # Raising out here keeps the original error off this exception's context too.
+        log.warning("Model call failed: step=%s model=%s %s", step, model, failure)
+        raise ModelUnavailable(f"{model} failed: {failure}")
 
     cost = _cost(rule, answer.input_tokens, answer.output_tokens)
-    trace_id = _trace(
-        trace_settings(),
-        {
-            "trace_id": str(uuid4()),
-            "user_id": str(user_id),
-            "step": step,
-            "model": model,
-            "input_tokens": answer.input_tokens,
-            "output_tokens": answer.output_tokens,
-            "cost_usd": str(cost),
-            "seconds": round(time.monotonic() - started, 3),
-        },
-    )
+    settings = trace_settings()
+    # A failed send may still have been delivered, so the ID is kept for later deletion.
+    trace_id = str(uuid4()) if settings else None
     with connect() as conn:
         conn.execute(
             """INSERT INTO model_calls
                (user_id, model, step, input_tokens, output_tokens, cost_usd, trace_id)
                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
             (user_id, model, step, answer.input_tokens, answer.output_tokens, cost, trace_id),
+        )
+    if settings:
+        _trace(
+            settings,
+            {
+                "trace_id": trace_id,
+                "user_id": str(user_id),
+                "step": step,
+                "model": model,
+                "input_tokens": answer.input_tokens,
+                "output_tokens": answer.output_tokens,
+                "cost_usd": str(cost),
+                "seconds": round(time.monotonic() - started, 3),
+            },
         )
     log.info("Model call done: step=%s model=%s trace=%s", step, model, trace_id)
     return Completion(answer.text, cost, trace_id)
