@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>PROTOTYPE: Application Pack review</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;color:#1f2933;background:#f4f5f7;padding-bottom:190px}
+header{background:#fff;border-bottom:1px solid #d9dde3;padding:12px 20px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+h1{font-size:17px;margin:0}h2{font-size:15px;margin:0 0 8px}h3{font-size:14px;margin:14px 0 4px}
+.badge{font-size:12px;font-weight:700;padding:2px 8px;border-radius:10px;background:#fff3c4;color:#6b4e00}
+.warn{background:#fdecea;color:#8a1c12}.ok{background:#dff5e3;color:#14622a}
+main{padding:16px 20px;max-width:1280px;margin:auto}.card{background:#fff;border:1px solid #d9dde3;border-radius:8px;padding:14px;margin-bottom:12px}
+.cols{display:grid;grid-template-columns:3fr 2fr;gap:14px;align-items:start}.sticky{position:sticky;top:10px}
+button{font:inherit;font-size:13px;padding:4px 10px;border:1px solid #9aa5b1;border-radius:6px;background:#fff;cursor:pointer}
+button.primary{background:#1f5fbf;border-color:#1f5fbf;color:#fff}button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,mark:focus-visible{outline:3px solid #f0a500;outline-offset:1px}
+.tabs button[aria-selected=true]{background:#1f2933;color:#fff}.tabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+mark{background:#e3edff;border-bottom:2px solid #1f5fbf;cursor:pointer;padding:0 2px;color:inherit}
+mark.self{background:#fff3c4;border-color:#b58900}mark.sel{outline:2px solid #1f2933}
+.doc{font-family:Georgia,serif;max-width:680px}.doc h4{margin:12px 0 2px;border-bottom:1px solid #9aa5b1;font-size:14px}
+.doc ul{margin:4px 0;padding-left:20px}.quote{border-left:3px solid #9aa5b1;padding-left:8px;color:#3e4c59;margin:6px 0}
+.removed{background:#fdecea;border:1px solid #f0b8b2;border-radius:8px;padding:10px 14px;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid #e4e7eb}.row:first-child{border-top:0}
+table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:8px;border-top:1px solid #e4e7eb;vertical-align:top}th{font-size:13px}
+.muted{color:#52606d;font-size:13px}.bar{position:fixed;bottom:0;left:0;right:0;background:#1f2933;color:#fff;padding:8px 14px;z-index:5}
+.bar button{margin-right:6px}.bar button[aria-pressed=true]{background:#f0a500;border-color:#f0a500;font-weight:700}
+pre{background:#111;color:#b6f2c0;margin:6px 0 0;padding:6px 8px;font-size:12px;max-height:88px;overflow:auto;white-space:pre-wrap}
+@media(max-width:800px){.cols{grid-template-columns:1fr}}
+</style></head><body>
+<header><span class="badge">PROTOTYPE: fake data, nothing is saved</span><h1>Senior GenAI Engineer at Northwind Labs (invented)</h1><span class="badge ok">High</span><span class="muted">Candidate: Sam Rivera (invented)</span></header>
+<main id="app"></main>
+<div class="bar" role="region" aria-label="Variant switcher"><div id="sw"></div><pre id="state" aria-label="Current state"></pre></div>
+<script>
+const CLAIMS={
+ c1:{text:"Built a LangGraph pipeline that drafts support replies",where:"Resume",type:"direct",src:"GitHub: srivera/support-drafter, README",quote:"LangGraph workflow that drafts replies for human review.",req:"Production LLM experience"},
+ c2:{text:"5 years of Python",where:"Resume",type:"direct",src:"Resume: Python Developer, 2021 to present",quote:"Python Developer, Jan 2021 to present",req:"3+ years of Python"},
+ c3:{text:"Ran evaluations with DeepEval",where:"Resume",type:"self",src:"Profile entry (self-reported)",quote:"I set up DeepEval for my team's chatbot.",req:"Experience evaluating LLM output"},
+ c4:{text:"my support-drafter project, where people review every draft",where:"Cover letter",type:"direct",src:"GitHub: srivera/support-drafter, README",quote:"Every draft waits for human review.",req:"Production LLM experience"},
+ c5:{text:"Python, including FastAPI",where:"Form answer",type:"direct",src:"GitHub: srivera/support-drafter, pyproject.toml",quote:"fastapi = \"^0.115\"",req:"3+ years of Python"}
+};
+const REMOVED=[
+ {id:"r1",text:"Reduced support costs by 40%",why:"No Evidence mentions a cost figure."},
+ {id:"r2",text:"Led a team of six engineers",why:"Evidence shows team membership, not leadership."}
+];
+const REQS=[
+ {name:"Production LLM experience",kind:"Must-have",result:"Met",claims:["c1","c4"]},
+ {name:"3+ years of Python",kind:"Must-have",result:"Met",claims:["c2","c5"]},
+ {name:"Experience evaluating LLM output",kind:"Must-have",result:"Met (self-reported)",claims:["c3"]},
+ {name:"Kubernetes",kind:"Nice-to-have",result:"No Evidence found",claims:[]}
+];
+const ANSWERS=[
+ {q:"Full name",a:"Sam Rivera",k:"profile"},{q:"Email",a:"sam@example.com",k:"profile"},
+ {q:"Which languages do you use most?",a:"[c5]",k:"claim"},
+ {q:"Are you authorized to work in the US?",a:"Yes (Profile field)",k:"profile"},
+ {q:"Gender and ethnicity (voluntary)",a:"",k:"person"},
+ {q:"Attach resume",a:"",k:"file"}
+];
+const S={variant:new URLSearchParams(location.search).get("v")||"a",tab:"Resume",selected:"c1",seen:{},edited:{},removedHandled:{},reviewed:false,submitted:false,copied:null,step:0};
+const VARS={a:"A: Document + Evidence panel",b:"B: Claim by claim",c:"C: Requirement coverage"};
+const esc=s=>String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+const m=id=>`<mark tabindex="0" role="button" data-c="${id}" class="${CLAIMS[id].type=="self"?"self":""} ${S.selected==id?"sel":""}">${esc(CLAIMS[id].text)}</mark>`;
+const RESUME=()=>`<div class="doc"><b style="font-size:18px">Sam Rivera</b><br>sam@example.com · Remote, US<h4>Skills</h4>${m("c2")}, LangGraph, FastAPI, Postgres<h4>Experience</h4><b>Python Developer</b>, Example Co, Jan 2021 to present<ul><li>${m("c1")}</li><li>${m("c3")}</li></ul><h4>Education</h4>BSc Computer Science, Example University</div><p class="muted">One column, no tables or images, so applicant tracking systems can read it.</p>`;
+const COVER=()=>`<div class="doc"><p>Dear Northwind Labs hiring team,</p><p>Your posting asks for production LLM experience. The closest example is ${m("c4")}. I'd bring the same habit of keeping a person in the loop to your team.</p><p>Sincerely,<br>Sam Rivera</p></div><p class="muted">Three short paragraphs at most. Every factual claim links to Evidence.</p>`;
+const ANS=()=>ANSWERS.map((x,i)=>`<div class="row"><div><b>${esc(x.q)}</b><br>${x.k=="claim"?m("c5"):x.k=="person"?'<span class="muted">Left for you: not Evidence-backed, so never filled in.</span>':x.k=="file"?'<span class="muted">Attach the downloaded resume yourself.</span>':esc(x.a)}</div>${x.k=="person"||x.k=="file"?"":`<button data-copy="${i}">${S.copied===i?"Copied":"Copy"}</button>`}</div>`).join("");
+const DOCS={Resume:RESUME,"Cover letter":COVER,"Form answers":ANS};
+const evidence=id=>{const c=CLAIMS[id];return `<h2>Why this claim is here</h2><p>${esc(c.text)}</p><span class="badge ${c.type=="self"?"":"ok"}">${c.type=="self"?"Self-reported":"Direct Evidence"}</span><h3>Evidence</h3><div class="muted">${esc(c.src)}</div><div class="quote">${esc(c.quote)}</div><h3>Answers this requirement</h3><div>${esc(c.req)}</div><p><button data-edit="${id}">${S.edited[id]?"Edit recorded":"Edit or remove"}</button></p>`};
+const removed=()=>`<div class="removed"><h2>${REMOVED.length} unsupported claims removed</h2>${REMOVED.map(r=>`<div class="row"><div><s>${esc(r.text)}</s><br><span class="muted">${esc(r.why)}</span></div><button data-rem="${r.id}">${S.removedHandled[r.id]?"Evidence form opened":"Add Evidence"}</button></div>`).join("")}<p class="muted">A removed claim only comes back if you add Evidence for it and verification passes.</p></div>`;
+const actions=()=>{const n=Object.keys(CLAIMS).length,seen=Object.keys(S.seen).length;return `<div class="card"><h2>Finish</h2><p class="muted">${seen} of ${n} claims opened. Opening them isn't required.</p><label><input type="checkbox" id="rev" ${S.reviewed?"checked":""}> I've reviewed this Application Pack</label><p><button id="dl1" ${S.reviewed?"":"disabled"}>Download resume (DOCX)</button> <button id="dl2" ${S.reviewed?"":"disabled"}>Download resume (PDF)</button> <button id="dl3" ${S.reviewed?"":"disabled"}>Download cover letter (DOCX)</button></p><p><button ${S.reviewed?"":"disabled"}>Open employer's application page</button> <button class="primary" id="sub" ${S.reviewed?"":"disabled"}>${S.submitted?"Marked as Submitted":"I submitted it on their site"}</button></p><p class="muted">Job Copilot never submits for you.</p></div>`};
+const tabs=()=>`<div class="tabs" role="tablist">${Object.keys(DOCS).map(t=>`<button role="tab" aria-selected="${S.tab==t}" data-tab="${t}">${t}</button>`).join("")}</div>`;
+const A=()=>`${removed()}<div class="cols"><div class="card">${tabs()}${DOCS[S.tab]()}</div><div class="sticky"><div class="card">${evidence(S.selected)}</div>${actions()}</div></div>`;
+const B=()=>{const ids=Object.keys(CLAIMS),done=S.step>=ids.length,id=ids[S.step];return `<div class="cols"><div>${done?`<div class="card"><h2>All claims checked</h2><p>Now read the finished documents once.</p></div>${removed()}`:`<div class="card"><p class="muted">Claim ${S.step+1} of ${ids.length}, in the ${esc(CLAIMS[id].where)}</p><p style="font-size:20px;margin:6px 0">${esc(CLAIMS[id].text)}</p><span class="badge ${CLAIMS[id].type=="self"?"":"ok"}">${CLAIMS[id].type=="self"?"Self-reported":"Direct Evidence"}</span><h3>Evidence</h3><div class="muted">${esc(CLAIMS[id].src)}</div><div class="quote">${esc(CLAIMS[id].quote)}</div><p><button class="primary" id="ok">Keep</button> <button data-edit="${id}" id="ed">Edit</button> <button id="back" ${S.step?"":"disabled"}>Back</button></p></div>`}<div class="card">${tabs()}${DOCS[S.tab]()}</div></div><div class="sticky">${actions()}</div></div>`};
+const C=()=>`${removed()}<div class="card"><h2>What the posting asks for, and how your Pack answers it</h2><table><tr><th>Requirement</th><th>Result</th><th>Where the Pack uses it</th><th>Evidence</th></tr>${REQS.map(r=>`<tr><td><b>${esc(r.name)}</b><br><span class="muted">${r.kind}</span></td><td>${esc(r.result)}</td><td>${r.claims.length?r.claims.map(c=>`<div>${esc(CLAIMS[c].where)}: ${m(c)}</div>`).join(""):'<span class="muted">Not claimed</span>'}</td><td>${r.claims.length?r.claims.map(c=>`<div class="muted">${esc(CLAIMS[c].src)}</div>`).join(""):'<button data-rem="add">Add to Profile</button>'}</td></tr>`).join("")}</table></div><div class="cols"><div class="card">${tabs()}${DOCS[S.tab]()}</div><div class="sticky">${actions()}</div></div>`;
+const V={a:A,b:B,c:C};
+function render(){if(!V[S.variant])S.variant="a";S.seen[S.selected]=true;
+ document.getElementById("app").innerHTML=V[S.variant]();
+ document.getElementById("sw").innerHTML=Object.entries(VARS).map(([k,l])=>`<button aria-pressed="${S.variant==k}" data-v="${k}">${l}</button>`).join("");
+ document.getElementById("state").textContent=JSON.stringify({variant:S.variant,selectedClaim:S.selected,claimsOpened:Object.keys(S.seen),edited:Object.keys(S.edited),removedClaimsActedOn:Object.keys(S.removedHandled),reviewed:S.reviewed,submitted:S.submitted});}
+document.addEventListener("click",e=>{const t=e.target,d=t.dataset||{};
+ if(d.v){S.variant=d.v;history.replaceState(null,"","?v="+d.v)}
+ else if(d.tab)S.tab=d.tab;else if(d.c)S.selected=d.c;else if(d.edit)S.edited[d.edit]=true;else if(d.rem)S.removedHandled[d.rem]=true;
+ else if(d.copy!==undefined){S.copied=+d.copy;const v=ANSWERS[+d.copy];navigator.clipboard&&navigator.clipboard.writeText(v.k=="claim"?CLAIMS.c5.text:v.a).catch(()=>{})}
+ else if(t.id=="rev"){S.reviewed=t.checked;if(!S.reviewed)S.submitted=false}else if(t.id=="sub")S.submitted=true;
+ else if(t.id=="ok"){const ids=Object.keys(CLAIMS);S.seen[ids[S.step]]=true;S.step++;if(S.step<ids.length)S.selected=ids[S.step]}
+ else if(t.id=="back"){S.step--;S.selected=Object.keys(CLAIMS)[S.step]}
+ else return;render()});
+document.addEventListener("keydown",e=>{if((e.key=="Enter"||e.key==" ")&&e.target.dataset&&e.target.dataset.c){e.preventDefault();e.target.click()}});
+render();
+</script></body></html>
