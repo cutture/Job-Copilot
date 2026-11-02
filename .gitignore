@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Personal data and local settings
+*.pdf
+*.doc
+*.docx
+*.rtf
+*.odt
+*.pages
+.claude/settings.local.json
