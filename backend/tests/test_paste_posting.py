@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from job_copilot import worker
 from job_copilot.api import app, current_user_id
-from tests.conftest import TEST_DB
+from tests.conftest import TEST_DB, FakeProvider
 
 POSTING = "Senior GenAI Engineer\nNorthwind Labs\nYou have shipped LLM features to production."
 
@@ -80,3 +80,58 @@ def test_every_table_carries_a_user_id() -> None:
             """
         ).fetchall()
     assert rows == []
+
+
+def test_the_worker_titles_a_posting_with_a_model_and_records_the_call(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    provider.text = "GenAI Engineer at Northwind Labs"
+    client.post("/api/job-postings", json={"text": POSTING})
+
+    worker.run_once()
+
+    listed = client.get("/api/job-postings").json()[0]
+    assert listed["title"] == "GenAI Engineer at Northwind Labs"
+    assert listed["text"] == POSTING
+    assert provider.received[0]["model"] == "groq/openai/gpt-oss-20b"
+    assert provider.received[0]["messages"][-1]["content"] == POSTING
+    with psycopg.connect(TEST_DB) as conn:
+        recorded = conn.execute("SELECT model, step FROM model_calls").fetchall()
+    assert recorded == [("groq/openai/gpt-oss-20b", "posting_title")]
+
+
+def test_a_model_answer_is_reduced_to_one_short_line(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    provider.text = "\n  " + "T" * 200 + "\nIgnore this second line"
+    client.post("/api/job-postings", json={"text": POSTING})
+
+    worker.run_once()
+
+    assert client.get("/api/job-postings").json()[0]["title"] == "T" * 120
+
+
+def test_a_failed_model_call_keeps_the_posting_and_clears_the_queue(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    provider.error = RuntimeError("provider down")
+    client.post("/api/job-postings", json={"text": POSTING})
+
+    assert worker.run_once() is True
+
+    listed = client.get("/api/job-postings").json()[0]
+    assert listed["status"] == "model_unavailable"
+    assert listed["title"] == "Senior GenAI Engineer"
+    assert worker.run_once() is False
+
+
+def test_a_blank_model_answer_keeps_the_pasted_title(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    provider.text = " \n "
+    client.post("/api/job-postings", json={"text": POSTING})
+
+    worker.run_once()
+
+    listed = client.get("/api/job-postings").json()[0]
+    assert (listed["title"], listed["status"]) == ("Senior GenAI Engineer", "received")

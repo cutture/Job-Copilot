@@ -4,6 +4,8 @@ A self-hosted job-search assistant. A person reviews everything and submits ever
 
 ## Run it
 
+Copy `.env.example` to `.env` and add your keys, then:
+
 ```sh
 docker compose up --build
 ```

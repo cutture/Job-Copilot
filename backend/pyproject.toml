@@ -5,6 +5,8 @@ requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.13",
     "fastapi>=0.115",
+    "httpx>=0.28.1",
+    "litellm>=1.106.6",
     "psycopg[binary]>=3.2",
     "sqlalchemy>=2.0",
     "uvicorn>=0.30",
