@@ -230,3 +230,6 @@ __marimo__/
 .claude/worktrees/
 .private/
 .private-terms
+
+# Web app
+node_modules/
