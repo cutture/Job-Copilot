@@ -227,3 +227,6 @@ __marimo__/
 *.odt
 *.pages
 .claude/settings.local.json
+.claude/worktrees/
+.private/
+.private-terms

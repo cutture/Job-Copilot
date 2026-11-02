@@ -1,0 +1,40 @@
+#!/bin/sh
+# Blocks a push whose new commits contain a term from .private-terms (gitignored, one term per line).
+# Scans added lines, file paths and commit messages. Author details are left out, because the
+# owner's commit email may be a listed term.
+# Enable once per clone: git config core.hooksPath .githooks
+terms=$(git rev-parse --show-toplevel)/.private-terms
+if [ ! -s "$terms" ]; then
+  echo "pre-push: no .private-terms file, privacy check skipped" >&2
+  exit 0
+fi
+remote=$1
+zero=0000000000000000000000000000000000000000
+status=0
+patterns=$(mktemp)
+diffs=$(mktemp)
+messages=$(mktemp)
+paths=$(mktemp)
+tr -d '\r' < "$terms" | tr 'A-Z' 'a-z' | grep -v '^[[:space:]]*$' > "$patterns"
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue
+  if ! git log -p -U0 --text --no-renames --diff-merges=first-parent --format= "$local_sha" --not --remotes="$remote" > "$diffs" \
+    || ! git log --format=%B "$local_sha" --not --remotes="$remote" > "$messages"     || ! git -c core.quotePath=false log --format= --name-only --no-renames --diff-merges=first-parent "$local_sha" --not --remotes="$remote" > "$paths"; then
+    echo "pre-push: could not read commits for $local_ref, so the push is blocked" >&2
+    status=1
+    continue
+  fi
+  # Lowercases instead of grep -i, because grep -iF aborts in Git for Windows.
+  hits=$( { grep -a '^+' "$diffs"; cat "$messages" "$paths"; } | tr 'A-Z' 'a-z' | grep -aFf "$patterns" )
+  rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "pre-push: privacy check failed to run, so the push is blocked" >&2
+    status=1
+  elif [ -n "$hits" ]; then
+    echo "pre-push: private term found in $local_ref. Matching lines:" >&2
+    echo "$hits" | cut -c1-200 >&2
+    status=1
+  fi
+done
+rm -f "$patterns" "$diffs" "$messages" "$paths"
+exit $status

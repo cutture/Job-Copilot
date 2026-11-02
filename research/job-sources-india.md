@@ -1,13 +1,13 @@
-# Job sources: Pune, India and regional gaps
+# Job sources: target city, India and regional gaps
 
 Research for ticket #7, "Decide: sources for v1". Follows [job-sources-alternatives.md](https://github.com/cutture/Job-Copilot/blob/research/job-sources-alternatives/research/job-sources-alternatives.md). Checked 2026-11-01. Terms change, so re-read them before building an adapter. This is a reading of published terms, not legal advice.
 
 ## Answer
 
-- **No source is CLEAR for Pune office jobs.** The only sources that pass are SILENT: the employer boards, and Adzuna if a keyed call confirms its India API.
+- **No source is CLEAR for office jobs in the target city.** The only sources that pass are SILENT: the employer boards, and Adzuna if a keyed call confirms its India API.
 - **No Indian job board passes.** Naukri, foundit, Shine, Instahyre, Hirist, iimjobs, Cutshort and Internshala all have wording that could bar this use, and I found no job-seeker API from any of them.
-- **Employer boards can filter Pune roles,** but the location is in different fields on each platform, so an adapter must check several. Ashby is the easy one to get wrong: `location` can say "India" with Pune only in the address.
-- **The watchlist is the real work.** These boards only cover employers you name. I found some with Pune roles (below), but no API lists them all.
+- **Employer boards can filter roles in the target city,** but the location is in different fields on each platform, so an adapter must check several. Ashby is the easy one to get wrong: `location` can say "India" with the target city only in the address.
+- **The watchlist is the real work.** These boards only cover employers you name. I found some with roles in the target city (below), but no API lists them all.
 - **No new official source passes for Australia or South East Asia.** SEEK and JobStreet are RISK. I found no official public EURES API.
 
 ## Verdicts
@@ -21,7 +21,7 @@ The use tested is the whole one: a self-hosted tool fetches postings for one per
 
 Quotes come from downloaded page text. Long terms were keyword-searched for automation, API, reuse and AI wording, not read end to end, so a restriction in other words could be missed. "No API found" means my searches and the URLs I tried found none.
 
-## 1. Office jobs in Pune or India
+## 1. Office jobs in the target city or India
 
 ### Passing
 
@@ -42,7 +42,7 @@ Quotes come from downloaded page text. Long terms were keyword-searched for auto
 
 **India coverage, partly confirmed:**
 
-- [adzuna.in](https://web.archive.org/web/20261015044029/https://www.adzuna.in/) exists and advertises "500,000+" jobs. A [January 2026 capture](https://web.archive.org/web/20260102072714/https://www.adzuna.in/pune) showed 13,953 Pune jobs. These are archived site counts, not API counts.
+- [adzuna.in](https://web.archive.org/web/20261015044029/https://www.adzuna.in/) exists and advertises "500,000+" jobs. A January 2026 capture showed 13,953 jobs in the target city. These are archived site counts, not API counts.
 - **Official docs do not list API countries.** [Search docs](https://developer.adzuna.com/docs/search) show only the UK example. A [third-party client](https://glama.ai/mcp/servers/@folathecoder/adzuna-job-search-mcp/blob/2a1dccf28f89db8e9b261456bd103b5108fd6ded/server.py) lists `in`.
 - A keyless call returned HTTP 400 for `in`, `gb` and an invalid `zz`, so it proves nothing. One call with a free key would settle it.
 - **Fit limit:** "we currently only provide a snipped of the job description in the response". The LLM would score a snippet, and the full posting sits behind a link the tool must not scrape.
@@ -59,7 +59,7 @@ Quotes come from downloaded page text. Long terms were keyword-searched for auto
 | [iimjobs](https://www.iimjobs.com/terms) | No API found | "iimjobs.com uses technological means to exclude Robots etc from crawling the website and scraping content." | RISK |
 | [Cutshort](https://cutshort.io/terms) | API exists, for hiring customers | "API and MCP access may be used by the customer for its own genuine hiring requirements"; "You may not use any automated process or service to access and/or use the Service" | RISK |
 | [Internshala](https://internshala.com/terms/) | No API found | "You are expressly prohibited from using automated systems, software, bots, spiders, scripts, or manual processes to access, extract, scrape, crawl, data mine, reproduce, redistribute, or copy any content [...] for purposes including but not limited to, developing, training, fine-tuning, validating, or enhancing machine learning models, large language models (LLMs)". Aimed at building AI, but "not limited to" leaves it open | RISK |
-| [Hasjob](https://hasjob.co/feed) (Hasgeek) | Official Atom feed, free, no key. One read returned 18 entries, with Pune on 4 lines of text | [Hasgeek terms](https://hasgeek.com/about/policy/terms) bar use "to spam, phish, pharm, pretext, spider, crawl, or scrape". Hasjob invites people to "Subscribe to the feed", and I found no feed terms (`hasjob.co/terms` returned 404). The closest call in this table | RISK |
+| [Hasjob](https://hasjob.co/feed) (Hasgeek) | Official Atom feed, free, no key. One read returned 18 entries, with the target city on 4 lines of text | [Hasgeek terms](https://hasgeek.com/about/policy/terms) bar use "to spam, phish, pharm, pretext, spider, crawl, or scrape". Hasjob invites people to "Subscribe to the feed", and I found no feed terms (`hasjob.co/terms` returned 404). The closest call in this table | RISK |
 | [Careerjet](https://www.careerjet.com/partners/api/) | Publisher key. Cost not stated | "Each publisher website requires a unique API key"; `user_ip` and `user_agent` of the triggering user are required. [Publisher page](https://www.careerjet.com/partners/publishers): "Monetize your web traffic", which a private tool has none of. Publisher terms not found | Not verified, poor fit |
 | [TimesJobs](https://www.timesjobs.com/) | No API found | Three guessed terms URLs returned 404, and the homepage returned no readable text | Not verified |
 | [National Career Service](https://www.ncs.gov.in/) | No public API found | `/terms&condition`, `/disclaimer` and `/sitemap` all returned the homepage, which says "Website contents are managed by Ministry of Labour & Employment, Government of India." Terms unread | Not verified |
@@ -67,24 +67,19 @@ Quotes come from downloaded page text. Long terms were keyword-searched for auto
 
 No Wellfound-free alternative passes. Those I found are in the table: Instahyre, Cutshort and Hasjob.
 
-## 2. Filtering Pune roles on employer boards
+## 2. Filtering target city roles on employer boards
 
-**Yes, all five expose usable fields.** One read-only call per board on 2026-11-01. Pune was seen in real data on four platforms. Workable's fields look right, but neither sampled board had a Pune role.
+**Yes, all five expose usable fields.** One read-only call per board on 2026-11-01. The target city was seen in real data on four platforms. Workable's fields look right, but neither sampled board had a the target city role.
 
 | Platform | Boards sampled | Fields | What I saw | Filter rule |
 |---|---|---|---|---|
-| Greenhouse | [SonicWall](https://boards-api.greenhouse.io/v1/boards/sonicwall/jobs), [Showpad](https://boards-api.greenhouse.io/v1/boards/showpad/jobs?content=true) | `location.name`. `offices[]` only with `content=true`. No workplace field seen | SonicWall: 20 of 48 Pune, as "Pune, Maharashtra, India", a trailing-space variant and "... - Remote". Showpad: 6 of 23 as bare "Pune" | Case-insensitive match, trimmed. Treat "Remote" in the text as remote |
-| Lever | [Entrata](https://api.lever.co/v0/postings/entrata?mode=json), [Mindtickle](https://api.lever.co/v0/postings/mindtickle?mode=json) | `categories.location`, `categories.allLocations`, `country`, `workplaceType` | Entrata: 3 of 28 Pune, one each hybrid, onsite and remote. Mindtickle: 16 of 19 had Pune in one of the two fields, and some of those had Bengaluru as `location` | **Check `allLocations` too.** The cleanest of the five, because of `workplaceType` |
-| Ashby | [Blitzy](https://api.ashbyhq.com/posting-api/job-board/blitzy), [Sardine](https://api.ashbyhq.com/posting-api/job-board/sardine) | `location`, `secondaryLocations`, `address.postalAddress`, `isRemote`, `workplaceType` | Blitzy: 5 of 38 Pune. The one inspected had `location` "India", Pune only in `addressLocality`, and `workplaceType` OnSite. Sardine: 1 role had Pune only in the description | **Check the address too.** City-limited remote roles may appear only in the text, so let the LLM catch those |
-| Workable | [Tiger Analytics](https://apply.workable.com/api/v1/widget/accounts/tiger-analytics?details=true), [Vestd](https://apply.workable.com/api/v1/widget/accounts/vestd?details=true) | `city`, `state`, `country`, `locations[].countryCode`, `telecommuting` | Tiger: 4 of 245 India, and the one inspected had an empty `city`. No Pune seen. Vestd: 0 of 2 | Keep India rows with no city for review. **Pune matching unproven** |
-| Recruitee | [Gusti Leder](https://gustileder.recruitee.com/api/offers/), [Metyis](https://metyisag.recruitee.com/api/offers/) | `city`, `state_name`, `country_code`, `locations[]`, `on_site`, `hybrid`, `remote` | Gusti Leder: 1 Pune, 6 `IN` of 75. Metyis: 0 Pune, 7 `IN` of 71. `country` is localised ("Indien") | Use `country_code`, never `country`. Check `locations[]` |
+| Greenhouse | [SonicWall](https://boards-api.greenhouse.io/v1/boards/sonicwall/jobs), [Showpad](https://boards-api.greenhouse.io/v1/boards/showpad/jobs?content=true) | `location.name`. `offices[]` only with `content=true`. No workplace field seen | SonicWall: 20 of 48 the target city, as "the target city, Maharashtra, India", a trailing-space variant and "... - Remote". Showpad: 6 of 23 as bare "the target city" | Case-insensitive match, trimmed. Treat "Remote" in the text as remote |
+| Lever | [Entrata](https://api.lever.co/v0/postings/entrata?mode=json), [Mindtickle](https://api.lever.co/v0/postings/mindtickle?mode=json) | `categories.location`, `categories.allLocations`, `country`, `workplaceType` | Entrata: 3 of 28 the target city, one each hybrid, onsite and remote. Mindtickle: 16 of 19 had the target city in one of the two fields, and some of those had Bengaluru as `location` | **Check `allLocations` too.** The cleanest of the five, because of `workplaceType` |
+| Ashby | [Blitzy](https://api.ashbyhq.com/posting-api/job-board/blitzy), [Sardine](https://api.ashbyhq.com/posting-api/job-board/sardine) | `location`, `secondaryLocations`, `address.postalAddress`, `isRemote`, `workplaceType` | Blitzy: 5 of 38 the target city. The one inspected had `location` "India", the target city only in `addressLocality`, and `workplaceType` OnSite. Sardine: 1 role had the target city only in the description | **Check the address too.** City-limited remote roles may appear only in the text, so let the LLM catch those |
+| Workable | [Tiger Analytics](https://apply.workable.com/api/v1/widget/accounts/tiger-analytics?details=true), [Vestd](https://apply.workable.com/api/v1/widget/accounts/vestd?details=true) | `city`, `state`, `country`, `locations[].countryCode`, `telecommuting` | Tiger: 4 of 245 India, and the one inspected had an empty `city`. No the target city seen. Vestd: 0 of 2 | Keep India rows with no city for review. **the target city matching unproven** |
+| Recruitee | [Gusti Leder](https://gustileder.recruitee.com/api/offers/), [Metyis](https://metyisag.recruitee.com/api/offers/) | `city`, `state_name`, `country_code`, `locations[]`, `on_site`, `hybrid`, `remote` | Gusti Leder: 1 the target city, 6 `IN` of 75. Metyis: 0 the target city, 7 `IN` of 71. `country` is localised ("Indien") | Use `country_code`, never `country`. Check `locations[]` |
 
-Employers with Pune roles, as a starting watchlist. Fit for the owner's roles was not assessed:
-
-- **Seen in the samples above:** SonicWall, Showpad, Entrata, Mindtickle, Blitzy, Gusti Leder.
-- **Search results only, possibly stale:** Zocdoc, Zinnia, Energy Exemplar, Madison Logic, Lynx Analytics, Goken, Brillio, Kingfish Group, Hevo Data.
-
-Large Pune employers can use their own sites, such as [Citi](https://jobs.citi.com/location/pune-jobs/287/1269750-1264418-1259229/4). Those are outside these APIs, and I read no terms for them.
+A starting Watchlist was found and is kept outside this repo, because it would reveal the owner's target city.
 
 ## 3. Australia, South East Asia, Europe and Canada
 
@@ -107,7 +102,7 @@ Regional volume was not measured, so this shows only which sources are allowed. 
 
 | Region | CLEAR | SILENT |
 |---|---|---|
-| Pune office | None | Employer boards, Adzuna |
+| Target city office | None | Employer boards, Adzuna |
 | Remote, India | Jobicy, 4dayweek | Employer boards, Adzuna |
 | Remote, Europe | Jobicy, 4dayweek, Arbetsförmedlingen (Sweden) | Employer boards, Adzuna, NAV (Norway), Reed (UK) |
 | Remote, Australia | Jobicy, 4dayweek | Employer boards, Adzuna |
@@ -122,7 +117,7 @@ Regional volume was not measured, so this shows only which sources are allowed. 
 
 ## Worth one email or one call
 
-1. **Adzuna:** make one keyed call to `/jobs/in/search/1` with `where=Pune`. Then ask about sending snippets to an LLM provider, the "contact a third party" clause, and long-term use on the free tier.
+1. **Adzuna:** make one keyed call to `/jobs/in/search/1` with `where=<city>`. Then ask about sending snippets to an LLM provider, the "contact a third party" clause, and long-term use on the free tier.
 2. **Greenhouse, Ashby, Lever:** written confirmation is the only way to move them from SILENT to CLEAR.
 3. **Hasgeek:** ask whether polling the Hasjob feed counts as crawling.
 
@@ -132,6 +127,6 @@ Regional volume was not measured, so this shows only which sources are allowed. 
 - **Naukri and Instahyre:** live terms unreadable, so these verdicts rest on captures from January 2025 and January 2026.
 - **Unreadable:** TimesJobs, National Career Service, MyCareersFuture, France Travail and APSJobs. Internet Archive lookups for the first three found nothing or were temporarily offline.
 - **Careerjet:** publisher terms not found.
-- **Workable:** no Pune role seen, so matching is unproven on real data.
-- **Probes:** single calls on one day. Counts will change, and Pune was matched by substring, not checked by hand.
+- **Workable:** no target city role seen, so matching is unproven on real data.
+- **Probes:** single calls on one day. Counts will change, and the target city was matched by substring, not checked by hand.
 - **Employers:** each employer's own site terms were not read.
