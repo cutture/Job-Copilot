@@ -1,18 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Matches } from "./Matches";
-import type { Match, RatedPosting, RatingState } from "./Matches";
+import { Matches, Origin } from "./Matches";
+import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches";
 import { Profile } from "./Profile";
+import { Search } from "./Search";
 
-type JobPosting = {
+type JobPosting = PostingOrigin & {
   id: string;
   title: string;
-  source: string;
   status: string;
   posting_type: "employment" | "freelance" | null;
   filter_reason: string | null;
   salary_note: string | null;
-  created_at: string;
   rating_state?: RatingState | null;
   match?: Match | null;
 };
@@ -20,7 +19,7 @@ type JobPosting = {
 function PostingRow({ posting }: { posting: JobPosting }) {
   return (
     <li>
-      <strong>{posting.title}</strong> <span>{posting.source}</span>
+      <strong>{posting.title}</strong> <Origin posting={posting} />
       {posting.posting_type && (
         <>
           {" · "}
@@ -63,6 +62,13 @@ export function App() {
     fetchPostings()
       .then(setPostings)
       .catch(() => setError("We couldn't load your Job Postings. Try refreshing the page."));
+  }, []);
+
+  // A search adds postings as it runs; a failed refresh just waits for the next one.
+  const refreshPostings = useCallback(() => {
+    fetchPostings()
+      .then(setPostings)
+      .catch(() => {});
   }, []);
 
   const processing =
@@ -130,6 +136,7 @@ export function App() {
         </button>
       </nav>
       {view === "profile" ? <Profile key={evidenceDraft} draft={evidenceDraft} /> : <>
+      <Search onProgress={refreshPostings} />
       <form onSubmit={addPosting}>
         <label htmlFor="posting" style={{ display: "block", fontWeight: 600 }}>
           Paste a Job Posting

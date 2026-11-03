@@ -22,6 +22,7 @@ type ProfileData = {
   min_pay: { currency: string | null; yearly: number | null; hourly: number | null }[];
   location_arrangements: string[];
   location_places: string[];
+  search_window_days: number;
   evidence: Evidence[];
 };
 
@@ -36,6 +37,7 @@ type Form = {
   min_pay: PayRow[];
   location_arrangements: string[];
   location_places: string;
+  search_window_days: string;
 };
 
 type PayRow = { currency: string; yearly: string; hourly: string };
@@ -66,6 +68,7 @@ function toForm(profile: ProfileData): Form {
     })),
     location_arrangements: profile.location_arrangements,
     location_places: profile.location_places.join(", "),
+    search_window_days: String(profile.search_window_days),
   };
 }
 
@@ -268,6 +271,7 @@ export function Profile({ draft = "" }: { draft?: string }) {
           })),
         location_arrangements: form.location_arrangements,
         location_places: list(form.location_places),
+        search_window_days: Number(form.search_window_days) || 15,
       }),
     });
     if (response.ok) {
@@ -494,6 +498,17 @@ export function Profile({ draft = "" }: { draft?: string }) {
               <label htmlFor="places">Countries or cities you'd work in</label>
               <input id="places" style={field} value={form.location_places} onChange={set("location_places")} />
               <p style={{ fontSize: 13 }}>Separate items with commas.</p>
+              <label htmlFor="search-window">Search Window, in days</label>
+              <input
+                id="search-window"
+                type="number"
+                min={1}
+                max={15}
+                style={field}
+                value={form.search_window_days}
+                onChange={set("search_window_days")}
+              />
+              <p style={{ fontSize: 13 }}>Searches add postings published up to this many days ago, at most 15.</p>
               <button onClick={save}>Save Profile</button> {saved && <span>Saved.</span>}
             </div>
           )}

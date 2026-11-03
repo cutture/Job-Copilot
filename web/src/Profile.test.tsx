@@ -9,6 +9,7 @@ const baseProfile = {
   work_authorization: null,
   lives_in: null,
   education: null,
+  search_window_days: 15,
   languages: ["English"],
   seniority: null,
   roles: [],
@@ -133,6 +134,7 @@ describe("Profile setup", () => {
 
     fireEvent.change(screen.getByLabelText("Where you live"), { target: { value: "Austin, US" } });
     fireEvent.change(screen.getByLabelText("Education"), { target: { value: "BSc Computer Science" } });
+    fireEvent.change(screen.getByLabelText("Search Window, in days"), { target: { value: "10" } });
     fireEvent.change(screen.getByLabelText("Countries or cities you'd work in"), {
       target: { value: "US, San Francisco" },
     });
@@ -147,6 +149,7 @@ describe("Profile setup", () => {
     const saved = JSON.parse(String(calls.find((call) => call.method === "PUT")!.body));
     expect(saved.lives_in).toBe("Austin, US");
     expect(saved.education).toBe("BSc Computer Science");
+    expect(saved.search_window_days).toBe(10);
     expect(saved.location_places).toEqual(["US", "San Francisco"]);
     expect(saved.location_arrangements).toEqual(["remote", "hybrid"]);
     expect(saved.languages).toEqual(["English"]);

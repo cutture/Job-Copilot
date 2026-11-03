@@ -23,12 +23,20 @@ export type Match = {
   requirements: Requirement[];
 };
 
-export type RatedPosting = {
+export type PostingOrigin = {
+  source: string;
+  employer?: string | null;
+  created_at: string;
+  // The original publish date from the Source; pasted postings have none.
+  posted_on?: string | null;
+  date_provided?: boolean;
+  credit_url?: string | null;
+};
+
+export type RatedPosting = PostingOrigin & {
   id: string;
   title: string;
-  source: string;
   posting_type: "employment" | "freelance" | null;
-  created_at: string;
   match: Match;
 };
 
@@ -44,9 +52,22 @@ const card: CSSProperties = { border: "1px solid #ccc", borderRadius: 8, padding
 const badge: CSSProperties = { fontSize: 12, fontWeight: 700, padding: "1px 8px", borderRadius: 10, marginRight: 4, background: "#e4e7eb" };
 const DAY_MS = 86_400_000;
 
-function age(createdAt: string): string {
-  const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / DAY_MS);
-  return days < 1 ? "Added today" : `Added ${days} ${days === 1 ? "day" : "days"} ago`;
+export function age(posting: PostingOrigin): string {
+  if (posting.date_provided === false) return "Date not provided";
+  const verb = posting.posted_on ? "Posted" : "Added";
+  const days = Math.floor((Date.now() - new Date(posting.posted_on ?? posting.created_at).getTime()) / DAY_MS);
+  return days < 1 ? `${verb} today` : `${verb} ${days} ${days === 1 ? "day" : "days"} ago`;
+}
+
+export function Origin({ posting }: { posting: PostingOrigin }) {
+  const name = posting.employer ? `${posting.employer} on ${posting.source}` : posting.source;
+  return posting.credit_url ? (
+    <a href={posting.credit_url} target="_blank" rel="noreferrer noopener">
+      {name}
+    </a>
+  ) : (
+    <span>{name}</span>
+  );
 }
 
 function Badges({ posting }: { posting: RatedPosting }) {
@@ -67,7 +88,7 @@ function Detail({ posting, onAddToProfile }: { posting: RatedPosting; onAddToPro
       <h2 style={{ marginTop: 0 }}>{posting.title}</h2>
       <Badges posting={posting} />
       <div style={{ fontSize: 13 }}>
-        {posting.source} · {age(posting.created_at)}
+        <Origin posting={posting} /> · {age(posting)}
       </div>
       <ul>
         {match.reasons.map((reason) => (
@@ -146,7 +167,7 @@ export function Matches({
       <b>{posting.title}</b>
       <div>
         <Badges posting={posting} />
-        <span style={{ fontSize: 13 }}>{age(posting.created_at)}</span>
+        <span style={{ fontSize: 13 }}>{age(posting)}</span>
       </div>
       <button aria-label={`View ${posting.title}`} onClick={() => setSelectedId(posting.id)}>
         View

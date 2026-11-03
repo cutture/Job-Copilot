@@ -1,0 +1,27 @@
+{
+  "jobs": [
+    {
+      "id": 4001,
+      "internal_job_id": 9001,
+      "title": "Applied AI Engineer",
+      "updated_at": "2026-11-02T09:00:00-04:00",
+      "first_published": "2026-10-28T10:00:00-04:00",
+      "requisition_id": "AI-1",
+      "location": { "name": "Remote, United States" },
+      "absolute_url": "https://job-boards.greenhouse.io/northwindlabs/jobs/4001",
+      "company_name": "Northwind Labs",
+      "content": "&lt;h2&gt;About the role&lt;/h2&gt;&lt;p&gt;Build retrieval systems with Python &amp;amp; evaluate language models.&lt;/p&gt;&lt;ul&gt;&lt;li&gt;4+ years of Python&lt;/li&gt;&lt;/ul&gt;"
+    },
+    {
+      "id": 4002,
+      "internal_job_id": 9002,
+      "title": "ML Platform Engineer",
+      "updated_at": "2026-11-01T09:00:00-04:00",
+      "location": { "name": "Lisbon, Portugal" },
+      "absolute_url": "https://careers.example.com/jobs?gh_jid=4002",
+      "company_name": "Northwind Labs",
+      "content": "&lt;p&gt;Run the training platform.&lt;/p&gt;"
+    }
+  ],
+  "meta": { "total": 2 }
+}

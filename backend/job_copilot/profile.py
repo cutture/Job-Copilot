@@ -193,6 +193,7 @@ PREFERENCE_FIELDS = (
     "min_pay",
     "location_arrangements",
     "location_places",
+    "search_window_days",
 )
 ShortText = Annotated[str, Field(min_length=1, max_length=200)]
 Seniority = Literal["Junior", "Mid", "Senior", "Staff"]
@@ -224,6 +225,8 @@ class Preferences(BaseModel):
     min_pay: list[MinimumPay] = Field(default_factory=list, max_length=20)
     location_arrangements: list[Literal["remote", "hybrid", "on_site"]] = ["remote"]
     location_places: list[ShortText] = Field(default_factory=list, max_length=20)
+    # Days back a search looks for postings; it can be shortened but never beyond 15.
+    search_window_days: int = Field(default=15, ge=1, le=15)
 
     @field_validator("work_authorization", "lives_in", "education")
     @classmethod
@@ -306,7 +309,9 @@ def save_preferences(preferences: Preferences, user_id: UserId) -> Profile:
     with connect() as conn:
         ensure_profile(conn, user_id)
         conn.execute(
-            f"UPDATE profiles SET {assignments}, updated_at = now() WHERE user_id = %(user_id)s",
+            # The next search runs Filter again on postings still in the Search Window.
+            f"""UPDATE profiles SET {assignments}, recheck_due = true, updated_at = now()
+                WHERE user_id = %(user_id)s""",
             {**values, "user_id": user_id},
         )
     return get_profile(user_id)

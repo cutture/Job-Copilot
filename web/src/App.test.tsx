@@ -15,11 +15,13 @@ const posting = {
 };
 
 function respondWith(listed: unknown[][]) {
-  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
-    init?.method === "POST"
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "/api/search") return new Response(JSON.stringify({ runs_left: 5, daily_limit: 5, searching: false }));
+    if (url === "/api/watchlist") return new Response("[]");
+    return init?.method === "POST"
       ? new Response("{}", { status: 201 })
-      : new Response(JSON.stringify(listed.shift() ?? [])),
-  );
+      : new Response(JSON.stringify(listed.shift() ?? []));
+  });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
@@ -88,8 +90,9 @@ describe("pasting a Job Posting", () => {
     let lists = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (_url: string, init?: RequestInit) => {
+      vi.fn(async (url: string, init?: RequestInit) => {
         if (init?.method === "POST") return new Response("{}", { status: 201 });
+        if (url !== "/api/job-postings") return new Response(url === "/api/watchlist" ? "[]" : "{}");
         lists += 1;
         return lists === 1 ? new Response("[]") : new Response("{}", { status: 500 });
       }),
@@ -137,7 +140,7 @@ describe("pasting a Job Posting", () => {
       requirements: [{ requirement: "Kubernetes", kind: "must_have", quote: "Kubernetes", result: "missing", evidence: [], gap: null }],
     };
     const profile = {
-      resume_filename: null, resume_text: null, extraction_status: null, work_authorization: null, lives_in: null, education: null,
+      resume_filename: null, resume_text: null, extraction_status: null, work_authorization: null, lives_in: null, education: null, search_window_days: 15,
       languages: ["English"], seniority: null, roles: [], work_type: "employment", min_pay: [],
       location_arrangements: ["remote"], location_places: [], evidence: [],
     };

@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from job_copilot import filter, profile, rating
+from job_copilot import filter, profile, rating, search
 from job_copilot.db import connect
 
 log = logging.getLogger(__name__)
@@ -62,8 +62,10 @@ def _save(
 ) -> None:
     with connect() as conn:
         conn.execute(
+            # A Source gives its own title; only pasted postings need the model's.
             """UPDATE job_postings SET status = %s, filter_reason = %s,
-                   title = COALESCE(%s, title), posting_type = %s, salary_note = %s
+                   title = CASE WHEN external_id IS NULL THEN COALESCE(%s, title) ELSE title END,
+                   posting_type = %s, salary_note = %s
                WHERE id = %s AND user_id = %s""",
             (status, reason, title, posting_type, salary_note, posting_id, user_id),
         )
@@ -91,6 +93,7 @@ HANDLERS: dict[str, tuple[Handler, Handler]] = {
     "process_posting": (_process_posting_job, _posting_failed),
     "extract_evidence": (profile.extract_evidence, profile.mark_extraction_failed),
     "rate_match": (rating.rate_match, rating.mark_not_rated),
+    "search": (search.run_search, search.finish_search),
 }
 
 

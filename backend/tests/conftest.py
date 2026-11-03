@@ -38,7 +38,10 @@ def clean(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
         monkeypatch.delenv(name, raising=False)
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
-        conn.execute("TRUNCATE jobs, matches, job_postings, model_calls, evidence, profiles")
+        conn.execute(
+            "TRUNCATE jobs, matches, job_postings, watchlist, searches, model_calls, evidence, "
+            "profiles"
+        )
 
 
 @dataclass
