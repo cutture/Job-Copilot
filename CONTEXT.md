@@ -15,7 +15,7 @@ Where a Job Posting came from, such as an employer's job board, a job feed, or t
 _Avoid_: Provider, board, site
 
 **Search Window**:
-The maximum age, 15 days from the search date, of a posting a search can add.
+The maximum age of a posting a search can add, counted back from the search date: 15 days unless the person shortens it, and never more than 15.
 _Avoid_: Date range, freshness limit
 
 **Watchlist**:
