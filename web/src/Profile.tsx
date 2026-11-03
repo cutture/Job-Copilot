@@ -167,6 +167,7 @@ export function Profile() {
   const [newItem, setNewItem] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
 
   async function refresh(resetForm = false) {
     try {
@@ -209,6 +210,15 @@ export function Profile() {
     if (!response.ok) setError(await detail(response, "We couldn't start reading it again."));
     refresh();
   }
+
+  async function confirmAll() {
+    setConfirmingAll(false);
+    const response = await fetch("/api/evidence/confirm-all", { method: "POST" }).catch(() => null);
+    if (!response?.ok) setError("We couldn't confirm the items. Try again.");
+    refresh();
+  }
+
+  const unconfirmed = profile?.evidence.filter((item) => !item.confirmed).length ?? 0;
 
   async function addEvidence() {
     const response = await fetch("/api/evidence", {
@@ -278,7 +288,11 @@ export function Profile() {
           <input id="resume" type="file" accept=".pdf,.docx" onChange={upload} />
           <p style={{ fontSize: 13 }}>
             It's stored on your server. Its text is sent to Anthropic, the provider of the AI model that
-            proposes your Evidence.
+            proposes your Evidence. See{" "}
+            <a href="https://privacy.claude.com/" target="_blank" rel="noreferrer">
+              Anthropic's data policy
+            </a>
+            .
           </p>
           {profile?.resume_text && (
             <>
@@ -304,6 +318,16 @@ export function Profile() {
             <p style={{ fontSize: 13 }}>
               Only confirmed items are used to support what goes in your applications.
             </p>
+            {unconfirmed > 0 &&
+              (confirmingAll ? (
+                <p>
+                  Check every item first: confirmed items can be used in your applications.{" "}
+                  <button onClick={confirmAll}>I've read them. Confirm all {unconfirmed}</button>{" "}
+                  <button onClick={() => setConfirmingAll(false)}>Cancel</button>
+                </p>
+              ) : (
+                <button onClick={() => setConfirmingAll(true)}>Confirm all ({unconfirmed})</button>
+              ))}
             <ul style={{ listStyle: "none", padding: 0 }}>
               {profile?.evidence.map((item) => (
                 <EvidenceRow

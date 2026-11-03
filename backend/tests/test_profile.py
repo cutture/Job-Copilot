@@ -215,12 +215,16 @@ def test_a_model_answer_that_is_not_a_list_fails_extraction(
 
 
 def test_proposed_items_are_cleaned_and_limited(client: TestClient, provider: FakeProvider) -> None:
-    extract(client, provider, ["  Python\x07 developer ", "", "x" * 600] + ["item"] * 100)
+    extract(
+        client,
+        provider,
+        ["  Python\x07 developer ", "", "x" * 600] + [f"item {n}" for n in range(200)],
+    )
 
     items = [e["text"] for e in evidence(client)]
     assert items[0] == "Python developer"
     assert len(items[1]) == 300
-    assert len(items) == 60
+    assert len(items) == 150
 
 
 def test_facts_and_preferences_are_saved_with_location_preference_separate(
@@ -345,3 +349,103 @@ def test_a_failed_reading_can_be_tried_again(client: TestClient, provider: FakeP
 
 def test_reading_again_without_a_resume_is_refused(client: TestClient) -> None:
     assert client.post("/api/profile/resume/read-again").status_code == 409
+
+
+def test_an_answer_cut_off_at_the_limit_keeps_its_complete_items(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    provider.output_tokens = 8000
+    extract(client, provider, [])
+    provider.text = '["Python Developer at Example Co", "Built RAG apps", "Led a te'
+    client.post("/api/profile/resume/read-again")
+    worker.run_once()
+
+    assert client.get("/api/profile").json()["extraction_status"] == "done"
+    assert [e["text"] for e in evidence(client)] == [
+        "Python Developer at Example Co",
+        "Built RAG apps",
+    ]
+
+
+def test_the_reading_asks_for_enough_room_and_no_contact_details(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    extract(client, provider, EXTRACTED)
+
+    system = provider.received[0]["messages"][0]["content"]
+    assert provider.received[0]["max_tokens"] >= 8000
+    assert "contact details" in system
+
+
+def test_reading_again_does_not_duplicate_evidence(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    extract(client, provider, EXTRACTED + ["Built RAG applications", "built rag applications "])
+    first = evidence(client)[0]
+    client.patch(f"/api/evidence/{first['id']}", json={"confirmed": True})
+
+    client.post("/api/profile/resume/read-again")
+    worker.run_once()
+
+    assert sorted(e["text"] for e in evidence(client)) == sorted(EXTRACTED)
+
+
+def test_a_reading_overtaken_by_a_new_upload_is_discarded(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from job_copilot import gateway
+
+    upload(client, "old.docx", make_docx(["Old resume"]))
+    real = gateway.call_provider
+    answers = iter([json.dumps(["From the old resume"]), json.dumps(["From the new resume"])])
+
+    def call(model: str, messages: list[dict[str, str]], max_tokens: int) -> object:
+        if "Old resume" in messages[-1]["content"]:
+            upload(client, "new.docx", make_docx(["New resume"]))
+        answer = real(model, messages, max_tokens)
+        return gateway.ProviderAnswer(next(answers), answer.input_tokens, answer.output_tokens)
+
+    monkeypatch.setattr(gateway, "call_provider", call)
+
+    worker.run_once()
+    assert evidence(client) == []
+    assert client.get("/api/profile").json()["extraction_status"] == "queued"
+    worker.run_once()
+
+    assert [e["text"] for e in evidence(client)] == ["From the new resume"]
+
+
+def test_clearing_languages_keeps_english(client: TestClient) -> None:
+    client.put("/api/profile", json={"languages": []})
+
+    assert client.get("/api/profile").json()["languages"] == ["English"]
+
+
+def test_resume_text_never_reaches_traces(
+    client: TestClient,
+    provider: FakeProvider,
+    traces: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://eu.langfuse.example.com")
+
+    extract(client, provider, EXTRACTED)
+
+    sent = json.dumps(traces)
+    assert len(traces) == 1 and traces[0]["step"] == "resume_evidence"
+    assert "Sam Rivera" not in sent
+    assert EXTRACTED[0] not in sent
+
+
+def test_all_unconfirmed_evidence_can_be_confirmed_at_once(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    extract(client, provider, EXTRACTED)
+
+    response = client.post("/api/evidence/confirm-all")
+
+    assert response.status_code == 200
+    assert response.json() == {"confirmed": 2}
+    assert all(e["confirmed"] for e in evidence(client))

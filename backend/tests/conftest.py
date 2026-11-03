@@ -57,7 +57,7 @@ def provider(monkeypatch: pytest.MonkeyPatch) -> FakeProvider:
     fake = FakeProvider()
 
     def call(model: str, messages: list[dict[str, str]], max_tokens: int) -> gateway.ProviderAnswer:
-        fake.received.append({"model": model, "messages": messages})
+        fake.received.append({"model": model, "messages": messages, "max_tokens": max_tokens})
         if fake.error:
             raise fake.error
         return gateway.ProviderAnswer(fake.text, fake.input_tokens, fake.output_tokens)

@@ -192,6 +192,27 @@ describe("Profile setup", () => {
     );
   });
 
+  it("links to Anthropic's data policy", async () => {
+    serve();
+    render(<Profile />);
+
+    const link = await screen.findByRole("link", { name: "Anthropic's data policy" });
+    expect(link.getAttribute("href")).toBe("https://privacy.claude.com/");
+  });
+
+  it("confirms all unconfirmed items after one more click", async () => {
+    const calls = serve();
+    render(<Profile />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm all (1)" }));
+    expect(calls.some((c) => c.url === "/api/evidence/confirm-all")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "I've read them. Confirm all 1" }));
+
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.url === "/api/evidence/confirm-all")).toBe(true),
+    );
+  });
+
   it("says when Evidence couldn't be read from the resume", async () => {
     serve({ ...baseProfile, extraction_status: "failed", evidence: [] });
     render(<Profile />);
