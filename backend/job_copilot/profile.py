@@ -182,6 +182,13 @@ def mark_extraction_failed(user_id: UUID, payload: dict[str, Any]) -> None:
 router = APIRouter()
 
 EVIDENCE_COLUMNS = "id, text, origin, confirmed, created_at"
+# The preferences Filter reads, with their column types; a change to one re-checks postings.
+FILTER_FIELDS = {
+    "work_type": "text",
+    "location_arrangements": "text[]",
+    "location_places": "text[]",
+    "min_pay": "jsonb",
+}
 PREFERENCE_FIELDS = (
     "work_authorization",
     "lives_in",
@@ -306,11 +313,15 @@ def save_preferences(preferences: Preferences, user_id: UserId) -> Profile:
     values = preferences.model_dump()
     values["min_pay"] = Jsonb(values["min_pay"])
     assignments = ", ".join(f"{field} = %({field})s" for field in PREFERENCE_FIELDS)
+    filter_now = ", ".join(FILTER_FIELDS)
+    filter_new = ", ".join(f"%({field})s::{kind}" for field, kind in FILTER_FIELDS.items())
     with connect() as conn:
         ensure_profile(conn, user_id)
         conn.execute(
-            # The next search runs Filter again on postings still in the Search Window.
-            f"""UPDATE profiles SET {assignments}, recheck_due = true, updated_at = now()
+            # If Filter's inputs changed, the next search runs Filter again on postings still
+            # in the Search Window.
+            f"""UPDATE profiles SET {assignments}, updated_at = now(),
+                    recheck_due = recheck_due OR ({filter_now}) IS DISTINCT FROM ({filter_new})
                 WHERE user_id = %(user_id)s""",
             {**values, "user_id": user_id},
         )

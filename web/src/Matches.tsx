@@ -31,6 +31,7 @@ export type PostingOrigin = {
   posted_on?: string | null;
   date_provided?: boolean;
   credit_url?: string | null;
+  credit_text?: string | null;
 };
 
 export type RatedPosting = PostingOrigin & {
@@ -60,7 +61,8 @@ export function age(posting: PostingOrigin): string {
 }
 
 export function Origin({ posting }: { posting: PostingOrigin }) {
-  const name = posting.employer ? `${posting.employer} on ${posting.source}` : posting.source;
+  const where = posting.credit_text ?? posting.source;
+  const name = posting.employer ? `${posting.employer} on ${where}` : where;
   return posting.credit_url ? (
     <a href={posting.credit_url} target="_blank" rel="noreferrer noopener">
       {name}

@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Matches } from "./Matches";
+import { Matches, Origin } from "./Matches";
 import type { RatedPosting } from "./Matches";
 
 function rated(id: string, title: string, band: string, nice_met = 0): RatedPosting {
@@ -27,6 +27,25 @@ function rated(id: string, title: string, band: string, nice_met = 0): RatedPost
 }
 
 afterEach(cleanup);
+
+describe("Origin", () => {
+  it("credits the Source with its own text and link", () => {
+    render(
+      <Origin
+        posting={{
+          source: "Greenhouse",
+          employer: "Northwind Labs",
+          created_at: new Date().toISOString(),
+          credit_url: "https://job-boards.greenhouse.io/northwindlabs",
+          credit_text: "Greenhouse job board",
+        }}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "Northwind Labs on Greenhouse job board" });
+    expect(link.getAttribute("href")).toBe("https://job-boards.greenhouse.io/northwindlabs");
+  });
+});
 
 describe("Matches", () => {
   const all = [

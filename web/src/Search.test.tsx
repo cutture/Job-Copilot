@@ -31,7 +31,7 @@ describe("Search", () => {
       "GET /api/search": () => status(3),
       "GET /api/watchlist": () =>
         json([
-          { id: "a", name: "Northwind Labs", source: "Greenhouse", failure: "Northwind Labs's Greenhouse board didn't respond." },
+          { id: "a", name: "Northwind Labs", source: "Greenhouse", failure: "We couldn't reach Northwind Labs on Greenhouse." },
           { id: "b", name: "Contoso", source: "Greenhouse", failure: null },
         ]),
     });
@@ -39,7 +39,7 @@ describe("Search", () => {
     render(<Search onProgress={() => {}} />);
 
     expect(await screen.findByText("3 of 5 runs left today")).toBeTruthy();
-    expect(screen.getByText("Northwind Labs's Greenhouse board didn't respond.")).toBeTruthy();
+    expect(screen.getByText("We couldn't reach Northwind Labs on Greenhouse.")).toBeTruthy();
     expect(screen.getByText(/Contoso \(Greenhouse\)/)).toBeTruthy();
   });
 
@@ -51,7 +51,7 @@ describe("Search", () => {
         json(added ? [{ id: "a", name: "Northwind Labs", source: "Greenhouse", failure: null }] : []),
       "POST /api/watchlist": () => {
         if (calls.at(-1)!.body.includes("lever")) {
-          return json({ detail: "This careers page isn't supported yet. Supported job boards: Greenhouse." }, 422);
+          return json({ detail: "This careers page isn't supported yet. Supported Sources: Greenhouse." }, 422);
         }
         added = true;
         return json({ id: "a", name: "Northwind Labs", source: "Greenhouse", failure: null }, 201);

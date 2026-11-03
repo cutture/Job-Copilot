@@ -15,7 +15,7 @@ from pydantic import BaseModel, field_validator
 from job_copilot import gateway
 from job_copilot.db import connect
 from job_copilot.gateway import DataClass
-from job_copilot.profile import ensure_profile, strip_controls
+from job_copilot.profile import FILTER_FIELDS, ensure_profile, strip_controls
 
 FILTER_MODEL = "groq/openai/gpt-oss-20b"
 # Reasoning models spend output tokens before the visible answer, so small limits return nothing.
@@ -254,8 +254,7 @@ def preferences_for(user_id: UUID) -> dict[str, Any]:
     with connect() as conn:
         ensure_profile(conn, user_id)
         row: Any = conn.execute(
-            """SELECT work_type, location_arrangements, location_places, min_pay
-               FROM profiles WHERE user_id = %s""",
+            f"SELECT {', '.join(FILTER_FIELDS)} FROM profiles WHERE user_id = %s",
             (user_id,),
         ).fetchone()
     return dict(row)

@@ -44,6 +44,7 @@ class SourcePosting:
     text: str
     # The original publish date, or None when the Source doesn't provide one.
     posted_on: date | None
+    # As the Source gives it; the search job keeps only https links.
     apply_url: str
 
 
@@ -70,16 +71,14 @@ def plain_text(markup: str) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def _https(url: Any) -> str | None:
-    return url if isinstance(url, str) and url.startswith("https://") else None
-
-
 class Greenhouse:
     source = "Greenhouse"
     date_field = "first_published"
     # ponytail: Greenhouse publishes no polling limit; 15 minutes keeps repeat searches polite.
     poll_interval = timedelta(minutes=15)
     credit_text = "Greenhouse job board"
+    # The Apply link opens the posting on the employer's own board.
+    apply_url_field = "absolute_url"
     # A posting gone from the board's list has closed.
     expires_when_missing = True
     HOSTS = {
@@ -121,8 +120,7 @@ class Greenhouse:
         postings = []
         for job in answer.get("jobs") or []:
             title = strip_controls(str(job.get("title") or ""))[:MAX_TITLE_LENGTH]
-            apply_url = _https(job.get("absolute_url"))
-            if not title or job.get("id") is None or apply_url is None:
+            if not title or job.get("id") is None:
                 continue
             location = strip_controls(str((job.get("location") or {}).get("name") or ""))
             body = plain_text(html.unescape(str(job.get("content") or "")))
@@ -134,7 +132,7 @@ class Greenhouse:
                     location=location,
                     text=text.replace(chr(0), "")[:MAX_POSTING_LENGTH],
                     posted_on=_date(job.get(self.date_field)),
-                    apply_url=apply_url,
+                    apply_url=str(job.get(self.apply_url_field) or ""),
                 )
             )
         return postings

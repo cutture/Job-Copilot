@@ -2,7 +2,7 @@
 
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +19,8 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 WATCHLIST_FIELDS = "id, name, source, failure, last_checked_at"
+# A search still unfinished after this long was stopped, so Search now is free again.
+SEARCH_TIMEOUT = timedelta(minutes=30)
 
 
 def daily_limit() -> int:
@@ -70,14 +72,15 @@ def add_to_watchlist(entry: NewWatchlistEntry, user_id: UserId) -> WatchlistEntr
     if board is None:
         supported = ", ".join(sources.ADAPTERS)
         raise HTTPException(
-            422, f"This careers page isn't supported yet. Supported job boards: {supported}."
+            422, f"This careers page isn't supported yet. Supported Sources: {supported}."
         )
     adapter = sources.ADAPTERS[board.source]
     try:
         name = adapter.employer_name(board)
     except (httpx.HTTPError, ValueError, AttributeError):
         raise HTTPException(
-            422, f"We couldn't find a {board.source} board at that URL. Check it and try again."
+            422,
+            f"We couldn't find that employer on {board.source}. Check the URL and try again.",
         ) from None
     with connect() as conn:
         row: Any = conn.execute(
@@ -94,6 +97,12 @@ def add_to_watchlist(entry: NewWatchlistEntry, user_id: UserId) -> WatchlistEntr
 @router.delete("/api/watchlist/{entry_id}", status_code=204)
 def remove_from_watchlist(entry_id: UUID, user_id: UserId) -> None:
     with connect() as conn:
+        # Their postings are no longer checked, so they leave results but stay for Applications.
+        conn.execute(
+            """UPDATE job_postings SET expired_at = COALESCE(expired_at, now())
+               WHERE watchlist_id = %s AND user_id = %s""",
+            (entry_id, user_id),
+        )
         deleted = conn.execute(
             "DELETE FROM watchlist WHERE id = %s AND user_id = %s RETURNING id",
             (entry_id, user_id),
@@ -102,14 +111,15 @@ def remove_from_watchlist(entry_id: UUID, user_id: UserId) -> None:
         raise HTTPException(404, "Not on your Watchlist")
 
 
-def _status(conn: Any, user_id: UUID) -> SearchStatus:
+def _search_status(conn: Any, user_id: UUID) -> SearchStatus:
     # ponytail: a day is a UTC day; use the person's time zone once they can set one.
     row: Any = conn.execute(
         """SELECT count(*) FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
                                        AT TIME ZONE 'UTC') AS today,
-                  count(*) FILTER (WHERE finished_at IS NULL) AS running
+                  count(*) FILTER (WHERE finished_at IS NULL AND created_at > now() - %s)
+                    AS running
            FROM searches WHERE user_id = %s""",
-        (user_id,),
+        (SEARCH_TIMEOUT, user_id),
     ).fetchone()
     limit = daily_limit()
     return SearchStatus(
@@ -120,7 +130,22 @@ def _status(conn: Any, user_id: UUID) -> SearchStatus:
 @router.get("/api/search")
 def search_status(user_id: UserId) -> SearchStatus:
     with connect() as conn:
-        return _status(conn, user_id)
+        return _search_status(conn, user_id)
+
+
+def _next_due(conn: Any, user_id: UUID) -> datetime | None:
+    """When the first Source may be searched again, or None if one is due now."""
+    rows = conn.execute(
+        "SELECT source, last_checked_at FROM watchlist WHERE user_id = %s", (user_id,)
+    ).fetchall()
+    now = datetime.now(UTC)
+    earliest = min(
+        row["last_checked_at"] + sources.ADAPTERS[row["source"]].poll_interval
+        if row["last_checked_at"]
+        else now
+        for row in rows
+    )
+    return earliest if earliest > now else None
 
 
 @router.post("/api/search", status_code=202)
@@ -130,21 +155,29 @@ def search_now(user_id: UserId) -> SearchStatus:
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"search:{user_id}",))
         if not conn.execute("SELECT 1 FROM watchlist WHERE user_id = %s", (user_id,)).fetchone():
             raise HTTPException(409, "Add an employer to your Watchlist first.")
-        status = _status(conn, user_id)
+        next_due = _next_due(conn, user_id)
+        if next_due:
+            minutes = int((next_due - datetime.now(UTC)).total_seconds() // 60) + 1
+            raise HTTPException(
+                409,
+                "Your Sources were all checked a moment ago. "
+                f"Search again in {minutes} minute{'s' if minutes > 1 else ''}.",
+            )
+        status = _search_status(conn, user_id)
         if status.runs_left == 0:
             raise HTTPException(
                 429,
                 f"Today's {status.daily_limit} searches are used. "
                 "Search is available again tomorrow.",
             )
-        search_id = conn.execute(
+        row: Any = conn.execute(
             "INSERT INTO searches (user_id) VALUES (%s) RETURNING id", (user_id,)
-        ).fetchone()["id"]  # type: ignore[index]
+        ).fetchone()
         conn.execute(
             "INSERT INTO jobs (user_id, kind, payload) VALUES (%s, 'search', %s)",
-            (user_id, Jsonb({"search_id": search_id})),
+            (user_id, Jsonb({"search_id": row["id"]})),
         )
-        return _status(conn, user_id)
+        return _search_status(conn, user_id)
 
 
 # --- Search job --------------------------------------------------------------------------
@@ -155,7 +188,8 @@ def _recheck(conn: Any, user_id: UUID, window: int) -> None:
     # ponytail: every posting counts as unapplied until Applications exist (#24).
     rows = conn.execute(
         """UPDATE job_postings SET status = 'queued', filter_reason = NULL
-           WHERE user_id = %s AND status IN ('received', 'filtered') AND expired_at IS NULL
+           WHERE user_id = %s AND expired_at IS NULL
+             AND status IN ('received', 'filtered', 'model_unavailable', 'not_rated')
              AND COALESCE(posted_on, created_at::date) >= current_date - %s
            RETURNING id""",
         (user_id, window),
@@ -174,10 +208,11 @@ def _save_postings(
     window: int,
 ) -> None:
     adapter = sources.ADAPTERS[board.source]
+    credit_url = adapter.credit_url(board)
     today = datetime.now(UTC).date()
     for posting in postings:
         posted_on = posting.posted_on or today
-        if (today - posted_on).days > window:
+        if (today - posted_on).days > window or not posting.apply_url.startswith("https://"):
             continue
         row = conn.execute(
             """INSERT INTO job_postings (user_id, source, title, text, watchlist_id, external_id,
@@ -196,7 +231,7 @@ def _save_postings(
                 entry["name"],
                 posted_on,
                 posting.posted_on is not None,
-                adapter.credit_url(board),
+                credit_url,
                 posting.apply_url,
             ),
         ).fetchone()
@@ -233,24 +268,23 @@ def run_search(user_id: UUID, payload: dict[str, Any]) -> None:
         board = sources.Board(entry["source"], entry["api_host"], entry["token"])
         try:
             postings = adapter.postings(board)
+            with connect() as conn:
+                _save_postings(conn, user_id, entry, board, postings, window)
+                conn.execute(
+                    "UPDATE watchlist SET failure = NULL, last_checked_at = now() WHERE id = %s",
+                    (entry["id"],),
+                )
         except Exception as error:
             # One failing Source never stops the others.
             log.warning("Source %s failed: %s", entry["source"], type(error).__name__)
             failure = (
-                f"{entry['name']}'s {entry['source']} board didn't respond. "
+                f"We couldn't reach {entry['name']} on {entry['source']}. "
                 "We'll try again on the next search."
             )
             with connect() as conn:
                 conn.execute(
                     "UPDATE watchlist SET failure = %s WHERE id = %s", (failure, entry["id"])
                 )
-            continue
-        with connect() as conn:
-            _save_postings(conn, user_id, entry, board, postings, window)
-            conn.execute(
-                "UPDATE watchlist SET failure = NULL, last_checked_at = now() WHERE id = %s",
-                (entry["id"],),
-            )
     finish_search(user_id, payload)
 
 

@@ -80,7 +80,7 @@ export function Search({ onProgress }: { onProgress: () => void }) {
     await refresh().catch(() => {});
   }
 
-  async function remove(entry: WatchlistEntry) {
+  async function removeEmployer(entry: WatchlistEntry) {
     const response = await fetch(`/api/watchlist/${entry.id}`, { method: "DELETE" }).catch(() => null);
     if (!response?.ok) {
       setMessage(`We couldn't remove ${entry.name}. Try again.`);
@@ -124,7 +124,7 @@ export function Search({ onProgress }: { onProgress: () => void }) {
           {watchlist.map((entry) => (
             <span key={entry.id} style={{ marginRight: 8 }}>
               {entry.name} ({entry.source}){" "}
-              <button aria-label={`Remove ${entry.name}`} onClick={() => remove(entry)}>
+              <button aria-label={`Remove ${entry.name}`} onClick={() => removeEmployer(entry)}>
                 ×
               </button>
             </span>

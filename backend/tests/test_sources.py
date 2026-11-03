@@ -39,6 +39,7 @@ def test_an_adapter_declares_its_rules(adapter: sources.Adapter) -> None:
     assert adapter.date_field
     assert adapter.poll_interval.total_seconds() > 0
     assert adapter.credit_text
+    assert adapter.apply_url_field
     assert isinstance(adapter.expires_when_missing, bool)
 
 

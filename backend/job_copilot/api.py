@@ -7,11 +7,11 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from job_copilot import profile, rating, search
+from job_copilot import profile, rating, search, sources
 from job_copilot.db import UserId, connect, current_user_id
+from job_copilot.sources import MAX_POSTING_LENGTH, MAX_TITLE_LENGTH
 
 MANUAL_SOURCE = "Manual Source"
-TITLE_LENGTH = 120
 
 app = FastAPI(title="Job Copilot")
 app.include_router(profile.router)
@@ -37,7 +37,7 @@ __all__ = ["app", "current_user_id"]
 
 
 class PastedPosting(BaseModel):
-    text: str = Field(max_length=100_000)
+    text: str = Field(max_length=MAX_POSTING_LENGTH)
 
     @field_validator("text")
     @classmethod
@@ -62,6 +62,7 @@ class JobPosting(BaseModel):
     posted_on: date | None
     date_provided: bool
     credit_url: str | None
+    credit_text: str | None = None
     apply_url: str | None
     expired: bool
     rating_state: rating.RatingState | None = None
@@ -90,7 +91,9 @@ MATCH_FIELDS = ("band", "reasons", "gaps", "profile_prompts", "nice_met", "requi
 
 @app.post("/api/job-postings", status_code=201)
 def paste_posting(posting: PastedPosting, user_id: UserId) -> JobPosting:
-    title = next(line.strip() for line in posting.text.splitlines() if line.strip())[:TITLE_LENGTH]
+    title = next(line.strip() for line in posting.text.splitlines() if line.strip())[
+        :MAX_TITLE_LENGTH
+    ]
     with connect() as conn:
         row: Any = conn.execute(
             f"""INSERT INTO job_postings (user_id, source, title, text)
@@ -101,8 +104,13 @@ def paste_posting(posting: PastedPosting, user_id: UserId) -> JobPosting:
     return JobPosting(**row, expired=False)
 
 
+def _credit_text(source: str) -> str | None:
+    adapter = sources.ADAPTERS.get(source)
+    return adapter.credit_text if adapter else None
+
+
 @app.get("/api/job-postings")
-def list_postings(user_id: UserId, include_expired: bool = False) -> list[JobPosting]:
+def list_postings(user_id: UserId) -> list[JobPosting]:
     with connect() as conn:
         rows = conn.execute(
             f"""SELECT {", ".join(f"p.{f}" for f in POSTING_FIELDS)},
@@ -113,14 +121,15 @@ def list_postings(user_id: UserId, include_expired: bool = False) -> list[JobPos
                             WHEN {rating.RATING_QUEUED} THEN 'rating'
                             ELSE 'waiting' END AS rating_state
                 FROM job_postings p LEFT JOIN matches m ON m.job_posting_id = p.id
-                WHERE p.user_id = %s AND (%s OR p.expired_at IS NULL)
+                WHERE p.user_id = %s AND p.expired_at IS NULL
                 ORDER BY p.created_at DESC""",
-            (user_id, include_expired),
+            (user_id,),
         ).fetchall()
     return [
         JobPosting(
             **{f: row[f] for f in POSTING_FIELDS},
             expired=row["expired"],
+            credit_text=_credit_text(row["source"]),
             rating_state=row["rating_state"],
             match=rating.MatchView(**{f: row[f] for f in MATCH_FIELDS})
             if row["rating_state"] == "rated"

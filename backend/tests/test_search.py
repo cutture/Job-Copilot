@@ -107,10 +107,10 @@ def test_an_employer_is_added_from_its_careers_url(client: TestClient, boards: F
     [
         ("https://jobs.lever.co/northwindlabs", "isn't supported yet"),
         ("https://careers.example.com/jobs", "isn't supported yet"),
-        ("https://job-boards.greenhouse.io/nosuchboard", "couldn't find a Greenhouse board"),
+        ("https://job-boards.greenhouse.io/nosuchboard", "couldn't find that employer"),
     ],
 )
-def test_an_unsupported_or_missing_board_is_explained(
+def test_an_unsupported_or_missing_employer_is_explained(
     client: TestClient, boards: FakeBoards, url: str, message: str
 ) -> None:
     response = client.post("/api/watchlist", json={"url": url})
@@ -194,7 +194,7 @@ def test_one_failing_source_doesnt_stop_the_others_and_its_failure_is_shown(
     assert set(listed(client)) == {"Contoso Engineer"}
     entries = {e["name"]: e for e in client.get("/api/watchlist").json()}
     assert entries["Northwind Labs"]["failure"] == (
-        "Northwind Labs's Greenhouse board didn't respond. We'll try again on the next search."
+        "We couldn't reach Northwind Labs on Greenhouse. We'll try again on the next search."
     )
     assert entries["Contoso"]["failure"] is None
 
@@ -228,9 +228,54 @@ def test_an_expired_posting_leaves_results_but_is_kept(
 
     assert set(listed(client)) == {"Applied AI Engineer"}
     # Kept so an Application can stay attached to it.
-    everything = client.get("/api/job-postings", params={"include_expired": True}).json()
-    expired = [p for p in everything if p["expired"]]
-    assert [p["title"] for p in expired] == ["Closing Engineer"]
+    assert expired_titles() == ["Closing Engineer"]
+
+
+def expired_titles() -> list[str]:
+    with psycopg.connect(TEST_DB) as conn:
+        rows = conn.execute(
+            "SELECT title FROM job_postings WHERE expired_at IS NOT NULL ORDER BY title"
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def test_removing_an_employer_expires_its_postings(client: TestClient, boards: FakeBoards) -> None:
+    prefer(client)
+    entry = watch(client, boards, "northwindlabs", "Northwind Labs")
+    boards.jobs["northwindlabs"] = [job(1, 2)]
+    search(client)
+
+    assert client.delete(f"/api/watchlist/{entry['id']}").status_code == 204
+
+    assert listed(client) == {}
+    assert expired_titles() == ["Applied AI Engineer"]
+
+
+def test_a_posting_without_an_https_apply_link_isnt_added(
+    client: TestClient, boards: FakeBoards
+) -> None:
+    prefer(client)
+    watch(client, boards, "northwindlabs", "Northwind Labs")
+    plain = {**job(2, 1, "Plain Link Engineer"), "absolute_url": "http://example.com/jobs/2"}
+    boards.jobs["northwindlabs"] = [job(1, 1), plain]
+
+    search(client)
+
+    assert set(listed(client)) == {"Applied AI Engineer"}
+    assert listed(client)["Applied AI Engineer"]["credit_text"] == "Greenhouse job board"
+
+
+def test_a_search_left_unfinished_frees_search_now_after_30_minutes(
+    client: TestClient, boards: FakeBoards
+) -> None:
+    watch(client, boards, "northwindlabs", "Northwind Labs")
+    assert client.post("/api/search").status_code == 202
+    assert client.get("/api/search").json()["searching"] is True
+
+    with psycopg.connect(TEST_DB) as conn:
+        conn.execute("UPDATE searches SET created_at = now() - interval '31 minutes'")
+
+    assert client.get("/api/search").json()["searching"] is False
 
 
 def test_search_now_respects_the_daily_run_limit(
@@ -275,8 +320,13 @@ def test_a_source_is_polled_no_more_often_than_it_declares(
     boards.fetched.clear()
 
     search(client)
-    search(client)
+    refused = client.post("/api/search")
 
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == (
+        "Your Sources were all checked a moment ago. Search again in 60 minutes."
+    )
+    assert client.get("/api/search").json()["runs_left"] == 4
     assert len([url for url in boards.fetched if "/jobs" in url]) == 1
 
 
@@ -294,6 +344,39 @@ def test_after_a_preference_change_the_next_search_rechecks_postings_in_the_wind
     search(client)
 
     assert listed(client)["Freelance AI Engineer"]["status"] == "received"
+
+
+def test_a_preference_filter_doesnt_read_triggers_no_recheck(
+    client: TestClient, boards: FakeBoards, provider: FakeProvider
+) -> None:
+    prefer(client)
+    watch(client, boards, "northwindlabs", "Northwind Labs")
+    boards.jobs["northwindlabs"] = [job(1, 2)]
+    search(client)
+    calls = len(provider.received)
+
+    prefer(client, education="Invented degree", search_window_days=10)
+    search(client)
+
+    assert len(provider.received) == calls
+
+
+def test_a_recheck_includes_postings_a_model_couldnt_process(
+    client: TestClient, boards: FakeBoards, provider: FakeProvider
+) -> None:
+    prefer(client, work_type="employment")
+    watch(client, boards, "northwindlabs", "Northwind Labs")
+    boards.jobs["northwindlabs"] = [job(1, 2)]
+    good = provider.text
+    provider.text = "Looks like a great job!"
+    search(client)
+    assert listed(client)["Applied AI Engineer"]["status"] == "model_unavailable"
+
+    provider.text = good
+    prefer(client)
+    search(client)
+
+    assert listed(client)["Applied AI Engineer"]["status"] == "received"
 
 
 def test_a_pasted_posting_is_always_added_and_has_no_posting_date(
