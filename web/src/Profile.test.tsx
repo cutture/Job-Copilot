@@ -81,7 +81,7 @@ describe("Profile setup", () => {
     fireEvent.change(within(item).getByRole("textbox"), {
       target: { value: "Python Developer at Example Co, 2021 to present" },
     });
-    fireEvent.click(within(item).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(item).getByRole("button", { name: "Save and confirm" }));
 
     await vi.waitFor(() =>
       expect(calls).toContainEqual({
@@ -160,6 +160,36 @@ describe("Profile setup", () => {
     });
 
     expect((await screen.findByRole("alert")).textContent).toContain("Scanned resumes");
+  });
+
+  it("says where the resume text goes", async () => {
+    serve();
+    render(<Profile />);
+
+    expect(await screen.findByText(/sent to Anthropic/)).toBeTruthy();
+    expect(screen.queryByText(/stays on your server/)).toBeNull();
+  });
+
+  it("reports a failed delete instead of failing silently", async () => {
+    serve(baseProfile, { "DELETE /api/evidence/2": new Response(null, { status: 500 }) });
+    render(<Profile />);
+    const item = (await screen.findByText("Ran Kubernetes services")).closest("li")!;
+
+    fireEvent.click(within(item).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(item).getByRole("button", { name: "Yes, delete" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("couldn't");
+  });
+
+  it("offers to read the resume again after a failure", async () => {
+    const calls = serve({ ...baseProfile, extraction_status: "failed", evidence: [] });
+    render(<Profile />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Try reading it again" }));
+
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.url === "/api/profile/resume/read-again")).toBe(true),
+    );
   });
 
   it("says when Evidence couldn't be read from the resume", async () => {

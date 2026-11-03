@@ -80,23 +80,40 @@ async function loadProfile(): Promise<ProfileData> {
   return response.json();
 }
 
-function EvidenceRow({ item, onChanged }: { item: Evidence; onChanged: () => void }) {
+function EvidenceRow({
+  item,
+  onChanged,
+  onError,
+}: {
+  item: Evidence;
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   async function change(body: object) {
-    await fetch(`/api/evidence/${item.id}`, {
+    const response = await fetch(`/api/evidence/${item.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
+    }).catch(() => null);
+    if (!response?.ok) {
+      onError("We couldn't save that change. Try again.");
+      return;
+    }
     setEditing(false);
     onChanged();
   }
 
   async function remove() {
-    await fetch(`/api/evidence/${item.id}`, { method: "DELETE" });
+    const response = await fetch(`/api/evidence/${item.id}`, { method: "DELETE" }).catch(() => null);
+    if (!response?.ok) {
+      onError("We couldn't delete that item. Try again.");
+      setConfirmingDelete(false);
+      return;
+    }
     onChanged();
   }
 
@@ -112,7 +129,7 @@ function EvidenceRow({ item, onChanged }: { item: Evidence; onChanged: () => voi
             onChange={(event) => setDraft(event.target.value)}
           />
           <button onClick={() => change({ text: draft })} disabled={!draft.trim()}>
-            Save
+            Save and confirm
           </button>{" "}
           <button onClick={() => setEditing(false)}>Cancel</button>
         </>
@@ -186,6 +203,13 @@ export function Profile() {
     refresh();
   }
 
+  async function readAgain() {
+    setError("");
+    const response = await fetch("/api/profile/resume/read-again", { method: "POST" });
+    if (!response.ok) setError(await detail(response, "We couldn't start reading it again."));
+    refresh();
+  }
+
   async function addEvidence() {
     const response = await fetch("/api/evidence", {
       method: "POST",
@@ -252,7 +276,10 @@ export function Profile() {
             Upload your resume (PDF or DOCX)
           </label>
           <input id="resume" type="file" accept=".pdf,.docx" onChange={upload} />
-          <p style={{ fontSize: 13 }}>It stays on your server and is used only as Evidence.</p>
+          <p style={{ fontSize: 13 }}>
+            It's stored on your server. Its text is sent to Anthropic, the provider of the AI model that
+            proposes your Evidence.
+          </p>
           {profile?.resume_text && (
             <>
               <p style={{ fontSize: 13 }}>{profile.resume_filename}</p>
@@ -270,7 +297,8 @@ export function Profile() {
             {profile?.extraction_status === "failed" && (
               <p>
                 We couldn't read Evidence from your resume. Our AI model may be unavailable or out of
-                credit. You can still add items below, or upload again later.
+                credit. You can still add items below.{" "}
+                <button onClick={readAgain}>Try reading it again</button>
               </p>
             )}
             <p style={{ fontSize: 13 }}>
@@ -278,7 +306,12 @@ export function Profile() {
             </p>
             <ul style={{ listStyle: "none", padding: 0 }}>
               {profile?.evidence.map((item) => (
-                <EvidenceRow key={`${item.id}-${item.text}`} item={item} onChanged={() => refresh()} />
+                <EvidenceRow
+                  key={`${item.id}-${item.text}`}
+                  item={item}
+                  onChanged={() => refresh()}
+                  onError={setError}
+                />
               ))}
             </ul>
             <label htmlFor="new-evidence" style={{ display: "block", fontWeight: 600 }}>

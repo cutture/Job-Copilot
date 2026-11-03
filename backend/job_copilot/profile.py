@@ -2,8 +2,8 @@
 
 import io
 import json
-import logging
 import unicodedata
+import zipfile
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -18,9 +18,9 @@ from job_copilot import gateway
 from job_copilot.db import UserId, connect
 from job_copilot.gateway import DataClass
 
-log = logging.getLogger(__name__)
-
 MAX_UPLOAD_BYTES = 5_000_000
+MAX_DOCX_UNPACKED_BYTES = 20_000_000
+MAX_RESUME_CHARS = 100_000
 EXTRACTION_MODEL = "anthropic/claude-haiku-5-5"
 MAX_ITEMS = 60
 MAX_ITEM_LENGTH = 300
@@ -54,15 +54,30 @@ def read_resume(filename: str, content: bytes) -> str:
         text = "\n".join(pages)
     elif content.startswith(b"PK") and filename.lower().endswith(".docx"):
         try:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                unpacked = sum(info.file_size for info in archive.infolist())
+        except zipfile.BadZipFile:
+            raise ValueError(NOT_READABLE) from None
+        # A small file can unpack into gigabytes, so check before parsing it.
+        if unpacked > MAX_DOCX_UNPACKED_BYTES:
+            raise ValueError("This file is too large to read. Save it again and upload that.")
+        try:
             document = Document(io.BytesIO(content))
         except Exception:
             raise ValueError(NOT_READABLE) from None
-        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        lines = [paragraph.text for paragraph in document.paragraphs]
+        # Many resume templates lay out their content in tables.
+        for table in document.tables:
+            for row in table.rows:
+                lines.append(" | ".join(cell.text for cell in row.cells))
+        text = "\n".join(lines)
     else:
         raise ValueError(NOT_READABLE)
     text = text.replace(chr(0), "").strip()
     if not text:
         raise ValueError("We found no text in this file. Scanned resumes aren't supported yet.")
+    if len(text) > MAX_RESUME_CHARS:
+        raise ValueError("This resume is too long to read. Upload one under about 15,000 words.")
     return text
 
 
@@ -243,9 +258,20 @@ def save_preferences(preferences: Preferences, user_id: UserId) -> Profile:
     return get_profile(user_id)
 
 
+def _queue_reading(conn: Any, user_id: UUID) -> None:
+    """Queue one reading of the resume, replacing any reading still waiting."""
+    conn.execute("DELETE FROM jobs WHERE user_id = %s AND kind = 'extract_evidence'", (user_id,))
+    conn.execute(
+        "INSERT INTO jobs (user_id, kind, payload) VALUES (%s, 'extract_evidence', %s)",
+        (user_id, Jsonb({})),
+    )
+    conn.execute("UPDATE profiles SET extraction_status = 'queued' WHERE user_id = %s", (user_id,))
+
+
+# A plain def runs in a worker thread, so slow parsing doesn't block other requests.
 @router.post("/api/profile/resume", status_code=201)
-async def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
-    content = await file.read(MAX_UPLOAD_BYTES + 1)
+def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
+    content = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "This file is over 5 MB. Upload a smaller resume.")
     filename = strip_controls(file.filename or "resume")[:200]
@@ -256,8 +282,7 @@ async def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
     with connect() as conn:
         _ensure_profile(conn, user_id)
         conn.execute(
-            """UPDATE profiles SET resume_filename = %s, resume_text = %s,
-                   extraction_status = 'queued', updated_at = now()
+            """UPDATE profiles SET resume_filename = %s, resume_text = %s, updated_at = now()
                WHERE user_id = %s""",
             (filename, text, user_id),
         )
@@ -266,10 +291,24 @@ async def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
             "DELETE FROM evidence WHERE user_id = %s AND origin = 'resume' AND NOT confirmed",
             (user_id,),
         )
+        _queue_reading(conn, user_id)
+    return get_profile(user_id)
+
+
+@router.post("/api/profile/resume/read-again", status_code=202)
+def read_again(user_id: UserId) -> Profile:
+    with connect() as conn:
+        _ensure_profile(conn, user_id)
+        profile = conn.execute(
+            "SELECT resume_text FROM profiles WHERE user_id = %s", (user_id,)
+        ).fetchone()
+        if profile is None or not profile["resume_text"]:
+            raise HTTPException(409, "Upload a resume first.")
         conn.execute(
-            "INSERT INTO jobs (user_id, kind, payload) VALUES (%s, 'extract_evidence', %s)",
-            (user_id, Jsonb({})),
+            "DELETE FROM evidence WHERE user_id = %s AND origin = 'resume' AND NOT confirmed",
+            (user_id,),
         )
+        _queue_reading(conn, user_id)
     return get_profile(user_id)
 
 

@@ -281,3 +281,67 @@ def test_a_person_cannot_change_another_persons_evidence(client: TestClient) -> 
         app.dependency_overrides.clear()
 
     assert len(evidence(client)) == 1
+
+
+def test_text_inside_docx_tables_is_read(client: TestClient) -> None:
+    document = Document()
+    document.add_paragraph("Sam Rivera")
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Skills"
+    table.cell(0, 1).text = "Python, FastAPI"
+    out = io.BytesIO()
+    document.save(out)
+
+    upload(client, "resume.docx", out.getvalue())
+
+    assert "Python, FastAPI" in client.get("/api/profile").json()["resume_text"]
+
+
+def test_a_docx_that_expands_too_far_is_refused(client: TestClient) -> None:
+    content = make_docx(["a" * 25_000_000])
+    assert len(content) < 5_000_000
+
+    response = upload(client, "resume.docx", content)
+
+    assert response.status_code == 422  # type: ignore[attr-defined]
+    assert "too large" in response.json()["detail"]  # type: ignore[attr-defined]
+
+
+def test_a_resume_with_too_much_text_is_refused(client: TestClient) -> None:
+    response = upload(client, "resume.docx", make_docx(["word " * 30_000]))
+
+    assert response.status_code == 422  # type: ignore[attr-defined]
+    assert "too long" in response.json()["detail"]  # type: ignore[attr-defined]
+
+
+def test_uploading_twice_quickly_reads_the_resume_once(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    provider.text = json.dumps(EXTRACTED)
+    upload(client, "resume.docx", make_docx(RESUME_LINES))
+    upload(client, "resume.docx", make_docx(RESUME_LINES))
+
+    while worker.run_once():
+        pass
+
+    assert len(evidence(client)) == 2
+    assert len(provider.received) == 1
+
+
+def test_a_failed_reading_can_be_tried_again(client: TestClient, provider: FakeProvider) -> None:
+    provider.error = RuntimeError("no credit")
+    upload(client, "resume.docx", make_docx(RESUME_LINES))
+    worker.run_once()
+    provider.error = None
+    provider.text = json.dumps(EXTRACTED)
+
+    retried = client.post("/api/profile/resume/read-again")
+    assert retried.status_code == 202
+    assert client.get("/api/profile").json()["extraction_status"] == "queued"
+    worker.run_once()
+
+    assert len(evidence(client)) == 2
+
+
+def test_reading_again_without_a_resume_is_refused(client: TestClient) -> None:
+    assert client.post("/api/profile/resume/read-again").status_code == 409

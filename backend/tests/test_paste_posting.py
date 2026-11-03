@@ -188,3 +188,21 @@ def test_an_unknown_job_kind_does_not_block_the_queue(
     assert worker.run_once() is True
 
     assert client.get("/api/job-postings").json()[0]["status"] == "received"
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_changes_from_another_website_are_refused(client: TestClient, site: str) -> None:
+    response = client.post(
+        "/api/job-postings", json={"text": POSTING}, headers={"Sec-Fetch-Site": site}
+    )
+
+    assert response.status_code == 403
+    assert client.get("/api/job-postings").json() == []
+
+
+def test_changes_from_the_app_itself_are_allowed(client: TestClient) -> None:
+    response = client.post(
+        "/api/job-postings", json={"text": POSTING}, headers={"Sec-Fetch-Site": "same-origin"}
+    )
+
+    assert response.status_code == 201
