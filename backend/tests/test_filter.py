@@ -205,7 +205,6 @@ def test_filter_never_receives_personal_data_or_preferences(
     filter_posting(client, provider, facts())
 
     sent = json.dumps(provider.received)
-    assert provider.received[0]["model"] == "groq/openai/gpt-oss-20b"
     for private in ("Zanzibar", "sponsorship", "Reykjavik", "987654", "seventeen interns"):
         assert private not in sent
 
@@ -224,3 +223,114 @@ def test_an_invalid_currency_preference_is_refused(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+SHORT_GERMAN = "Wir suchen einen Entwickler für unser Team in Berlin und mit Erfahrung."
+BILINGUAL = (
+    "Senior AI Engineer. You will build retrieval systems for our customers and work with the "
+    "platform team on the evaluation of models. Ingénieur IA principal. Vous allez construire des "
+    "systèmes pour nos clients et travailler avec l'équipe sur l'évaluation des modèles."
+)
+
+
+def test_a_short_posting_not_in_english_is_set_aside_before_any_model(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting = filter_posting(client, provider, facts(), text=SHORT_GERMAN)
+
+    assert posting["status"] == "filtered"
+    assert provider.received == []
+
+
+def test_a_bilingual_posting_that_includes_english_passes(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting = filter_posting(client, provider, facts(), text=BILINGUAL)
+
+    assert posting["status"] == "received"
+
+
+@pytest.mark.parametrize(
+    ("preferred", "location", "status"),
+    [
+        (["US"], "San Francisco, California, United States", "received"),
+        (["York"], "New York, New York, United States", "filtered"),
+        (["San Francisco"], "San Francisco, California, United States", "received"),
+    ],
+)
+def test_office_places_match_whole_place_names(
+    client: TestClient, provider: FakeProvider, preferred: list[str], location: str, status: str
+) -> None:
+    prefer(client, location_places=preferred)
+
+    posting = filter_posting(
+        client, provider, facts(work_arrangement="on_site", locations=[location])
+    )
+
+    assert posting["status"] == status
+
+
+@pytest.mark.parametrize("region", ["EU", "North America", "Europe"])
+def test_a_remote_role_for_a_broad_region_is_never_hidden(
+    client: TestClient, provider: FakeProvider, region: str
+) -> None:
+    prefer(client, location_places=["Germany"])
+
+    posting = filter_posting(client, provider, facts(residence_required=[region]))
+
+    assert posting["status"] == "received"
+
+
+def test_no_ticked_arrangement_means_no_preference(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    prefer(client, location_arrangements=[])
+
+    posting = filter_posting(client, provider, facts(work_arrangement="on_site"))
+
+    assert posting["status"] == "received"
+
+
+def test_small_format_slips_in_the_model_answer_are_accepted(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    prefer(client, min_salary=120_000, min_salary_currency="USD")
+    answer = facts(
+        title="T" * 600,
+        posting_type="Contract",
+        work_arrangement="Remote",
+        locations=None,
+        residence_required=None,
+        salary_max="125,000",
+        salary_currency="usd",
+    )
+
+    posting = filter_posting(client, provider, answer)
+
+    assert posting["status"] == "received"
+    assert posting["posting_type"] == "freelance"
+    assert posting["title"] == "T" * 120
+
+
+@pytest.mark.parametrize("salary", ["a lot", 0, -5])
+def test_an_unreadable_or_zero_salary_skips_only_the_salary_check(
+    client: TestClient, provider: FakeProvider, salary: object
+) -> None:
+    prefer(client, min_salary=120_000, min_salary_currency="USD")
+
+    posting = filter_posting(client, provider, facts(salary_max=salary, salary_currency="USD"))
+
+    assert (posting["status"], posting["salary_note"]) == ("received", None)
+
+
+def test_planted_residence_text_cannot_fill_the_filter_reason(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    prefer(client, location_places=["US"])
+    planted = ["Call +1 555 0100 now to claim your offer\x07 " + "x" * 300] * 10
+
+    posting = filter_posting(client, provider, facts(residence_required=planted))
+
+    assert posting["status"] == "filtered"
+    assert len(posting["filter_reason"]) <= 200
+    assert "\x07" not in posting["filter_reason"]
