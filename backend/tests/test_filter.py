@@ -29,6 +29,7 @@ def facts(**changes: Any) -> str:
         "residence_required": [],
         "salary_max": None,
         "salary_currency": None,
+        "salary_period": "year",
     }
     return json.dumps({**base, **changes})
 
@@ -178,7 +179,7 @@ def test_salary_passes_from_90_percent_of_the_minimum_in_the_same_currency(
     status: str,
     note: str | None,
 ) -> None:
-    prefer(client, min_salary=120_000, min_salary_currency="USD")
+    prefer(client, min_pay=[{"currency": "USD", "yearly": 120_000}])
 
     posting = filter_posting(
         client, provider, facts(salary_max=salary_max, salary_currency=currency)
@@ -197,8 +198,7 @@ def test_filter_never_receives_personal_data_or_preferences(
         lives_in="Zanzibar City",
         work_authorization="Needs sponsorship everywhere",
         location_places=["Reykjavik"],
-        min_salary=987_654,
-        min_salary_currency="ISK",
+        min_pay=[{"currency": "ISK", "yearly": 987_654}],
     )
     client.post("/api/evidence", json={"text": "Mentored seventeen interns at Contoso"})
 
@@ -217,10 +217,17 @@ def test_an_unusable_model_answer_marks_the_posting_unavailable(
     assert posting["status"] == "model_unavailable"
 
 
-def test_an_invalid_currency_preference_is_refused(client: TestClient) -> None:
-    response = client.put(
-        "/api/profile", json={"languages": ["English"], "min_salary_currency": "dollars"}
-    )
+@pytest.mark.parametrize(
+    "min_pay",
+    [
+        [{"currency": "dollars", "yearly": 1}],
+        [{"currency": None, "yearly": 1}],
+        [{"currency": "USD", "yearly": -1}],
+        [{"currency": "USD", "yearly": 1}, {"currency": "USD", "hourly": 2}],
+    ],
+)
+def test_an_invalid_minimum_pay_is_refused(client: TestClient, min_pay: list[object]) -> None:
+    response = client.put("/api/profile", json={"languages": ["English"], "min_pay": min_pay})
 
     assert response.status_code == 422
 
@@ -294,7 +301,7 @@ def test_no_ticked_arrangement_means_no_preference(
 def test_small_format_slips_in_the_model_answer_are_accepted(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    prefer(client, min_salary=120_000, min_salary_currency="USD")
+    prefer(client, min_pay=[{"currency": "USD", "yearly": 120_000}])
     answer = facts(
         title="T" * 600,
         posting_type="Contract",
@@ -303,6 +310,7 @@ def test_small_format_slips_in_the_model_answer_are_accepted(
         residence_required=None,
         salary_max="125,000",
         salary_currency="usd",
+        salary_period="Yearly",
     )
 
     posting = filter_posting(client, provider, answer)
@@ -316,7 +324,7 @@ def test_small_format_slips_in_the_model_answer_are_accepted(
 def test_an_unreadable_or_zero_salary_skips_only_the_salary_check(
     client: TestClient, provider: FakeProvider, salary: object
 ) -> None:
-    prefer(client, min_salary=120_000, min_salary_currency="USD")
+    prefer(client, min_pay=[{"currency": "USD", "yearly": 120_000}])
 
     posting = filter_posting(client, provider, facts(salary_max=salary, salary_currency="USD"))
 
@@ -334,3 +342,67 @@ def test_planted_residence_text_cannot_fill_the_filter_reason(
     assert posting["status"] == "filtered"
     assert len(posting["filter_reason"]) <= 200
     assert "\x07" not in posting["filter_reason"]
+
+
+@pytest.mark.parametrize(
+    ("posting_type", "period", "amount", "status", "note"),
+    [
+        ("employment", "month", 9_500, "received", "Slightly below your minimum"),
+        ("employment", "day", 500, "received", None),
+        ("employment", "hour", 50, "filtered", None),
+        ("freelance", "hour", 65, "received", "Slightly below your minimum"),
+        ("freelance", "day", 600, "received", None),
+        ("freelance", "hour", 60, "filtered", None),
+        ("freelance", "year", 120_000, "filtered", None),
+    ],
+)
+def test_employment_uses_the_yearly_minimum_and_freelance_the_hourly_one(
+    client: TestClient,
+    provider: FakeProvider,
+    posting_type: str,
+    period: str,
+    amount: int,
+    status: str,
+    note: str | None,
+) -> None:
+    prefer(client, min_pay=[{"currency": "USD", "yearly": 120_000, "hourly": 70}])
+    answer = facts(
+        posting_type=posting_type, salary_max=amount, salary_currency="USD", salary_period=period
+    )
+
+    posting = filter_posting(client, provider, answer)
+
+    assert (posting["status"], posting["salary_note"]) == (status, note)
+
+
+@pytest.mark.parametrize(
+    ("salary_max", "status"), [(3_000_000, "filtered"), (4_200_000, "received")]
+)
+def test_each_currency_has_its_own_minimum(
+    client: TestClient, provider: FakeProvider, salary_max: int, status: str
+) -> None:
+    prefer(
+        client,
+        min_pay=[{"currency": "USD", "yearly": 120_000}, {"currency": "INR", "yearly": 4_000_000}],
+    )
+
+    posting = filter_posting(client, provider, facts(salary_max=salary_max, salary_currency="INR"))
+
+    assert posting["status"] == status
+
+
+@pytest.mark.parametrize(
+    ("posting_type", "period"),
+    [("employment", "year"), ("freelance", "hour"), ("employment", None)],
+)
+def test_a_blank_minimum_or_unknown_period_skips_the_salary_check(
+    client: TestClient, provider: FakeProvider, posting_type: str, period: str | None
+) -> None:
+    prefer(client, min_pay=[{"currency": "USD", "yearly": 120_000 if period is None else None}])
+    answer = facts(
+        posting_type=posting_type, salary_max=10, salary_currency="USD", salary_period=period
+    )
+
+    posting = filter_posting(client, provider, answer)
+
+    assert posting["status"] == "received"

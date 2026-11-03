@@ -12,8 +12,7 @@ const baseProfile = {
   seniority: null,
   roles: [],
   work_type: "employment_and_freelance",
-  min_salary: null,
-  min_salary_currency: null,
+  min_pay: [],
   location_arrangements: ["remote"],
   location_places: [],
   evidence: [
@@ -136,8 +135,10 @@ describe("Profile setup", () => {
       target: { value: "US, San Francisco" },
     });
     fireEvent.click(screen.getByLabelText("Hybrid"));
-    fireEvent.change(screen.getByLabelText("Minimum salary (optional)"), { target: { value: "120000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add a currency" }));
     fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "usd" } });
+    fireEvent.change(screen.getByLabelText("Yearly, for employment"), { target: { value: "120000" } });
+    fireEvent.change(screen.getByLabelText("Hourly, for freelance"), { target: { value: "70" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
 
     await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
@@ -146,8 +147,15 @@ describe("Profile setup", () => {
     expect(saved.location_places).toEqual(["US", "San Francisco"]);
     expect(saved.location_arrangements).toEqual(["remote", "hybrid"]);
     expect(saved.languages).toEqual(["English"]);
-    expect(saved.min_salary).toBe(120000);
-    expect(saved.min_salary_currency).toBe("USD");
+    expect(saved.min_pay).toEqual([{ currency: "USD", yearly: 120000, hourly: 70 }]);
+  });
+
+  it("asks for the currency of a minimum saved without one", async () => {
+    serve({ ...baseProfile, min_pay: [{ currency: null, yearly: 120000, hourly: null }] });
+    render(<Profile />);
+
+    expect(await screen.findByText("Choose the currency for this amount. Until then Filter doesn't use it.")).toBeTruthy();
+    expect((screen.getByLabelText("Yearly, for employment") as HTMLInputElement).value).toBe("120000");
   });
 
   it("explains why an upload was refused", async () => {

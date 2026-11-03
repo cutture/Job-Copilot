@@ -18,8 +18,7 @@ type ProfileData = {
   seniority: string | null;
   roles: string[];
   work_type: string;
-  min_salary: number | null;
-  min_salary_currency: string | null;
+  min_pay: { currency: string | null; yearly: number | null; hourly: number | null }[];
   location_arrangements: string[];
   location_places: string[];
   evidence: Evidence[];
@@ -32,13 +31,15 @@ type Form = {
   seniority: string;
   roles: string;
   work_type: string;
-  min_salary: string;
-  min_salary_currency: string;
+  min_pay: PayRow[];
   location_arrangements: string[];
   location_places: string;
 };
 
+type PayRow = { currency: string; yearly: string; hourly: string };
+
 const REFRESH_MS = 2000;
+const CURRENCIES = ["USD", "EUR", "GBP", "INR", "AUD", "CAD", "SGD", "MYR", "THB", "IDR", "PHP", "VND", "AED", "CHF", "JPY"];
 const ARRANGEMENTS = [
   ["remote", "Remote"],
   ["hybrid", "Hybrid"],
@@ -55,8 +56,11 @@ function toForm(profile: ProfileData): Form {
     seniority: profile.seniority ?? "",
     roles: profile.roles.join(", "),
     work_type: profile.work_type,
-    min_salary: profile.min_salary?.toString() ?? "",
-    min_salary_currency: profile.min_salary_currency ?? "",
+    min_pay: profile.min_pay.map((pay) => ({
+      currency: pay.currency ?? "",
+      yearly: pay.yearly?.toString() ?? "",
+      hourly: pay.hourly?.toString() ?? "",
+    })),
     location_arrangements: profile.location_arrangements,
     location_places: profile.location_places.join(", "),
   };
@@ -251,8 +255,13 @@ export function Profile() {
         seniority: form.seniority || null,
         roles: list(form.roles),
         work_type: form.work_type,
-        min_salary: form.min_salary.trim() ? Number(form.min_salary) : null,
-        min_salary_currency: form.min_salary_currency.trim().toUpperCase() || null,
+        min_pay: form.min_pay
+          .filter((pay) => pay.currency.trim() || pay.yearly.trim() || pay.hourly.trim())
+          .map((pay) => ({
+            currency: pay.currency.trim().toUpperCase() || null,
+            yearly: pay.yearly.trim() ? Number(pay.yearly) : null,
+            hourly: pay.hourly.trim() ? Number(pay.hourly) : null,
+          })),
         location_arrangements: form.location_arrangements,
         location_places: list(form.location_places),
       }),
@@ -261,12 +270,22 @@ export function Profile() {
       setSaved(true);
       refresh(true);
     } else {
-      setError("We couldn't save your Profile. Check the values and try again.");
+      setError(await detail(response, "We couldn't save your Profile. Check the values and try again."));
     }
   }
 
   const set = (key: keyof Form) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((current) => current && { ...current, [key]: event.target.value });
+
+  function setPay(index: number, key: keyof PayRow, value: string) {
+    setForm(
+      (current) =>
+        current && {
+          ...current,
+          min_pay: current.min_pay.map((pay, i) => (i === index ? { ...pay, [key]: value } : pay)),
+        },
+    );
+  }
 
   function toggleArrangement(value: string) {
     setForm(
@@ -385,26 +404,74 @@ export function Profile() {
                 <option value="employment">Employment only</option>
                 <option value="freelance">Freelance only</option>
               </select>
-              <label htmlFor="min-salary">Minimum salary (optional)</label>
-              <input
-                id="min-salary"
-                style={field}
-                inputMode="numeric"
-                value={form.min_salary}
-                onChange={set("min_salary")}
-              />
-              <label htmlFor="salary-currency">Currency</label>
-              <input
-                id="salary-currency"
-                style={field}
-                maxLength={3}
-                placeholder="e.g. USD, INR, EUR"
-                value={form.min_salary_currency}
-                onChange={set("min_salary_currency")}
-              />
-              <p style={{ fontSize: 13 }}>
-                Filter compares pay only with postings in this currency. Others pass.
-              </p>
+              <fieldset style={{ border: 0, padding: 0, marginBottom: 8 }}>
+                <legend>Minimum Pay (optional)</legend>
+                <p style={{ fontSize: 13 }}>
+                  One row for each currency. Employment is compared with the yearly amount and
+                  freelance with the hourly one. Postings in other currencies pass.
+                </p>
+                <datalist id="currencies">
+                  {CURRENCIES.map((code) => (
+                    <option key={code} value={code} />
+                  ))}
+                </datalist>
+                {form.min_pay.map((pay, index) => (
+                  <div key={index} style={{ marginBottom: 8 }}>
+                    <label>
+                      Currency{" "}
+                      <input
+                        list="currencies"
+                        maxLength={3}
+                        size={4}
+                        value={pay.currency}
+                        onChange={(event) => setPay(index, "currency", event.target.value)}
+                      />
+                    </label>{" "}
+                    <label>
+                      Yearly, for employment{" "}
+                      <input
+                        inputMode="numeric"
+                        size={10}
+                        value={pay.yearly}
+                        onChange={(event) => setPay(index, "yearly", event.target.value)}
+                      />
+                    </label>{" "}
+                    <label>
+                      Hourly, for freelance{" "}
+                      <input
+                        inputMode="decimal"
+                        size={6}
+                        value={pay.hourly}
+                        onChange={(event) => setPay(index, "hourly", event.target.value)}
+                      />
+                    </label>{" "}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setForm((current) => current && { ...current, min_pay: current.min_pay.filter((_, i) => i !== index) })
+                      }
+                    >
+                      Remove
+                    </button>
+                    {!pay.currency.trim() && (pay.yearly.trim() || pay.hourly.trim()) && (
+                      <p role="alert" style={{ fontSize: 13 }}>
+                        Choose the currency for this amount. Until then Filter doesn't use it.
+                      </p>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setForm(
+                      (current) =>
+                        current && { ...current, min_pay: [...current.min_pay, { currency: "", yearly: "", hourly: "" }] },
+                    )
+                  }
+                >
+                  Add a currency
+                </button>
+              </fieldset>
               <fieldset style={{ border: 0, padding: 0, marginBottom: 8 }}>
                 <legend>Location Preference</legend>
                 {ARRANGEMENTS.map(([value, label]) => (

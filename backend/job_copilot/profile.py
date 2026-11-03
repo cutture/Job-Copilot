@@ -190,8 +190,7 @@ PREFERENCE_FIELDS = (
     "seniority",
     "roles",
     "work_type",
-    "min_salary",
-    "min_salary_currency",
+    "min_pay",
     "location_arrangements",
     "location_places",
 )
@@ -200,6 +199,14 @@ ShortText = Annotated[str, Field(min_length=1, max_length=200)]
 
 def _clean_list(values: list[str]) -> list[str]:
     return [cleaned for cleaned in (strip_controls(value) for value in values) if cleaned]
+
+
+class MinimumPay(BaseModel):
+    """The lowest pay in one currency: yearly for employment, hourly for freelance work."""
+
+    currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")] | None = None
+    yearly: int | None = Field(default=None, gt=0, le=10**12)
+    hourly: float | None = Field(default=None, gt=0, le=10**9)
 
 
 class Preferences(BaseModel):
@@ -211,8 +218,7 @@ class Preferences(BaseModel):
     work_type: Literal["employment_and_freelance", "employment", "freelance"] = (
         "employment_and_freelance"
     )
-    min_salary: int | None = Field(default=None, ge=0, le=10_000_000)
-    min_salary_currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")] | None = None
+    min_pay: list[MinimumPay] = Field(default_factory=list, max_length=20)
     location_arrangements: list[Literal["remote", "hybrid", "on_site"]] = ["remote"]
     location_places: list[ShortText] = Field(default_factory=list, max_length=20)
 
@@ -286,7 +292,13 @@ def get_profile(user_id: UserId) -> Profile:
 
 @router.put("/api/profile")
 def save_preferences(preferences: Preferences, user_id: UserId) -> Profile:
+    currencies = [pay.currency for pay in preferences.min_pay]
+    if None in currencies:
+        raise HTTPException(422, "Choose the currency for each Minimum Pay.")
+    if len(set(currencies)) < len(currencies):
+        raise HTTPException(422, "Give each currency only one Minimum Pay.")
     values = preferences.model_dump()
+    values["min_pay"] = Jsonb(values["min_pay"])
     assignments = ", ".join(f"{field} = %({field})s" for field in PREFERENCE_FIELDS)
     with connect() as conn:
         _ensure_profile(conn, user_id)

@@ -239,7 +239,7 @@ def test_facts_and_preferences_are_saved_with_location_preference_separate(
             "seniority": "Senior",
             "roles": ["GenAI engineer"],
             "work_type": "employment",
-            "min_salary": 120000,
+            "min_pay": [{"currency": "USD", "yearly": 120000}],
             "location_arrangements": ["remote", "hybrid"],
             "location_places": ["US", "San Francisco"],
         },
@@ -251,7 +251,7 @@ def test_facts_and_preferences_are_saved_with_location_preference_separate(
     assert profile["location_places"] == ["US", "San Francisco"]
     assert profile["location_arrangements"] == ["remote", "hybrid"]
     assert profile["seniority"] == "Senior"
-    assert profile["min_salary"] == 120000
+    assert profile["min_pay"] == [{"currency": "USD", "yearly": 120000, "hourly": None}]
 
 
 @pytest.mark.parametrize(
@@ -259,7 +259,7 @@ def test_facts_and_preferences_are_saved_with_location_preference_separate(
     [
         {"work_type": "anything"},
         {"seniority": "Wizard"},
-        {"min_salary": -1},
+        {"min_pay": [{"currency": "USD", "yearly": -1}]},
         {"location_arrangements": ["moon"]},
     ],
 )
