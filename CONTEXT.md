@@ -42,6 +42,10 @@ _Avoid_: Close match
 The work arrangements and places a person wants, which Filter uses. It is separate from where the person lives.
 _Avoid_: Location, places
 
+**Minimum Pay**:
+The lowest pay a person will take in one currency: a yearly amount for employment and an hourly amount for freelance work. Filter compares a posting only with the Minimum Pay in the posting's currency, never converting between currencies.
+_Avoid_: Salary expectation, desired salary
+
 ### The person
 
 **Profile**:
