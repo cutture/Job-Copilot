@@ -4,12 +4,13 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+import httpx
 import psycopg
 import pytest
 
 from job_copilot import gateway
 from job_copilot.gateway import CapReached, DataClass, ModelUnavailable, NotEligible
-from tests.conftest import TEST_DB, FakeProvider, real_call_provider
+from tests.conftest import TEST_DB, FakeProvider, real_call_provider, real_send_trace
 
 USER = UUID("00000000-0000-0000-0000-000000000001")
 GROQ_POSTING_MODEL = "groq/openai/gpt-oss-20b"
@@ -233,3 +234,67 @@ def test_the_cost_is_recorded_before_tracing_can_fail(
     ask(HAIKU, DataClass.PERSONAL)
 
     assert seen == [1]
+
+
+def test_traces_go_to_langfuse_as_an_opentelemetry_generation_without_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: dict[str, Any] = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+    def capture(url: str, **kwargs: Any) -> Response:
+        sent.update(url=url, **kwargs)
+        return Response()
+
+    monkeypatch.setattr(httpx, "post", capture)
+    settings = gateway.TraceSettings("pk-lf-test", "sk-lf-test", "https://eu.langfuse.example.com/")
+    trace_id = "0af7651916cd43dd8448eb211c80319c"
+
+    real_send_trace(
+        settings,
+        {
+            "trace_id": trace_id,
+            "user_id": str(USER),
+            "step": "posting_title",
+            "model": HAIKU,
+            "input_tokens": 1200,
+            "output_tokens": 40,
+            "cost_usd": "0.00014",
+            "seconds": 1.5,
+        },
+    )
+
+    assert sent["url"] == "https://eu.langfuse.example.com/api/public/otel/v1/traces"
+    assert sent["auth"] == ("pk-lf-test", "sk-lf-test")
+    assert sent["headers"]["x-langfuse-ingestion-version"] == "4"
+    span = sent["json"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    attributes = {a["key"]: a["value"]["stringValue"] for a in span["attributes"]}
+    assert span["traceId"] == trace_id
+    assert len(span["spanId"]) == 16
+    assert int(span["endTimeUnixNano"]) - int(span["startTimeUnixNano"]) == 1_500_000_000
+    assert attributes["langfuse.observation.type"] == "generation"
+    assert attributes["langfuse.observation.model.name"] == HAIKU
+    assert json.loads(attributes["langfuse.observation.usage_details"]) == {
+        "input": 1200,
+        "output": 40,
+    }
+    assert json.loads(attributes["langfuse.observation.cost_details"]) == {"total": 0.00014}
+    assert attributes["langfuse.trace.name"] == "posting_title"
+    assert attributes["langfuse.user.id"] == str(USER)
+    assert "Sam Rivera" not in json.dumps(sent["json"])
+
+
+def test_stored_trace_ids_are_opentelemetry_trace_ids(
+    provider: FakeProvider, traces: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://eu.langfuse.example.com")
+
+    ask(HAIKU, DataClass.PERSONAL)
+
+    stored = calls()[0][4]
+    assert len(stored) == 32 and int(stored, 16) >= 0

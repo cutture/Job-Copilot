@@ -20,6 +20,7 @@ os.environ["DATABASE_URL"] = TEST_DB
 BACKEND = Path(__file__).resolve().parent.parent
 
 real_call_provider = gateway.call_provider
+real_send_trace = gateway.send_trace
 
 
 @pytest.fixture(scope="session", autouse=True)

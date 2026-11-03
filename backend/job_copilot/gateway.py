@@ -1,10 +1,10 @@
 """The only route to any model. Prompts and answers are never logged or traced."""
 
+import json
 import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -20,6 +20,7 @@ CALL_TIMEOUT_SECONDS = 60
 TRACE_TIMEOUT_SECONDS = 5
 PER_TOKEN = Decimal("0.000001")
 CHARS_PER_TOKEN_ESTIMATE = 3
+NOT_RECORDED = "Not recorded: Job Copilot never sends prompt or answer text"
 
 
 class DataClass(Enum):
@@ -109,22 +110,51 @@ def trace_settings() -> TraceSettings | None:
 
 
 def send_trace(settings: TraceSettings, event: dict[str, Any]) -> None:
-    """Send metadata only. Leaving out prompts and answers is the masking."""
-    now = datetime.now(UTC).isoformat()
+    """Send one model call to Langfuse as an OpenTelemetry generation, with metadata only.
+
+    Leaving out prompts and answers is the masking.
+    """
+    end_ns = time.time_ns()
+    start_ns = end_ns - round(float(event["seconds"]) * 1_000_000_000)
+    attributes = {
+        "langfuse.observation.type": "generation",
+        "langfuse.observation.model.name": event["model"],
+        "langfuse.observation.usage_details": json.dumps(
+            {"input": event["input_tokens"], "output": event["output_tokens"]}
+        ),
+        "langfuse.observation.cost_details": json.dumps({"total": float(event["cost_usd"])}),
+        "langfuse.observation.input": json.dumps(NOT_RECORDED),
+        "langfuse.observation.output": json.dumps(NOT_RECORDED),
+        "langfuse.trace.name": event["step"],
+        "langfuse.user.id": event["user_id"],
+    }
+    span = {
+        "traceId": event["trace_id"],
+        "spanId": uuid4().hex[:16],
+        "name": event["step"],
+        "kind": 1,
+        "startTimeUnixNano": str(start_ns),
+        "endTimeUnixNano": str(end_ns),
+        "attributes": [
+            {"key": key, "value": {"stringValue": str(value)}} for key, value in attributes.items()
+        ],
+    }
     body = {
-        "batch": [
+        "resourceSpans": [
             {
-                "id": str(uuid4()),
-                "timestamp": now,
-                "type": "trace-create",
-                "body": {"id": event["trace_id"], "name": event["step"], "metadata": event},
+                "resource": {
+                    "attributes": [{"key": "service.name", "value": {"stringValue": "job-copilot"}}]
+                },
+                "scopeSpans": [{"scope": {"name": "job-copilot"}, "spans": [span]}],
             }
         ]
     }
     httpx.post(
-        f"{settings.host.rstrip('/')}/api/public/ingestion",
+        f"{settings.host.rstrip('/')}/api/public/otel/v1/traces",
         json=body,
         auth=(settings.public_key, settings.secret_key),
+        # Without this header, Langfuse can take up to 10 minutes to show the data.
+        headers={"x-langfuse-ingestion-version": "4"},
         timeout=TRACE_TIMEOUT_SECONDS,
     ).raise_for_status()
 
@@ -192,7 +222,7 @@ def complete(
     cost = _cost(rule, answer.input_tokens, answer.output_tokens)
     settings = trace_settings()
     # A failed send may still have been delivered, so the ID is kept for later deletion.
-    trace_id = str(uuid4()) if settings else None
+    trace_id = uuid4().hex if settings else None
     with connect() as conn:
         conn.execute(
             """INSERT INTO model_calls
