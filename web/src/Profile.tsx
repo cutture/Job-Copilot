@@ -1,0 +1,358 @@
+import { useEffect, useState } from "react";
+import type { ChangeEvent, CSSProperties } from "react";
+
+type Evidence = {
+  id: number;
+  text: string;
+  origin: "resume" | "self_reported";
+  confirmed: boolean;
+};
+
+type ProfileData = {
+  resume_filename: string | null;
+  resume_text: string | null;
+  extraction_status: "queued" | "done" | "failed" | null;
+  work_authorization: string | null;
+  lives_in: string | null;
+  languages: string[];
+  seniority: string | null;
+  roles: string[];
+  work_type: string;
+  min_salary: number | null;
+  location_arrangements: string[];
+  location_places: string[];
+  evidence: Evidence[];
+};
+
+type Form = {
+  work_authorization: string;
+  lives_in: string;
+  languages: string;
+  seniority: string;
+  roles: string;
+  work_type: string;
+  min_salary: string;
+  location_arrangements: string[];
+  location_places: string;
+};
+
+const REFRESH_MS = 2000;
+const ARRANGEMENTS = [
+  ["remote", "Remote"],
+  ["hybrid", "Hybrid"],
+  ["on_site", "On-site"],
+] as const;
+const card: CSSProperties = { border: "1px solid #ccc", borderRadius: 8, padding: 16, marginBottom: 12 };
+const field: CSSProperties = { display: "block", width: "100%", boxSizing: "border-box", marginBottom: 8 };
+
+function toForm(profile: ProfileData): Form {
+  return {
+    work_authorization: profile.work_authorization ?? "",
+    lives_in: profile.lives_in ?? "",
+    languages: profile.languages.join(", "),
+    seniority: profile.seniority ?? "",
+    roles: profile.roles.join(", "),
+    work_type: profile.work_type,
+    min_salary: profile.min_salary?.toString() ?? "",
+    location_arrangements: profile.location_arrangements,
+    location_places: profile.location_places.join(", "),
+  };
+}
+
+const list = (value: string) =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+async function detail(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return typeof body.detail === "string" ? body.detail : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function loadProfile(): Promise<ProfileData> {
+  const response = await fetch("/api/profile");
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
+function EvidenceRow({ item, onChanged }: { item: Evidence; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.text);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  async function change(body: object) {
+    await fetch(`/api/evidence/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setEditing(false);
+    onChanged();
+  }
+
+  async function remove() {
+    await fetch(`/api/evidence/${item.id}`, { method: "DELETE" });
+    onChanged();
+  }
+
+  return (
+    <li style={{ borderTop: "1px solid #eee", padding: "8px 0" }}>
+      {editing ? (
+        <>
+          <textarea
+            aria-label="Correct this item"
+            style={field}
+            rows={2}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <button onClick={() => change({ text: draft })} disabled={!draft.trim()}>
+            Save
+          </button>{" "}
+          <button onClick={() => setEditing(false)}>Cancel</button>
+        </>
+      ) : (
+        <>
+          <span>{item.text}</span>{" "}
+          {item.origin === "self_reported" ? (
+            <strong>Self-reported</strong>
+          ) : item.confirmed ? (
+            <strong>Confirmed</strong>
+          ) : (
+            <em>Not confirmed</em>
+          )}
+          <div>
+            {!item.confirmed && <button onClick={() => change({ confirmed: true })}>Confirm</button>}{" "}
+            <button onClick={() => setEditing(true)}>Edit</button>{" "}
+            {confirmingDelete ? (
+              <>
+                <button onClick={remove}>Yes, delete</button>{" "}
+                <button onClick={() => setConfirmingDelete(false)}>Keep it</button>
+              </>
+            ) : (
+              <button onClick={() => setConfirmingDelete(true)}>Delete</button>
+            )}
+          </div>
+        </>
+      )}
+    </li>
+  );
+}
+
+export function Profile() {
+  const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [form, setForm] = useState<Form | null>(null);
+  const [newItem, setNewItem] = useState("");
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  async function refresh(resetForm = false) {
+    try {
+      const loaded = await loadProfile();
+      setProfile(loaded);
+      if (resetForm) setForm(toForm(loaded));
+    } catch {
+      setError("We couldn't load your Profile. Try refreshing the page.");
+    }
+  }
+
+  useEffect(() => {
+    refresh(true);
+  }, []);
+
+  const extracting = profile?.extraction_status === "queued";
+  useEffect(() => {
+    if (!extracting) return;
+    const timer = setInterval(() => refresh(), REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [extracting]);
+
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError("");
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("/api/profile/resume", { method: "POST", body });
+    if (!response.ok) {
+      setError(await detail(response, "We couldn't upload this file. Try again."));
+      return;
+    }
+    refresh();
+  }
+
+  async function addEvidence() {
+    const response = await fetch("/api/evidence", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: newItem }),
+    });
+    if (response.ok) {
+      setNewItem("");
+      refresh();
+    } else {
+      setError(await detail(response, "We couldn't add this item. Try again."));
+    }
+  }
+
+  async function save() {
+    if (!form) return;
+    setSaved(false);
+    setError("");
+    const response = await fetch("/api/profile", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        work_authorization: form.work_authorization.trim() || null,
+        lives_in: form.lives_in.trim() || null,
+        languages: list(form.languages),
+        seniority: form.seniority || null,
+        roles: list(form.roles),
+        work_type: form.work_type,
+        min_salary: form.min_salary.trim() ? Number(form.min_salary) : null,
+        location_arrangements: form.location_arrangements,
+        location_places: list(form.location_places),
+      }),
+    });
+    if (response.ok) {
+      setSaved(true);
+      refresh(true);
+    } else {
+      setError("We couldn't save your Profile. Check the values and try again.");
+    }
+  }
+
+  const set = (key: keyof Form) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm((current) => current && { ...current, [key]: event.target.value });
+
+  function toggleArrangement(value: string) {
+    setForm(
+      (current) =>
+        current && {
+          ...current,
+          location_arrangements: current.location_arrangements.includes(value)
+            ? current.location_arrangements.filter((item) => item !== value)
+            : [...current.location_arrangements, value],
+        },
+    );
+  }
+
+  return (
+    <section>
+      {error && <p role="alert">{error}</p>}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16 }}>
+        <div style={card}>
+          <h2>Your resume</h2>
+          <label htmlFor="resume" style={{ display: "block", fontWeight: 600 }}>
+            Upload your resume (PDF or DOCX)
+          </label>
+          <input id="resume" type="file" accept=".pdf,.docx" onChange={upload} />
+          <p style={{ fontSize: 13 }}>It stays on your server and is used only as Evidence.</p>
+          {profile?.resume_text && (
+            <>
+              <p style={{ fontSize: 13 }}>{profile.resume_filename}</p>
+              <pre style={{ whiteSpace: "pre-wrap", fontFamily: "Georgia, serif", maxHeight: 520, overflow: "auto" }}>
+                {profile.resume_text}
+              </pre>
+            </>
+          )}
+        </div>
+
+        <div>
+          <div style={card}>
+            <h2>What we understood</h2>
+            {extracting && <p>Reading your resume…</p>}
+            {profile?.extraction_status === "failed" && (
+              <p>
+                We couldn't read Evidence from your resume. Our AI model may be unavailable or out of
+                credit. You can still add items below, or upload again later.
+              </p>
+            )}
+            <p style={{ fontSize: 13 }}>
+              Only confirmed items are used to support what goes in your applications.
+            </p>
+            <ul style={{ listStyle: "none", padding: 0 }}>
+              {profile?.evidence.map((item) => (
+                <EvidenceRow key={`${item.id}-${item.text}`} item={item} onChanged={() => refresh()} />
+              ))}
+            </ul>
+            <label htmlFor="new-evidence" style={{ display: "block", fontWeight: 600 }}>
+              Add something your resume misses
+            </label>
+            <textarea
+              id="new-evidence"
+              style={field}
+              rows={2}
+              value={newItem}
+              onChange={(event) => setNewItem(event.target.value)}
+            />
+            <button onClick={addEvidence} disabled={!newItem.trim()}>
+              Add as self-reported
+            </button>
+          </div>
+
+          {form && (
+            <div style={card}>
+              <h2>Facts about you</h2>
+              <p style={{ fontSize: 13 }}>Empty fields count as Unknown, never as a Hard Blocker.</p>
+              <label htmlFor="work-authorization">Work authorization</label>
+              <input id="work-authorization" style={field} value={form.work_authorization} onChange={set("work_authorization")} />
+              <label htmlFor="lives-in">Where you live</label>
+              <input id="lives-in" style={field} value={form.lives_in} onChange={set("lives_in")} />
+              <label htmlFor="languages">Languages</label>
+              <input id="languages" style={field} value={form.languages} onChange={set("languages")} />
+              <label htmlFor="seniority">Seniority</label>
+              <select id="seniority" style={field} value={form.seniority} onChange={set("seniority")}>
+                <option value="">Not set</option>
+                <option>Junior</option>
+                <option>Mid</option>
+                <option>Senior</option>
+                <option>Staff</option>
+              </select>
+
+              <h2>What you're looking for</h2>
+              <label htmlFor="roles">Roles and keywords</label>
+              <input id="roles" style={field} value={form.roles} onChange={set("roles")} />
+              <label htmlFor="work-type">Work type</label>
+              <select id="work-type" style={field} value={form.work_type} onChange={set("work_type")}>
+                <option value="employment_and_freelance">Employment and freelance</option>
+                <option value="employment">Employment only</option>
+                <option value="freelance">Freelance only</option>
+              </select>
+              <label htmlFor="min-salary">Minimum salary (optional)</label>
+              <input
+                id="min-salary"
+                style={field}
+                inputMode="numeric"
+                value={form.min_salary}
+                onChange={set("min_salary")}
+              />
+              <fieldset style={{ border: 0, padding: 0, marginBottom: 8 }}>
+                <legend>Location Preference</legend>
+                {ARRANGEMENTS.map(([value, label]) => (
+                  <label key={value} style={{ marginRight: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={form.location_arrangements.includes(value)}
+                      onChange={() => toggleArrangement(value)}
+                    />{" "}
+                    {label}
+                  </label>
+                ))}
+              </fieldset>
+              <label htmlFor="places">Countries or cities you'd work in</label>
+              <input id="places" style={field} value={form.location_places} onChange={set("location_places")} />
+              <p style={{ fontSize: 13 }}>Separate items with commas.</p>
+              <button onClick={save}>Save Profile</button> {saved && <span>Saved.</span>}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

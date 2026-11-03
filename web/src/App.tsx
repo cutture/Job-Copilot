@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { Profile } from "./Profile";
 
 type JobPosting = {
   id: string;
@@ -22,6 +23,7 @@ export function App() {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [view, setView] = useState<"postings" | "profile">("postings");
 
   useEffect(() => {
     fetchPostings()
@@ -69,8 +71,17 @@ export function App() {
   }
 
   return (
-    <main style={{ maxWidth: 760, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
       <h1>Job Copilot</h1>
+      <nav aria-label="Pages" style={{ marginBottom: 16 }}>
+        <button aria-pressed={view === "postings"} onClick={() => setView("postings")}>
+          Job Postings
+        </button>{" "}
+        <button aria-pressed={view === "profile"} onClick={() => setView("profile")}>
+          Profile
+        </button>
+      </nav>
+      {view === "profile" ? <Profile /> : <>
       <form onSubmit={addPosting}>
         <label htmlFor="posting" style={{ display: "block", fontWeight: 600 }}>
           Paste a Job Posting
@@ -103,6 +114,7 @@ export function App() {
           </li>
         ))}
       </ul>
+      </>}
     </main>
   );
 }

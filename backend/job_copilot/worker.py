@@ -1,10 +1,10 @@
 import logging
 import time
-import unicodedata
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from job_copilot import gateway
+from job_copilot import gateway, profile
 from job_copilot.db import connect
 from job_copilot.gateway import DataClass
 
@@ -25,7 +25,7 @@ TITLE_PROMPT = (
 def _clean_title(answer: str) -> str | None:
     """Model output is untrusted: keep one short line with no control characters."""
     for line in answer.splitlines():
-        title = "".join(c for c in line if not unicodedata.category(c).startswith("C")).strip()
+        title = profile.strip_controls(line)
         if title:
             return title[:MAX_TITLE_LENGTH]
     return None
@@ -68,16 +68,33 @@ def _mark_unavailable(user_id: UUID, posting_id: str) -> None:
         )
 
 
+def _process_posting_job(user_id: UUID, payload: dict[str, Any]) -> None:
+    _process_posting(user_id, payload["job_posting_id"])
+
+
+def _posting_failed(user_id: UUID, payload: dict[str, Any]) -> None:
+    _mark_unavailable(user_id, payload["job_posting_id"])
+
+
+Handler = Callable[[UUID, dict[str, Any]], None]
+# Each kind of job, and what to record if it fails, so one failure never blocks the queue.
+HANDLERS: dict[str, tuple[Handler, Handler]] = {
+    "process_posting": (_process_posting_job, _posting_failed),
+    "extract_evidence": (profile.extract_evidence, profile.mark_extraction_failed),
+}
+
+
 def _run(job: dict[str, Any]) -> None:
-    if job["kind"] != "process_posting":
+    handlers = HANDLERS.get(job["kind"])
+    if handlers is None:
         log.error("Dropped job with unknown kind: %s", job["kind"])
         return
-    posting_id = job["payload"]["job_posting_id"]
+    work, on_failure = handlers
     try:
-        _process_posting(job["user_id"], posting_id)
+        work(job["user_id"], job["payload"])
     except Exception as error:
-        log.warning("Posting %s not processed: %s", posting_id, type(error).__name__)
-        _mark_unavailable(job["user_id"], posting_id)
+        log.warning("Job %s failed: %s", job["kind"], type(error).__name__)
+        on_failure(job["user_id"], job["payload"])
 
 
 def run_once() -> bool:

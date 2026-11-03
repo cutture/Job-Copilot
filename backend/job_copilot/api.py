@@ -1,26 +1,20 @@
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, field_validator
 
-from job_copilot.db import connect
+from job_copilot import profile
+from job_copilot.db import UserId, connect, current_user_id
 
-SEEDED_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 MANUAL_SOURCE = "Manual Source"
 TITLE_LENGTH = 120
 
 app = FastAPI(title="Job Copilot")
-
-
-def current_user_id() -> UUID:
-    # ponytail: local mode has one seeded user; owner login arrives with VPS mode.
-    return SEEDED_USER_ID
-
-
-UserId = Annotated[UUID, Depends(current_user_id)]
+app.include_router(profile.router)
+__all__ = ["app", "current_user_id"]
 
 
 class PastedPosting(BaseModel):

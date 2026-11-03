@@ -1,0 +1,171 @@
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Profile } from "./Profile";
+
+const baseProfile = {
+  resume_filename: "resume.pdf",
+  resume_text: "Sam Rivera\nPython Developer, Example Co",
+  extraction_status: "done",
+  work_authorization: null,
+  lives_in: null,
+  languages: ["English"],
+  seniority: null,
+  roles: [],
+  work_type: "employment_and_freelance",
+  min_salary: null,
+  location_arrangements: ["remote"],
+  location_places: [],
+  evidence: [
+    { id: 1, text: "Python Developer at Example Co", origin: "resume", confirmed: false, created_at: "" },
+    { id: 2, text: "Ran Kubernetes services", origin: "self_reported", confirmed: true, created_at: "" },
+  ],
+};
+
+type Call = { url: string; method: string; body: unknown };
+
+function serve(profile: object = baseProfile, overrides: Record<string, Response> = {}) {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push({ url, method, body: init?.body });
+      const override = overrides[`${method} ${url}`];
+      if (override) return override.clone();
+      if (method === "DELETE") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify(profile));
+    }),
+  );
+  return calls;
+}
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("Profile setup", () => {
+  it("shows the resume beside what was understood, marking self-reported Evidence", async () => {
+    serve();
+    render(<Profile />);
+
+    expect(await screen.findByText(/Python Developer, Example Co/)).toBeTruthy();
+    const proposed = screen.getByText("Python Developer at Example Co").closest("li")!;
+    expect(within(proposed).getByRole("button", { name: "Confirm" })).toBeTruthy();
+    const self = screen.getByText("Ran Kubernetes services").closest("li")!;
+    expect(within(self).getByText("Self-reported")).toBeTruthy();
+  });
+
+  it("confirms an Evidence item", async () => {
+    const calls = serve();
+    render(<Profile />);
+    const item = (await screen.findByText("Python Developer at Example Co")).closest("li")!;
+
+    fireEvent.click(within(item).getByRole("button", { name: "Confirm" }));
+
+    await vi.waitFor(() =>
+      expect(calls).toContainEqual({
+        url: "/api/evidence/1",
+        method: "PATCH",
+        body: JSON.stringify({ confirmed: true }),
+      }),
+    );
+  });
+
+  it("corrects an Evidence item", async () => {
+    const calls = serve();
+    render(<Profile />);
+    const item = (await screen.findByText("Python Developer at Example Co")).closest("li")!;
+
+    fireEvent.click(within(item).getByRole("button", { name: "Edit" }));
+    fireEvent.change(within(item).getByRole("textbox"), {
+      target: { value: "Python Developer at Example Co, 2021 to present" },
+    });
+    fireEvent.click(within(item).getByRole("button", { name: "Save" }));
+
+    await vi.waitFor(() =>
+      expect(calls).toContainEqual({
+        url: "/api/evidence/1",
+        method: "PATCH",
+        body: JSON.stringify({ text: "Python Developer at Example Co, 2021 to present" }),
+      }),
+    );
+  });
+
+  it("deletes an Evidence item only after one confirmation", async () => {
+    const calls = serve();
+    render(<Profile />);
+    const item = (await screen.findByText("Ran Kubernetes services")).closest("li")!;
+
+    fireEvent.click(within(item).getByRole("button", { name: "Delete" }));
+    expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+    fireEvent.click(within(item).getByRole("button", { name: "Yes, delete" }));
+
+    await vi.waitFor(() =>
+      expect(calls.some((call) => call.method === "DELETE" && call.url === "/api/evidence/2")).toBe(true),
+    );
+  });
+
+  it("adds self-reported Evidence", async () => {
+    const calls = serve();
+    render(<Profile />);
+    await screen.findByText("Ran Kubernetes services");
+
+    fireEvent.change(screen.getByLabelText("Add something your resume misses"), {
+      target: { value: "Mentored two interns" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add as self-reported" }));
+
+    await vi.waitFor(() =>
+      expect(calls).toContainEqual({
+        url: "/api/evidence",
+        method: "POST",
+        body: JSON.stringify({ text: "Mentored two interns" }),
+      }),
+    );
+  });
+
+  it("saves where the person lives separately from their Location Preference", async () => {
+    const calls = serve();
+    render(<Profile />);
+    expect(((await screen.findByLabelText("Languages")) as HTMLInputElement).value).toBe("English");
+
+    fireEvent.change(screen.getByLabelText("Where you live"), { target: { value: "Austin, US" } });
+    fireEvent.change(screen.getByLabelText("Countries or cities you'd work in"), {
+      target: { value: "US, San Francisco" },
+    });
+    fireEvent.click(screen.getByLabelText("Hybrid"));
+    fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
+
+    await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
+    const saved = JSON.parse(String(calls.find((call) => call.method === "PUT")!.body));
+    expect(saved.lives_in).toBe("Austin, US");
+    expect(saved.location_places).toEqual(["US", "San Francisco"]);
+    expect(saved.location_arrangements).toEqual(["remote", "hybrid"]);
+    expect(saved.languages).toEqual(["English"]);
+  });
+
+  it("explains why an upload was refused", async () => {
+    serve(baseProfile, {
+      "POST /api/profile/resume": new Response(
+        JSON.stringify({ detail: "We found no text in this file. Scanned resumes aren't supported yet." }),
+        { status: 422 },
+      ),
+    });
+    render(<Profile />);
+    await screen.findByText("Ran Kubernetes services");
+
+    fireEvent.change(screen.getByLabelText("Upload your resume (PDF or DOCX)"), {
+      target: { files: [new File(["x"], "scan.pdf")] },
+    });
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Scanned resumes");
+  });
+
+  it("says when Evidence couldn't be read from the resume", async () => {
+    serve({ ...baseProfile, extraction_status: "failed", evidence: [] });
+    render(<Profile />);
+
+    expect(await screen.findByText(/couldn't read Evidence from your resume/)).toBeTruthy();
+  });
+});
