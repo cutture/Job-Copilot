@@ -8,6 +8,7 @@ const baseProfile = {
   extraction_status: "done",
   work_authorization: null,
   lives_in: null,
+  education: null,
   languages: ["English"],
   seniority: null,
   roles: [],
@@ -131,6 +132,7 @@ describe("Profile setup", () => {
     expect(((await screen.findByLabelText("Languages")) as HTMLInputElement).value).toBe("English");
 
     fireEvent.change(screen.getByLabelText("Where you live"), { target: { value: "Austin, US" } });
+    fireEvent.change(screen.getByLabelText("Education"), { target: { value: "BSc Computer Science" } });
     fireEvent.change(screen.getByLabelText("Countries or cities you'd work in"), {
       target: { value: "US, San Francisco" },
     });
@@ -144,6 +146,7 @@ describe("Profile setup", () => {
     await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
     const saved = JSON.parse(String(calls.find((call) => call.method === "PUT")!.body));
     expect(saved.lives_in).toBe("Austin, US");
+    expect(saved.education).toBe("BSc Computer Science");
     expect(saved.location_places).toEqual(["US", "San Francisco"]);
     expect(saved.location_arrangements).toEqual(["remote", "hybrid"]);
     expect(saved.languages).toEqual(["English"]);

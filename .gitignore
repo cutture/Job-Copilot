@@ -233,3 +233,4 @@ __marimo__/
 
 # Web app
 node_modules/
+*.tsbuildinfo

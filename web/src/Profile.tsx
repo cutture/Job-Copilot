@@ -14,6 +14,7 @@ type ProfileData = {
   extraction_status: "queued" | "done" | "failed" | null;
   work_authorization: string | null;
   lives_in: string | null;
+  education: string | null;
   languages: string[];
   seniority: string | null;
   roles: string[];
@@ -27,6 +28,7 @@ type ProfileData = {
 type Form = {
   work_authorization: string;
   lives_in: string;
+  education: string;
   languages: string;
   seniority: string;
   roles: string;
@@ -52,6 +54,7 @@ function toForm(profile: ProfileData): Form {
   return {
     work_authorization: profile.work_authorization ?? "",
     lives_in: profile.lives_in ?? "",
+    education: profile.education ?? "",
     languages: profile.languages.join(", "),
     seniority: profile.seniority ?? "",
     roles: profile.roles.join(", "),
@@ -251,6 +254,7 @@ export function Profile({ draft = "" }: { draft?: string }) {
       body: JSON.stringify({
         work_authorization: form.work_authorization.trim() || null,
         lives_in: form.lives_in.trim() || null,
+        education: form.education.trim() || null,
         languages: list(form.languages),
         seniority: form.seniority || null,
         roles: list(form.roles),
@@ -384,6 +388,8 @@ export function Profile({ draft = "" }: { draft?: string }) {
               <input id="work-authorization" style={field} value={form.work_authorization} onChange={set("work_authorization")} />
               <label htmlFor="lives-in">Where you live</label>
               <input id="lives-in" style={field} value={form.lives_in} onChange={set("lives_in")} />
+              <label htmlFor="education">Education</label>
+              <input id="education" style={field} value={form.education} onChange={set("education")} />
               <label htmlFor="languages">Languages</label>
               <input id="languages" style={field} value={form.languages} onChange={set("languages")} />
               <label htmlFor="seniority">Seniority</label>

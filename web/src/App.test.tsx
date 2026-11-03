@@ -137,7 +137,7 @@ describe("pasting a Job Posting", () => {
       requirements: [{ requirement: "Kubernetes", kind: "must_have", quote: "Kubernetes", result: "missing", evidence: [], gap: null }],
     };
     const profile = {
-      resume_filename: null, resume_text: null, extraction_status: null, work_authorization: null, lives_in: null,
+      resume_filename: null, resume_text: null, extraction_status: null, work_authorization: null, lives_in: null, education: null,
       languages: ["English"], seniority: null, roles: [], work_type: "employment", min_pay: [],
       location_arrangements: ["remote"], location_places: [], evidence: [],
     };

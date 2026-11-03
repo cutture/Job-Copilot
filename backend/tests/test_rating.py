@@ -295,3 +295,71 @@ def test_a_filled_profile_fact_can_meet_a_hard_blocker_without_evidence(
     met = judged["Authorised to work in Canada"]
     assert (met["result"], met["evidence"]) == ("met", ["Your Profile: Canadian citizen"])
     assert posting["match"]["band"] == "High"
+
+
+DEGREE_POSTING = POSTING + " A degree in Computer Science or a related field is required."
+
+
+@pytest.mark.parametrize(
+    ("education", "result", "evidence", "band"),
+    [
+        ("MSc Computer Science", "met", ["Your Profile: MSc Computer Science"], "High"),
+        (None, "unknown", [], "Medium"),
+    ],
+)
+def test_an_education_requirement_is_decided_by_the_profile(
+    client: TestClient,
+    provider: FakeProvider,
+    education: str | None,
+    result: str,
+    evidence: list[str],
+    band: str,
+) -> None:
+    set_profile(client, education=education)
+    evidence_id = add_evidence(client)
+    degree = requirement(
+        "Degree in Computer Science",
+        "A degree in Computer Science or a related field is required",
+        profile_field="education",
+    )
+
+    posting = rate_posting(
+        client, provider, answer(*three_met(evidence_id), degree), text=DEGREE_POSTING
+    )
+
+    match = posting["match"]
+    judged = {r["requirement"]: r for r in match["requirements"]}["Degree in Computer Science"]
+    assert (judged["kind"], judged["result"], judged["evidence"]) == ("must_have", result, evidence)
+    assert match["band"] == band
+    assert ("Add your education to your Profile" in match["profile_prompts"]) == (education is None)
+
+
+def test_a_requirement_decided_by_where_you_live_is_always_a_hard_blocker(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    set_profile(client, lives_in="Lisbon, Portugal")
+    evidence_id = add_evidence(client)
+    office = requirement(
+        "Work from the Canada office",
+        "You must be authorised to work in Canada",
+        kind="must_have",
+        result="missing",
+        profile_field="lives_in",
+    )
+
+    posting = rate_posting(client, provider, answer(*three_met(evidence_id), office))
+
+    match = posting["match"]
+    judged = {r["requirement"]: r for r in match["requirements"]}["Work from the Canada office"]
+    assert (judged["kind"], judged["result"]) == ("hard_blocker", "missing")
+    assert match["band"] == "Low"
+    assert "Hard Blocker: Work from the Canada office" in match["reasons"]
+
+
+def test_the_model_is_told_personal_traits_are_nice_to_haves(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    set_profile(client)
+    rate_posting(client, provider, answer(*three_met(add_evidence(client))))
+
+    assert "personal traits" in rating_messages(provider)

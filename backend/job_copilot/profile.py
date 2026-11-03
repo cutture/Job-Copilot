@@ -185,6 +185,7 @@ EVIDENCE_COLUMNS = "id, text, origin, confirmed, created_at"
 PREFERENCE_FIELDS = (
     "work_authorization",
     "lives_in",
+    "education",
     "languages",
     "seniority",
     "roles",
@@ -213,6 +214,7 @@ class MinimumPay(BaseModel):
 class Preferences(BaseModel):
     work_authorization: ShortText | None = None
     lives_in: ShortText | None = None
+    education: ShortText | None = None
     languages: list[ShortText] = Field(default_factory=lambda: ["English"], max_length=20)
     seniority: Seniority | None = None
     roles: list[ShortText] = Field(default_factory=list, max_length=20)
@@ -223,7 +225,7 @@ class Preferences(BaseModel):
     location_arrangements: list[Literal["remote", "hybrid", "on_site"]] = ["remote"]
     location_places: list[ShortText] = Field(default_factory=list, max_length=20)
 
-    @field_validator("work_authorization", "lives_in")
+    @field_validator("work_authorization", "lives_in", "education")
     @classmethod
     def clean_text(cls, value: str | None) -> str | None:
         return strip_controls(value) or None if value else None
