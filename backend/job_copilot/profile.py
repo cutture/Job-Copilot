@@ -191,6 +191,7 @@ PREFERENCE_FIELDS = (
     "roles",
     "work_type",
     "min_salary",
+    "min_salary_currency",
     "location_arrangements",
     "location_places",
 )
@@ -211,6 +212,7 @@ class Preferences(BaseModel):
         "employment_and_freelance"
     )
     min_salary: int | None = Field(default=None, ge=0, le=10_000_000)
+    min_salary_currency: Annotated[str, Field(pattern=r"^[A-Z]{3}$")] | None = None
     location_arrangements: list[Literal["remote", "hybrid", "on_site"]] = ["remote"]
     location_places: list[ShortText] = Field(default_factory=list, max_length=20)
 

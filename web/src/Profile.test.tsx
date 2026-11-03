@@ -13,6 +13,7 @@ const baseProfile = {
   roles: [],
   work_type: "employment_and_freelance",
   min_salary: null,
+  min_salary_currency: null,
   location_arrangements: ["remote"],
   location_places: [],
   evidence: [
@@ -135,6 +136,8 @@ describe("Profile setup", () => {
       target: { value: "US, San Francisco" },
     });
     fireEvent.click(screen.getByLabelText("Hybrid"));
+    fireEvent.change(screen.getByLabelText("Minimum salary (optional)"), { target: { value: "120000" } });
+    fireEvent.change(screen.getByLabelText("Currency"), { target: { value: "usd" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
 
     await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
@@ -143,6 +146,8 @@ describe("Profile setup", () => {
     expect(saved.location_places).toEqual(["US", "San Francisco"]);
     expect(saved.location_arrangements).toEqual(["remote", "hybrid"]);
     expect(saved.languages).toEqual(["English"]);
+    expect(saved.min_salary).toBe(120000);
+    expect(saved.min_salary_currency).toBe("USD");
   });
 
   it("explains why an upload was refused", async () => {

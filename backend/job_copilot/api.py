@@ -53,10 +53,13 @@ class JobPosting(BaseModel):
     source: str
     text: str
     status: str
+    posting_type: str | None
+    filter_reason: str | None
+    salary_note: str | None
     created_at: datetime
 
 
-COLUMNS = "id, title, source, text, status, created_at"
+COLUMNS = "id, title, source, text, status, posting_type, filter_reason, salary_note, created_at"
 
 
 @app.post("/api/job-postings", status_code=201)

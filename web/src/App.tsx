@@ -7,8 +7,34 @@ type JobPosting = {
   title: string;
   source: string;
   status: string;
+  posting_type: "employment" | "freelance" | null;
+  filter_reason: string | null;
+  salary_note: string | null;
   created_at: string;
 };
+
+function PostingRow({ posting }: { posting: JobPosting }) {
+  return (
+    <li>
+      <strong>{posting.title}</strong> <span>{posting.source}</span>
+      {posting.posting_type && (
+        <>
+          {" · "}
+          <span>{posting.posting_type === "freelance" ? "Freelance" : "Employment"}</span>
+        </>
+      )}
+      {posting.salary_note && (
+        <>
+          {" · "}
+          <em>{posting.salary_note}</em>
+        </>
+      )}
+      {posting.status === "queued" && <em> Working on the title…</em>}
+      {posting.status === "model_unavailable" && <em> Our AI model couldn't read this posting.</em>}
+      {posting.filter_reason && <div style={{ fontSize: 13 }}>{posting.filter_reason}</div>}
+    </li>
+  );
+}
 
 const REFRESH_MS = 2000;
 
@@ -24,6 +50,7 @@ export function App() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<"postings" | "profile">("postings");
+  const [showFiltered, setShowFiltered] = useState(false);
 
   useEffect(() => {
     fetchPostings()
@@ -32,6 +59,8 @@ export function App() {
   }, []);
 
   const processing = postings?.some((posting) => posting.status === "queued") ?? false;
+  const shown = postings?.filter((posting) => posting.status !== "filtered") ?? [];
+  const filtered = postings?.filter((posting) => posting.status === "filtered") ?? [];
 
   useEffect(() => {
     if (!processing) return;
@@ -107,13 +136,25 @@ export function App() {
       <h2>Your Job Postings</h2>
       {postings?.length === 0 && <p>No Job Postings yet.</p>}
       <ul>
-        {postings?.map((posting) => (
-          <li key={posting.id}>
-            <strong>{posting.title}</strong> <span>{posting.source}</span>
-            {posting.status === "queued" && <em> Working on the title…</em>}
-          </li>
+        {shown.map((posting) => (
+          <PostingRow key={posting.id} posting={posting} />
         ))}
       </ul>
+      {filtered.length > 0 && (
+        <>
+          <button aria-expanded={showFiltered} onClick={() => setShowFiltered(!showFiltered)}>
+            {showFiltered ? "Hide" : "Show"} {filtered.length} Filtered{" "}
+            {filtered.length === 1 ? "Posting" : "Postings"}
+          </button>
+          {showFiltered && (
+            <ul>
+              {filtered.map((posting) => (
+                <PostingRow key={posting.id} posting={posting} />
+              ))}
+            </ul>
+          )}
+        </>
+      )}
       </>}
     </main>
   );

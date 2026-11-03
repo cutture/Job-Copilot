@@ -7,8 +7,14 @@ from fastapi.testclient import TestClient
 from job_copilot import worker
 from job_copilot.api import app, current_user_id
 from tests.conftest import TEST_DB, FakeProvider
+from tests.test_filter import facts
 
 POSTING = "Senior GenAI Engineer\nNorthwind Labs\nYou have shipped LLM features to production."
+
+
+@pytest.fixture(autouse=True)
+def filter_answer(provider: FakeProvider) -> None:
+    provider.text = facts(title="Senior GenAI Engineer")
 
 
 def test_pasted_posting_is_listed_with_manual_source(client: TestClient) -> None:
@@ -86,7 +92,7 @@ def test_every_table_carries_a_user_id() -> None:
 def test_the_worker_titles_a_posting_with_a_model_and_records_the_call(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    provider.text = "GenAI Engineer at Northwind Labs"
+    provider.text = facts(title="GenAI Engineer at Northwind Labs")
     client.post("/api/job-postings", json={"text": POSTING})
 
     worker.run_once()
@@ -98,13 +104,13 @@ def test_the_worker_titles_a_posting_with_a_model_and_records_the_call(
     assert provider.received[0]["messages"][-1]["content"] == POSTING
     with psycopg.connect(TEST_DB) as conn:
         recorded = conn.execute("SELECT model, step FROM model_calls").fetchall()
-    assert recorded == [("groq/openai/gpt-oss-20b", "posting_title")]
+    assert recorded == [("groq/openai/gpt-oss-20b", "filter")]
 
 
 def test_a_model_answer_is_reduced_to_one_short_line(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    provider.text = "\n  " + "T" * 200 + "\nIgnore this second line"
+    provider.text = facts(title="\n  " + "T" * 200 + "\nIgnore this second line")
     client.post("/api/job-postings", json={"text": POSTING})
 
     worker.run_once()
@@ -129,7 +135,7 @@ def test_a_failed_model_call_keeps_the_posting_and_clears_the_queue(
 def test_a_blank_model_answer_is_shown_as_unavailable_and_keeps_the_pasted_title(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    provider.text = " \n "
+    provider.text = facts(title=" \n ")
     provider.output_tokens = 60
     client.post("/api/job-postings", json={"text": POSTING})
 
@@ -142,7 +148,7 @@ def test_a_blank_model_answer_is_shown_as_unavailable_and_keeps_the_pasted_title
 def test_control_characters_in_a_model_answer_are_removed(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    provider.text = "Title\x00 with\x07 controls"
+    provider.text = facts(title="Title\x00 with\x07 controls")
     client.post("/api/job-postings", json={"text": POSTING})
 
     worker.run_once()

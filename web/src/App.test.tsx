@@ -8,6 +8,9 @@ const posting = {
   source: "Manual Source",
   text: "Senior GenAI Engineer",
   status: "queued",
+  posting_type: null,
+  filter_reason: null,
+  salary_note: null,
   created_at: "2026-11-02T00:00:00Z",
 };
 
@@ -100,6 +103,23 @@ describe("pasting a Job Posting", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("was saved");
     expect(field.value).toBe("");
+  });
+
+  it("collapses Filtered Postings but shows each one's reason", async () => {
+    const passed = { ...posting, id: "2", title: "GenAI Engineer", status: "received", posting_type: "freelance", salary_note: "Slightly below your minimum" };
+    const filtered = { ...posting, id: "3", title: "Entwickler", status: "filtered", filter_reason: "Not written in English" };
+    respondWith([[passed, filtered]]);
+    render(<App />);
+
+    expect(await screen.findByText("GenAI Engineer")).toBeTruthy();
+    expect(screen.getByText("Freelance")).toBeTruthy();
+    expect(screen.getByText("Slightly below your minimum")).toBeTruthy();
+    expect(screen.queryByText("Entwickler")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 Filtered Posting" }));
+
+    expect(screen.getByText("Entwickler")).toBeTruthy();
+    expect(screen.getByText("Not written in English")).toBeTruthy();
   });
 
   it("shows an error and keeps the text when saving fails", async () => {

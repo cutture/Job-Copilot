@@ -19,6 +19,7 @@ type ProfileData = {
   roles: string[];
   work_type: string;
   min_salary: number | null;
+  min_salary_currency: string | null;
   location_arrangements: string[];
   location_places: string[];
   evidence: Evidence[];
@@ -32,6 +33,7 @@ type Form = {
   roles: string;
   work_type: string;
   min_salary: string;
+  min_salary_currency: string;
   location_arrangements: string[];
   location_places: string;
 };
@@ -54,6 +56,7 @@ function toForm(profile: ProfileData): Form {
     roles: profile.roles.join(", "),
     work_type: profile.work_type,
     min_salary: profile.min_salary?.toString() ?? "",
+    min_salary_currency: profile.min_salary_currency ?? "",
     location_arrangements: profile.location_arrangements,
     location_places: profile.location_places.join(", "),
   };
@@ -249,6 +252,7 @@ export function Profile() {
         roles: list(form.roles),
         work_type: form.work_type,
         min_salary: form.min_salary.trim() ? Number(form.min_salary) : null,
+        min_salary_currency: form.min_salary_currency.trim().toUpperCase() || null,
         location_arrangements: form.location_arrangements,
         location_places: list(form.location_places),
       }),
@@ -389,6 +393,18 @@ export function Profile() {
                 value={form.min_salary}
                 onChange={set("min_salary")}
               />
+              <label htmlFor="salary-currency">Currency</label>
+              <input
+                id="salary-currency"
+                style={field}
+                maxLength={3}
+                placeholder="e.g. USD, INR, EUR"
+                value={form.min_salary_currency}
+                onChange={set("min_salary_currency")}
+              />
+              <p style={{ fontSize: 13 }}>
+                Filter compares pay only with postings in this currency. Others pass.
+              </p>
               <fieldset style={{ border: 0, padding: 0, marginBottom: 8 }}>
                 <legend>Location Preference</legend>
                 {ARRANGEMENTS.map(([value, label]) => (
