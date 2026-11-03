@@ -16,7 +16,7 @@ def upgrade() -> None:
             nice_met integer NOT NULL,
             reasons jsonb NOT NULL,
             gaps jsonb NOT NULL,
-            requests jsonb NOT NULL,
+            profile_prompts jsonb NOT NULL,
             requirements jsonb NOT NULL,
             rubric_version integer NOT NULL,
             rated_at timestamptz NOT NULL DEFAULT now()

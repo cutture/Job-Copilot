@@ -1,6 +1,9 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
 
+export type Band = "High" | "Medium" | "Low";
+export type RatingState = "rated" | "rating" | "waiting";
+
 export type Requirement = {
   requirement: string;
   kind: "hard_blocker" | "must_have" | "nice_to_have";
@@ -8,14 +11,15 @@ export type Requirement = {
   result: "met" | "partial" | "missing" | "unknown";
   evidence: string[];
   gap: string | null;
+  profile_field?: string | null;
 };
 
 export type Match = {
-  band: string;
+  band: Band;
   nice_met: number;
   reasons: string[];
   gaps: string[];
-  requests: string[];
+  profile_prompts: string[];
   requirements: Requirement[];
 };
 
@@ -28,10 +32,10 @@ export type RatedPosting = {
   match: Match;
 };
 
-const BANDS = ["High", "Medium", "Low"];
+const BANDS: Band[] = ["High", "Medium", "Low"];
 const KINDS = { hard_blocker: "Hard Blocker", must_have: "Must-have", nice_to_have: "Nice-to-have" };
 const RESULTS = { met: "Met", partial: "Partial", missing: "Missing", unknown: "Unknown" };
-const BAND_COLOURS: Record<string, CSSProperties> = {
+const BAND_COLOURS: Record<Band, CSSProperties> = {
   High: { background: "#dff5e3", color: "#14622a" },
   Medium: { background: "#fff3c4", color: "#6b4e00" },
   Low: { background: "#fdecea", color: "#8a1c12" },
@@ -56,7 +60,7 @@ function Badges({ posting }: { posting: RatedPosting }) {
   );
 }
 
-function Detail({ posting, onAddToProfile }: { posting: RatedPosting; onAddToProfile: (requirement: string) => void }) {
+function Detail({ posting, onAddToProfile }: { posting: RatedPosting; onAddToProfile: (draft: string) => void }) {
   const { match } = posting;
   return (
     <div style={{ ...card, position: "sticky", top: 8 }}>
@@ -71,7 +75,7 @@ function Detail({ posting, onAddToProfile }: { posting: RatedPosting; onAddToPro
         ))}
       </ul>
       {match.gaps.length > 0 && <p style={{ fontSize: 13 }}>Gaps: {match.gaps.join("; ")}</p>}
-      {match.requests.map((ask) => (
+      {match.profile_prompts.map((ask) => (
         <p key={ask} style={{ fontSize: 13, background: "#fff8e1", padding: "4px 8px" }}>
           {ask}
         </p>
@@ -101,6 +105,11 @@ function Detail({ posting, onAddToProfile }: { posting: RatedPosting; onAddToPro
               <td>
                 {r.evidence.length > 0 ? (
                   r.evidence.map((item) => <div key={item}>{item}</div>)
+                ) : r.profile_field ? (
+                  <>
+                    <div style={{ fontSize: 13 }}>Not in your Profile</div>
+                    <button onClick={() => onAddToProfile("")}>Update your Profile</button>
+                  </>
                 ) : (
                   <>
                     <div style={{ fontSize: 13 }}>No Evidence found</div>
@@ -121,7 +130,8 @@ export function Matches({
   onAddToProfile,
 }: {
   postings: RatedPosting[];
-  onAddToProfile: (requirement: string) => void;
+  // Opens the Profile, with an Evidence item started from `draft` when it isn't empty.
+  onAddToProfile: (draft: string) => void;
 }) {
   const [showLow, setShowLow] = useState(false);
   const sorted = [...postings].sort(
@@ -143,13 +153,13 @@ export function Matches({
       </button>
     </div>
   );
-  const inBand = (band: string) => sorted.filter((p) => p.match.band === band);
+  const inBand = (band: Band) => sorted.filter((p) => p.match.band === band);
 
   return (
     <section>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 2fr) 3fr", gap: 12, alignItems: "start" }}>
         <div>
-          {["High", "Medium"].map((band) => (
+          {(["High", "Medium"] as const).map((band) => (
             <div key={band}>
               <h3>
                 {band} ({inBand(band).length})

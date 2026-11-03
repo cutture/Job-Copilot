@@ -15,10 +15,12 @@ function rated(id: string, title: string, band: string, nice_met = 0): RatedPost
       nice_met,
       reasons: [`Reason for ${title}`],
       gaps: ["Kubernetes: no Evidence found"],
-      requests: ["Add your seniority to your Profile"],
+      profile_prompts: ["Add your seniority to your Profile"],
       requirements: [
         { requirement: "Python", kind: "must_have", quote: "5+ years of Python", result: "met", evidence: ["Shipped Python services"], gap: null },
         { requirement: "Kubernetes", kind: "must_have", quote: "Kubernetes in production", result: "missing", evidence: [], gap: null },
+        { requirement: "English", kind: "hard_blocker", quote: null, result: "met", evidence: ["Your Profile: English"], gap: null, profile_field: "languages" },
+        { requirement: "Work in Canada", kind: "hard_blocker", quote: "authorised to work in Canada", result: "unknown", evidence: [], gap: null, profile_field: "work_authorization" },
       ],
     },
   } as RatedPosting;
@@ -67,6 +69,17 @@ describe("Matches", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add to Profile" }));
 
     expect(add).toHaveBeenCalledWith("Kubernetes");
+  });
+
+  it("sends an empty Profile field to the Profile rather than asking for Evidence", () => {
+    const add = vi.fn();
+    render(<Matches postings={all} onAddToProfile={add} />);
+
+    expect(screen.getByText("Your Profile: English")).toBeTruthy();
+    expect(screen.getAllByText("No Evidence found")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Update your Profile" }));
+
+    expect(add).toHaveBeenCalledWith("");
   });
 
   it("switches the detail to the Match picked", () => {

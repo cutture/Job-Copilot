@@ -99,7 +99,8 @@ def test_a_passing_posting_is_rated_with_quotes_and_evidence(
     assert (first["quote"], first["result"]) == (QUOTES[0], "met")
     assert first["evidence"] == ["Shipped Python retrieval systems"]
     english = next(r for r in match["requirements"] if r["requirement"] == "English")
-    assert english["result"] == "met"
+    assert (english["result"], english["evidence"]) == ("met", ["Your Profile: English"])
+    assert english["profile_field"] == "languages"
 
 
 def test_the_model_never_sees_or_names_a_band(client: TestClient, provider: FakeProvider) -> None:
@@ -196,11 +197,12 @@ def test_an_empty_profile_field_gives_unknown_and_a_request_never_a_hard_blocker
     posting = rate_posting(client, provider, answer(*three_met(evidence_id), blocker))
 
     match = posting["match"]
-    judged = {r["requirement"]: r["result"] for r in match["requirements"]}
-    assert judged["Authorised to work in Canada"] == result
+    judged = {r["requirement"]: r for r in match["requirements"]}
+    assert judged["Authorised to work in Canada"]["result"] == result
+    assert judged["Authorised to work in Canada"]["profile_field"] == "work_authorization"
     assert match["band"] == band
     asked = "Add your work authorization to your Profile"
-    assert (asked in match["requests"]) == (work_authorization is None)
+    assert (asked in match["profile_prompts"]) == (work_authorization is None)
 
 
 def test_a_required_language_the_profile_lacks_is_a_hard_blocker_but_stays_listed(
@@ -240,7 +242,7 @@ def test_seniority_is_compared_in_code(
 
     assert posting["match"]["band"] == band
     if ask:
-        assert ask in posting["match"]["requests"]
+        assert ask in posting["match"]["profile_prompts"]
 
 
 def test_postings_over_the_rating_limit_wait_newest_first(
@@ -273,3 +275,23 @@ def test_a_rating_the_model_couldnt_give_is_marked(
 
     posting = client.get("/api/job-postings").json()[0]
     assert (posting["status"], posting["match"]) == ("not_rated", None)
+
+
+def test_a_filled_profile_fact_can_meet_a_hard_blocker_without_evidence(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    set_profile(client, work_authorization="Canadian citizen")
+    evidence_id = add_evidence(client)
+    blocker = requirement(
+        "Authorised to work in Canada",
+        "You must be authorised to work in Canada",
+        kind="hard_blocker",
+        profile_field="work_authorization",
+    )
+
+    posting = rate_posting(client, provider, answer(*three_met(evidence_id), blocker))
+
+    judged = {r["requirement"]: r for r in posting["match"]["requirements"]}
+    met = judged["Authorised to work in Canada"]
+    assert (met["result"], met["evidence"]) == ("met", ["Your Profile: Canadian citizen"])
+    assert posting["match"]["band"] == "High"

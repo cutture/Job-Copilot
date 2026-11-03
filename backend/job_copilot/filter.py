@@ -15,7 +15,7 @@ from pydantic import BaseModel, field_validator
 from job_copilot import gateway
 from job_copilot.db import connect
 from job_copilot.gateway import DataClass
-from job_copilot.profile import strip_controls
+from job_copilot.profile import ensure_profile, strip_controls
 
 FILTER_MODEL = "groq/openai/gpt-oss-20b"
 # Reasoning models spend output tokens before the visible answer, so small limits return nothing.
@@ -247,15 +247,12 @@ def read_facts(user_id: UUID, posting_text: str) -> PostingFacts:
         ],
         max_output_tokens=FILTER_MAX_OUTPUT_TOKENS,
     )
-    answer = completion.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-    return PostingFacts.model_validate(json.loads(answer))
+    return PostingFacts.model_validate(json.loads(gateway.strip_fences(completion.text)))
 
 
 def preferences_for(user_id: UUID) -> dict[str, Any]:
     with connect() as conn:
-        conn.execute(
-            "INSERT INTO profiles (user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,)
-        )
+        ensure_profile(conn, user_id)
         row: Any = conn.execute(
             """SELECT work_type, location_arrangements, location_places, min_pay
                FROM profiles WHERE user_id = %s""",

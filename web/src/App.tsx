@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Matches } from "./Matches";
-import type { Match, RatedPosting } from "./Matches";
+import type { Match, RatedPosting, RatingState } from "./Matches";
 import { Profile } from "./Profile";
 
 type JobPosting = {
@@ -13,7 +13,7 @@ type JobPosting = {
   filter_reason: string | null;
   salary_note: string | null;
   created_at: string;
-  rating_state?: "rated" | "rating" | "waiting" | null;
+  rating_state?: RatingState | null;
   match?: Match | null;
 };
 
@@ -57,7 +57,7 @@ export function App() {
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<"postings" | "profile">("postings");
   const [showFiltered, setShowFiltered] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [evidenceDraft, setEvidenceDraft] = useState("");
 
   useEffect(() => {
     fetchPostings()
@@ -67,7 +67,7 @@ export function App() {
 
   const processing =
     postings?.some((posting) => posting.status === "queued" || posting.rating_state === "rating") ?? false;
-  const rated = (postings?.filter((posting) => posting.match) ?? []) as RatedPosting[];
+  const rated = postings?.filter((posting): posting is RatedPosting & JobPosting => !!posting.match) ?? [];
   const waiting = postings?.filter((posting) => posting.rating_state === "waiting").length ?? 0;
   const shown =
     postings?.filter(
@@ -122,14 +122,14 @@ export function App() {
         <button
           aria-pressed={view === "profile"}
           onClick={() => {
-            setDraft("");
+            setEvidenceDraft("");
             setView("profile");
           }}
         >
           Profile
         </button>
       </nav>
-      {view === "profile" ? <Profile key={draft} draft={draft} /> : <>
+      {view === "profile" ? <Profile key={evidenceDraft} draft={evidenceDraft} /> : <>
       <form onSubmit={addPosting}>
         <label htmlFor="posting" style={{ display: "block", fontWeight: 600 }}>
           Paste a Job Posting
@@ -156,8 +156,8 @@ export function App() {
       {postings?.length === 0 && <p>No Job Postings yet.</p>}
       <Matches
         postings={rated}
-        onAddToProfile={(requirement) => {
-          setDraft(requirement);
+        onAddToProfile={(draft) => {
+          setEvidenceDraft(draft);
           setView("profile");
         }}
       />

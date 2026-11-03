@@ -2,13 +2,13 @@ import random
 
 import pytest
 
-from job_copilot.bands import Judged, rate
+from job_copilot.bands import JudgedRequirement, rate
 
-MET = [Judged(f"Skill {n}", "must_have", "met") for n in range(3)]
+MET = [JudgedRequirement(f"Skill {n}", "must_have", "met") for n in range(3)]
 
 
-def must(text: str, result: str) -> Judged:
-    return Judged(text, "must_have", result)  # type: ignore[arg-type]
+def must(text: str, result: str) -> JudgedRequirement:
+    return JudgedRequirement(text, "must_have", result)  # type: ignore[arg-type]
 
 
 def test_all_must_haves_met_and_seniority_fitting_is_high() -> None:
@@ -60,14 +60,18 @@ def test_fewer_than_three_clear_requirements_is_medium() -> None:
 
 
 def test_a_missing_hard_blocker_is_low_whatever_else_is_met() -> None:
-    rating = rate([*MET, Judged("Security clearance", "hard_blocker", "missing")], "fits")
+    rating = rate(
+        [*MET, JudgedRequirement("Security clearance", "hard_blocker", "missing")], "fits"
+    )
 
     assert rating.band == "Low"
     assert rating.reasons[0] == "Hard Blocker: Security clearance"
 
 
 def test_an_unknown_hard_blocker_counts_as_one_unknown_must_have_not_a_blocker() -> None:
-    rating = rate([*MET, Judged("Work authorization", "hard_blocker", "unknown")], "fits")
+    rating = rate(
+        [*MET, JudgedRequirement("Work authorization", "hard_blocker", "unknown")], "fits"
+    )
 
     assert rating.band == "Medium"
 
@@ -86,14 +90,18 @@ def test_seniority_below_a_firm_minimum_is_low() -> None:
 
 
 def test_low_rules_come_before_medium_rules() -> None:
-    blocked = [*MET, must("Go", "missing"), Judged("Clearance", "hard_blocker", "missing")]
+    blocked = [
+        *MET,
+        must("Go", "missing"),
+        JudgedRequirement("Clearance", "hard_blocker", "missing"),
+    ]
 
     assert rate(blocked, "one_off").band == "Low"
 
 
 def test_nice_to_haves_never_change_the_band() -> None:
-    missing_nice = [Judged(f"Nice {n}", "nice_to_have", "missing") for n in range(5)]
-    met_nice = [Judged(f"Nice {n}", "nice_to_have", "met") for n in range(5)]
+    missing_nice = [JudgedRequirement(f"Nice {n}", "nice_to_have", "missing") for n in range(5)]
+    met_nice = [JudgedRequirement(f"Nice {n}", "nice_to_have", "met") for n in range(5)]
 
     assert rate([*MET, *missing_nice], "fits").band == "High"
     assert rate([*MET, must("Go", "missing"), *met_nice], "fits").band == "Medium"
@@ -101,14 +109,18 @@ def test_nice_to_haves_never_change_the_band() -> None:
 
 
 def test_the_band_doesnt_depend_on_requirement_order() -> None:
-    requirements = [*MET, must("Docker", "partial"), Judged("Nice", "nice_to_have", "missing")]
+    requirements = [
+        *MET,
+        must("Docker", "partial"),
+        JudgedRequirement("Nice", "nice_to_have", "missing"),
+    ]
     shuffled = random.Random(7).sample(requirements, len(requirements))
 
     assert rate(shuffled, "fits") == rate(requirements, "fits")
 
 
 def test_at_most_three_reasons() -> None:
-    nice = [Judged("Nice", "nice_to_have", "met")]
+    nice = [JudgedRequirement("Nice", "nice_to_have", "met")]
 
     assert len(rate([*MET, *nice], "fits").reasons) <= 3
     assert rate([*MET, *nice], "fits").reasons == [
@@ -116,3 +128,10 @@ def test_at_most_three_reasons() -> None:
         "Seniority fits",
         "1 nice-to-have met",
     ]
+
+
+def test_nice_to_haves_dont_count_as_clear_requirements() -> None:
+    rating = rate([JudgedRequirement(f"Nice {n}", "nice_to_have", "met") for n in range(5)], "fits")
+
+    assert rating.band == "Medium"
+    assert rating.reasons[0] == "Held back: fewer than three clear Requirements"

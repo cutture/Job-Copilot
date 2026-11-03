@@ -5,6 +5,7 @@ seniority and languages itself, and sets the Band with the rules in `bands`.
 """
 
 import json
+import os
 from typing import Any, Literal
 from uuid import UUID
 
@@ -14,16 +15,24 @@ from pydantic import BaseModel, ValidationError
 from job_copilot import bands, gateway
 from job_copilot.db import connect
 from job_copilot.gateway import DataClass
-from job_copilot.profile import confirmed_evidence, strip_controls
+from job_copilot.profile import (
+    SENIORITY_LEVELS,
+    confirmed_evidence,
+    ensure_profile,
+    strip_controls,
+)
 
 RATING_MODEL = "anthropic/claude-haiku-5-5"
 RATING_MAX_OUTPUT_TOKENS = 6000
 # ponytail: a starting judgement on cost; revisit once real costs are measured.
-RATINGS_PER_RUN = 50
+RATINGS_PER_RUN = int(os.environ.get("RATINGS_PER_RUN", "50"))
 RUBRIC_VERSION = 1
 MAX_REQUIREMENTS = 40
 MAX_TEXT_LENGTH = 300
-LEVELS = ["Junior", "Mid", "Senior", "Staff"]
+RatingState = Literal["rated", "rating", "waiting"]
+# A rating job is already queued for posting `p`.
+RATING_QUEUED = """EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'rate_match'
+                           AND j.payload ->> 'job_posting_id' = p.id::text)"""
 # Profile facts a Hard Blocker can depend on, as the person sees them named.
 FACT_NAMES = {"work_authorization": "work authorization", "lives_in": "where you live"}
 PROMPT = (
@@ -68,30 +77,32 @@ class RequirementView(BaseModel):
     result: bands.Result
     evidence: list[str]
     gap: str | None
+    # The Profile field that decides this Requirement, if one does.
+    profile_field: str | None = None
 
 
 class MatchView(BaseModel):
     band: bands.Band
     reasons: list[str]
     gaps: list[str]
-    requests: list[str]
+    profile_prompts: list[str]
     nice_met: int
     requirements: list[RequirementView]
 
 
-def _normal(text: str) -> str:
+def _comparable(text: str) -> str:
     return " ".join(text.casefold().split())
 
 
-def _clean(text: str) -> str:
+def _short_safe(text: str) -> str:
     return strip_controls(text)[:MAX_TEXT_LENGTH]
 
 
-def _quoted(quote: Any, posting: str) -> str | None:
+def _verified_quote(quote: Any, posting: str) -> str | None:
     """A quote counts only if it really is in the posting."""
     if not isinstance(quote, str) or len(quote.strip()) < 3:
         return None
-    return _clean(quote) if _normal(quote) in _normal(posting) else None
+    return _short_safe(quote) if _comparable(quote) in _comparable(posting) else None
 
 
 def _years(value: float) -> str:
@@ -103,6 +114,14 @@ def _judge(
 ) -> RequirementView:
     cited = [evidence[i] for i in dict.fromkeys(raw.evidence) if i in evidence]
     result, gap = raw.result, raw.gap
+    fact = (
+        raw.profile_field
+        if raw.kind == "hard_blocker" and raw.profile_field in FACT_NAMES
+        else None
+    )
+    if fact and facts[fact]:
+        # A Profile fact supports the Hard Blocker it decides.
+        cited = [f"Your Profile: {_short_safe(facts[fact])}"]
     # Met and Partial need Confirmed Evidence; Missing and Unknown cite the posting only.
     if result in ("met", "partial") and not cited:
         result = "missing"
@@ -116,8 +135,7 @@ def _judge(
                 if shown is not None
                 else f"Evidence doesn't show the {_years(raw.years_required)} years asked for"
             )
-    fact = raw.profile_field if raw.kind == "hard_blocker" else None
-    if fact in FACT_NAMES and not facts[fact]:
+    if fact and not facts[fact]:
         result = "unknown"
         asks.append(f"Add your {FACT_NAMES[fact]} to your Profile")
     if result in ("missing", "unknown"):
@@ -125,12 +143,13 @@ def _judge(
     elif result == "partial" and not gap:
         gap = "Only related Evidence found"
     return RequirementView(
-        requirement=_clean(raw.requirement),
+        requirement=_short_safe(raw.requirement),
         kind=raw.kind,
         quote=quote,
         result=result,
         evidence=cited,
-        gap=_clean(gap) if gap else None,
+        gap=_short_safe(gap) if gap else None,
+        profile_field=fact,
     )
 
 
@@ -139,9 +158,9 @@ def _languages(answer: dict[str, Any], posting: str, spoken: list[str]) -> list[
     named: dict[str, str] = {}
     for item in answer.get("languages") or []:
         if isinstance(item, dict) and isinstance(item.get("language"), str):
-            quote = _quoted(item.get("quote"), posting)
+            quote = _verified_quote(item.get("quote"), posting)
             if quote and item["language"].strip():
-                named.setdefault(_clean(item["language"]).title(), quote)
+                named.setdefault(_short_safe(item["language"]).title(), quote)
     required: dict[str, str | None] = dict(named) or {"English": None}
     known = {language.casefold() for language in spoken}
     return [
@@ -150,8 +169,9 @@ def _languages(answer: dict[str, Any], posting: str, spoken: list[str]) -> list[
             kind="hard_blocker",
             quote=quote,
             result="met" if language.casefold() in known else "missing",
-            evidence=[],
+            evidence=[f"Your Profile: {language}"] if language.casefold() in known else [],
             gap=None,
+            profile_field="languages",
         )
         for language, quote in required.items()
     ]
@@ -161,11 +181,11 @@ def _seniority(answer: dict[str, Any], posting: str, mine: str | None) -> bands.
     stated = answer.get("seniority")
     stated = stated if isinstance(stated, dict) else {}
     level = stated.get("level")
-    if level not in LEVELS or not _quoted(stated.get("quote"), posting):
+    if level not in SENIORITY_LEVELS or not _verified_quote(stated.get("quote"), posting):
         return "fits"
-    if mine not in LEVELS:
+    if mine not in SENIORITY_LEVELS:
         return "unknown"
-    above = LEVELS.index(level) - LEVELS.index(mine)
+    above = SENIORITY_LEVELS.index(level) - SENIORITY_LEVELS.index(mine)
     if abs(above) <= 1:
         return "fits" if above == 0 else "one_off"
     return "two_off_firm" if above > 0 and stated.get("firm_minimum") is True else "two_off"
@@ -181,7 +201,7 @@ def judge(answer: Any, posting: str, evidence: dict[int, str], facts: dict[str, 
             raw = _Requirement.model_validate(item)
         except ValidationError:
             continue
-        quote = _quoted(raw.quote, posting)
+        quote = _verified_quote(raw.quote, posting)
         if quote:
             requirements.append(_judge(raw, quote, evidence, facts, asks))
     languages = _languages(answer, posting, facts["languages"])
@@ -190,12 +210,14 @@ def judge(answer: Any, posting: str, evidence: dict[int, str], facts: dict[str, 
         asks.append("Add your seniority to your Profile")
     # The English a posting is only taken to require isn't a clear Requirement unless it's lacking.
     counted = requirements + [r for r in languages if r.quote or r.result != "met"]
-    rated = bands.rate([bands.Judged(r.requirement, r.kind, r.result) for r in counted], seniority)
+    rated = bands.rate(
+        [bands.JudgedRequirement(r.requirement, r.kind, r.result) for r in counted], seniority
+    )
     return MatchView(
         band=rated.band,
         reasons=rated.reasons,
         gaps=rated.gaps,
-        requests=list(dict.fromkeys(asks)),
+        profile_prompts=list(dict.fromkeys(asks)),
         nice_met=rated.nice_met,
         requirements=requirements + languages,
     )
@@ -203,9 +225,7 @@ def judge(answer: Any, posting: str, evidence: dict[int, str], facts: dict[str, 
 
 def _facts(user_id: UUID) -> dict[str, Any]:
     with connect() as conn:
-        conn.execute(
-            "INSERT INTO profiles (user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,)
-        )
+        ensure_profile(conn, user_id)
         row: Any = conn.execute(
             """SELECT work_authorization, lives_in, languages, seniority
                FROM profiles WHERE user_id = %s""",
@@ -240,17 +260,18 @@ def rate_match(user_id: UUID, payload: dict[str, Any]) -> None:
         ],
         max_output_tokens=RATING_MAX_OUTPUT_TOKENS,
     )
-    text = completion.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-    match = judge(json.loads(text), posting["text"], evidence, facts)
+    match = judge(
+        json.loads(gateway.strip_fences(completion.text)), posting["text"], evidence, facts
+    )
     with connect() as conn:
         conn.execute(
             """INSERT INTO matches (job_posting_id, user_id, band, nice_met, reasons, gaps,
-                                    requests, requirements, rubric_version)
+                                    profile_prompts, requirements, rubric_version)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (job_posting_id) DO UPDATE SET
                    band = EXCLUDED.band, nice_met = EXCLUDED.nice_met,
                    reasons = EXCLUDED.reasons, gaps = EXCLUDED.gaps,
-                   requests = EXCLUDED.requests, requirements = EXCLUDED.requirements,
+                   profile_prompts = EXCLUDED.profile_prompts, requirements = EXCLUDED.requirements,
                    rubric_version = EXCLUDED.rubric_version, rated_at = now()""",
             (
                 posting_id,
@@ -259,7 +280,7 @@ def rate_match(user_id: UUID, payload: dict[str, Any]) -> None:
                 match.nice_met,
                 Jsonb(match.reasons),
                 Jsonb(match.gaps),
-                Jsonb(match.requests),
+                Jsonb(match.profile_prompts),
                 Jsonb([r.model_dump() for r in match.requirements]),
                 RUBRIC_VERSION,
             ),
@@ -278,17 +299,13 @@ def queue_ratings(user_id: UUID) -> None:
     """Queue the newest postings waiting to be rated, up to the limit for one run."""
     with connect() as conn:
         conn.execute(
-            """INSERT INTO jobs (user_id, kind, payload)
+            f"""INSERT INTO jobs (user_id, kind, payload)
                SELECT user_id, 'rate_match', jsonb_build_object('job_posting_id', id::text)
                FROM job_postings p
                WHERE user_id = %s AND status = 'received'
                  AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.job_posting_id = p.id)
-                 AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'rate_match'
-                                 AND j.payload ->> 'job_posting_id' = p.id::text)
+                 AND NOT {RATING_QUEUED}
                ORDER BY created_at DESC
                LIMIT %s""",
             (user_id, RATINGS_PER_RUN),
         )
-
-
-RatingState = Literal["rated", "rating", "waiting"]

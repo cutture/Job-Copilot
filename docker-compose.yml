@@ -46,6 +46,7 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+      RATINGS_PER_RUN: ${RATINGS_PER_RUN:-50}
     depends_on:
       api:
         condition: service_healthy

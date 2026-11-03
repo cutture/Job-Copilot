@@ -133,7 +133,7 @@ describe("pasting a Job Posting", () => {
 
   it("opens the Profile with the item started when a gap is added", async () => {
     const match = {
-      band: "Medium", nice_met: 0, reasons: [], gaps: [], requests: [],
+      band: "Medium", nice_met: 0, reasons: [], gaps: [], profile_prompts: [],
       requirements: [{ requirement: "Kubernetes", kind: "must_have", quote: "Kubernetes", result: "missing", evidence: [], gap: null }],
     };
     const profile = {

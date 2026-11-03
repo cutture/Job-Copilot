@@ -1,6 +1,7 @@
 """Band rules: deterministic code with no model or database dependency.
 
-Rules apply in order: Low, then Medium, then High. Nice-to-haves never change the Band.
+Rules apply in order: Low, then Medium, then High. Nice-to-haves never change the Band, and
+aren't counted as clear Requirements.
 """
 
 from dataclasses import dataclass
@@ -23,25 +24,25 @@ SENIORITY_HOLDS_BACK = {
 
 
 @dataclass(frozen=True)
-class Judged:
+class JudgedRequirement:
     text: str
     kind: Kind
     result: Result
 
 
 @dataclass(frozen=True)
-class Rating:
+class BandResult:
     band: Band
     reasons: list[str]
     gaps: list[str]
     nice_met: int
 
 
-def _names(requirements: list[Judged]) -> str:
+def _names(requirements: list[JudgedRequirement]) -> str:
     return ", ".join(r.text for r in requirements)
 
 
-def rate(requirements: list[Judged], seniority: Seniority) -> Rating:
+def rate(requirements: list[JudgedRequirement], seniority: Seniority) -> BandResult:
     # Sorted, so the Band and reasons don't depend on the order the model listed things in.
     ordered = sorted(requirements, key=lambda r: (KIND_ORDER[r.kind], r.text, r.result))
     blockers = [r for r in ordered if r.kind == "hard_blocker" and r.result == "missing"]
@@ -77,7 +78,7 @@ def rate(requirements: list[Judged], seniority: Seniority) -> Rating:
     if len(lacking) >= 2:
         low.append(f"{len(lacking)} must-haves have no Evidence: {_names(lacking)}")
     if low:
-        return Rating("Low", (low + positives)[:MAX_REASONS], gaps, nice_met)
+        return BandResult("Low", (low + positives)[:MAX_REASONS], gaps, nice_met)
 
     held_back = []
     if len(lacking) == 1:
@@ -86,9 +87,9 @@ def rate(requirements: list[Judged], seniority: Seniority) -> Rating:
         held_back.append(f"Held back by {len(partial)} Partial Requirements: {_names(partial)}")
     if seniority in SENIORITY_HOLDS_BACK:
         held_back.append(SENIORITY_HOLDS_BACK[seniority])
-    if len(requirements) < 3:
+    if len(musts) + len(blockers) < 3:
         held_back.append("Held back: fewer than three clear Requirements")
     if held_back:
-        return Rating("Medium", (held_back + positives)[:MAX_REASONS], gaps, nice_met)
+        return BandResult("Medium", (held_back + positives)[:MAX_REASONS], gaps, nice_met)
 
-    return Rating("High", positives[:MAX_REASONS], gaps, nice_met)
+    return BandResult("High", positives[:MAX_REASONS], gaps, nice_met)

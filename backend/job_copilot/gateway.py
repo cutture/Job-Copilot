@@ -74,6 +74,11 @@ class Completion:
     trace_id: str | None
 
 
+def strip_fences(answer: str) -> str:
+    """Models sometimes wrap JSON in a Markdown code fence."""
+    return answer.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+
+
 @dataclass(frozen=True)
 class TraceSettings:
     public_key: str

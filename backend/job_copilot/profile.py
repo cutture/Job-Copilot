@@ -5,7 +5,7 @@ import json
 import unicodedata
 import zipfile
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 from uuid import UUID
 
 from docx import Document
@@ -114,8 +114,7 @@ def _parse_list(text: str) -> Any:
 
 
 def _items_from(answer: str) -> list[str]:
-    cleaned = answer.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
-    items = _parse_list(cleaned.strip())
+    items = _parse_list(gateway.strip_fences(answer))
     if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
         raise ValueError("The model's answer wasn't a list of strings")
     texts = (strip_controls(item)[:MAX_ITEM_LENGTH] for item in items)
@@ -195,6 +194,8 @@ PREFERENCE_FIELDS = (
     "location_places",
 )
 ShortText = Annotated[str, Field(min_length=1, max_length=200)]
+Seniority = Literal["Junior", "Mid", "Senior", "Staff"]
+SENIORITY_LEVELS: tuple[str, ...] = get_args(Seniority)
 
 
 def _clean_list(values: list[str]) -> list[str]:
@@ -213,7 +214,7 @@ class Preferences(BaseModel):
     work_authorization: ShortText | None = None
     lives_in: ShortText | None = None
     languages: list[ShortText] = Field(default_factory=lambda: ["English"], max_length=20)
-    seniority: Literal["Junior", "Mid", "Senior", "Staff"] | None = None
+    seniority: Seniority | None = None
     roles: list[ShortText] = Field(default_factory=list, max_length=20)
     work_type: Literal["employment_and_freelance", "employment", "freelance"] = (
         "employment_and_freelance"
@@ -274,14 +275,14 @@ class EvidenceChange(BaseModel):
         return cleaned
 
 
-def _ensure_profile(conn: Any, user_id: UUID) -> None:
+def ensure_profile(conn: Any, user_id: UUID) -> None:
     conn.execute("INSERT INTO profiles (user_id) VALUES (%s) ON CONFLICT DO NOTHING", (user_id,))
 
 
 @router.get("/api/profile")
 def get_profile(user_id: UserId) -> Profile:
     with connect() as conn:
-        _ensure_profile(conn, user_id)
+        ensure_profile(conn, user_id)
         row: Any = conn.execute("SELECT * FROM profiles WHERE user_id = %s", (user_id,)).fetchone()
         items = conn.execute(
             f"SELECT {EVIDENCE_COLUMNS} FROM evidence WHERE user_id = %s ORDER BY id",
@@ -301,7 +302,7 @@ def save_preferences(preferences: Preferences, user_id: UserId) -> Profile:
     values["min_pay"] = Jsonb(values["min_pay"])
     assignments = ", ".join(f"{field} = %({field})s" for field in PREFERENCE_FIELDS)
     with connect() as conn:
-        _ensure_profile(conn, user_id)
+        ensure_profile(conn, user_id)
         conn.execute(
             f"UPDATE profiles SET {assignments}, updated_at = now() WHERE user_id = %(user_id)s",
             {**values, "user_id": user_id},
@@ -334,7 +335,7 @@ def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
     except ValueError as error:
         raise HTTPException(422, str(error)) from None
     with connect() as conn:
-        _ensure_profile(conn, user_id)
+        ensure_profile(conn, user_id)
         conn.execute(
             """UPDATE profiles SET resume_filename = %s, resume_text = %s,
                    resume_version = resume_version + 1, updated_at = now()
@@ -353,7 +354,7 @@ def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
 @router.post("/api/profile/resume/read-again", status_code=202)
 def read_again(user_id: UserId) -> Profile:
     with connect() as conn:
-        _ensure_profile(conn, user_id)
+        ensure_profile(conn, user_id)
         profile = conn.execute(
             "SELECT resume_text FROM profiles WHERE user_id = %s", (user_id,)
         ).fetchone()

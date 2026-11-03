@@ -61,8 +61,19 @@ class JobPosting(BaseModel):
     match: rating.MatchView | None = None
 
 
-COLUMNS = "id, title, source, text, status, posting_type, filter_reason, salary_note, created_at"
-MATCH_COLUMNS = "band, reasons, gaps, requests, nice_met, requirements"
+POSTING_FIELDS = (
+    "id",
+    "title",
+    "source",
+    "text",
+    "status",
+    "posting_type",
+    "filter_reason",
+    "salary_note",
+    "created_at",
+)
+COLUMNS = ", ".join(POSTING_FIELDS)
+MATCH_FIELDS = ("band", "reasons", "gaps", "profile_prompts", "nice_met", "requirements")
 
 
 @app.post("/api/job-postings", status_code=201)
@@ -85,23 +96,23 @@ def paste_posting(posting: PastedPosting, user_id: UserId) -> JobPosting:
 def list_postings(user_id: UserId) -> list[JobPosting]:
     with connect() as conn:
         rows = conn.execute(
-            f"""SELECT {", ".join("p." + c.strip() for c in COLUMNS.split(","))},
-                       {MATCH_COLUMNS},
+            f"""SELECT {", ".join(f"p.{f}" for f in POSTING_FIELDS)},
+                       {", ".join(f"m.{f}" for f in MATCH_FIELDS)},
                        CASE WHEN m.job_posting_id IS NOT NULL THEN 'rated'
                             WHEN p.status <> 'received' THEN NULL
-                            WHEN EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'rate_match'
-                                         AND j.payload ->> 'job_posting_id' = p.id::text)
-                                 THEN 'rating'
+                            WHEN {rating.RATING_QUEUED} THEN 'rating'
                             ELSE 'waiting' END AS rating_state
                 FROM job_postings p LEFT JOIN matches m ON m.job_posting_id = p.id
                 WHERE p.user_id = %s ORDER BY p.created_at DESC""",
             (user_id,),
         ).fetchall()
-    match_fields = [c.strip() for c in MATCH_COLUMNS.split(",")]
     return [
         JobPosting(
-            **{k: v for k, v in row.items() if k not in match_fields},
-            match=rating.MatchView(**{k: row[k] for k in match_fields}) if row["band"] else None,
+            **{f: row[f] for f in POSTING_FIELDS},
+            rating_state=row["rating_state"],
+            match=rating.MatchView(**{f: row[f] for f in MATCH_FIELDS})
+            if row["rating_state"] == "rated"
+            else None,
         )
         for row in rows
     ]
