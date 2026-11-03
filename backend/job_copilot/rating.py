@@ -23,7 +23,8 @@ from job_copilot.profile import (
 )
 
 RATING_MODEL = "anthropic/claude-haiku-5-5"
-RATING_MAX_OUTPUT_TOKENS = 6000
+# Long postings with many Requirements need over 6000 tokens of answer.
+RATING_MAX_OUTPUT_TOKENS = 16000
 # ponytail: a starting judgement on cost; revisit once real costs are measured.
 RATINGS_PER_RUN = int(os.environ.get("RATINGS_PER_RUN", "50"))
 RUBRIC_VERSION = 2
