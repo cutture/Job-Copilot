@@ -168,10 +168,10 @@ function EvidenceRow({
   );
 }
 
-export function Profile() {
+export function Profile({ draft = "" }: { draft?: string }) {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [form, setForm] = useState<Form | null>(null);
-  const [newItem, setNewItem] = useState("");
+  const [newItem, setNewItem] = useState(draft);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [confirmingAll, setConfirmingAll] = useState(false);

@@ -34,8 +34,8 @@ def test_worker_processes_a_pasted_posting_from_the_queue(client: TestClient) ->
 
     assert worker.run_once() is True
 
-    assert client.get("/api/job-postings").json()[0]["status"] == "received"
-    assert worker.run_once() is False
+    listed = client.get("/api/job-postings").json()[0]
+    assert (listed["status"], listed["rating_state"]) == ("received", "rating")
 
 
 def test_blank_posting_is_rejected(client: TestClient) -> None:

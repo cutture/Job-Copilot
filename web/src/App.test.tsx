@@ -122,6 +122,38 @@ describe("pasting a Job Posting", () => {
     expect(screen.getByText("Not written in English")).toBeTruthy();
   });
 
+  it("counts postings waiting to be rated and shows postings being rated", async () => {
+    const waiting = { ...posting, status: "received", rating_state: "waiting" };
+    respondWith([[{ ...waiting, id: "8" }, { ...waiting, id: "9" }, { ...posting, id: "7", status: "received", rating_state: "rating" }]]);
+    render(<App />);
+
+    expect(await screen.findByText("2 postings waiting to be rated")).toBeTruthy();
+    expect(screen.getByText("Rating…")).toBeTruthy();
+  });
+
+  it("opens the Profile with the item started when a gap is added", async () => {
+    const match = {
+      band: "Medium", nice_met: 0, reasons: [], gaps: [], requests: [],
+      requirements: [{ requirement: "Kubernetes", kind: "must_have", quote: "Kubernetes", result: "missing", evidence: [], gap: null }],
+    };
+    const profile = {
+      resume_filename: null, resume_text: null, extraction_status: null, work_authorization: null, lives_in: null,
+      languages: ["English"], seniority: null, roles: [], work_type: "employment", min_pay: [],
+      location_arrangements: ["remote"], location_places: [], evidence: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        new Response(JSON.stringify(url === "/api/profile" ? profile : [{ ...posting, status: "received", rating_state: "rated", match }])),
+      ),
+    );
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add to Profile" }));
+
+    expect(((await screen.findByLabelText("Add something your resume misses")) as HTMLInputElement).value).toBe("Kubernetes");
+  });
+
   it("shows an error and keeps the text when saving fails", async () => {
     vi.stubGlobal(
       "fetch",

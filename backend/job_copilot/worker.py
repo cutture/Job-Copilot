@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from job_copilot import filter, profile
+from job_copilot import filter, profile, rating
 from job_copilot.db import connect
 
 log = logging.getLogger(__name__)
@@ -46,6 +46,8 @@ def _process_posting(user_id: UUID, posting_id: str) -> None:
         posting_type=facts.posting_type,
         salary_note=decision.salary_note,
     )
+    if decision.passed:
+        rating.queue_ratings(user_id)
 
 
 def _save(
@@ -88,6 +90,7 @@ Handler = Callable[[UUID, dict[str, Any]], None]
 HANDLERS: dict[str, tuple[Handler, Handler]] = {
     "process_posting": (_process_posting_job, _posting_failed),
     "extract_evidence": (profile.extract_evidence, profile.mark_extraction_failed),
+    "rate_match": (rating.rate_match, rating.mark_not_rated),
 }
 
 

@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, field_validator
 
-from job_copilot import profile
+from job_copilot import profile, rating
 from job_copilot.db import UserId, connect, current_user_id
 
 MANUAL_SOURCE = "Manual Source"
@@ -57,9 +57,12 @@ class JobPosting(BaseModel):
     filter_reason: str | None
     salary_note: str | None
     created_at: datetime
+    rating_state: rating.RatingState | None = None
+    match: rating.MatchView | None = None
 
 
 COLUMNS = "id, title, source, text, status, posting_type, filter_reason, salary_note, created_at"
+MATCH_COLUMNS = "band, reasons, gaps, requests, nice_met, requirements"
 
 
 @app.post("/api/job-postings", status_code=201)
@@ -82,7 +85,23 @@ def paste_posting(posting: PastedPosting, user_id: UserId) -> JobPosting:
 def list_postings(user_id: UserId) -> list[JobPosting]:
     with connect() as conn:
         rows = conn.execute(
-            f"SELECT {COLUMNS} FROM job_postings WHERE user_id = %s ORDER BY created_at DESC",
+            f"""SELECT {", ".join("p." + c.strip() for c in COLUMNS.split(","))},
+                       {MATCH_COLUMNS},
+                       CASE WHEN m.job_posting_id IS NOT NULL THEN 'rated'
+                            WHEN p.status <> 'received' THEN NULL
+                            WHEN EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'rate_match'
+                                         AND j.payload ->> 'job_posting_id' = p.id::text)
+                                 THEN 'rating'
+                            ELSE 'waiting' END AS rating_state
+                FROM job_postings p LEFT JOIN matches m ON m.job_posting_id = p.id
+                WHERE p.user_id = %s ORDER BY p.created_at DESC""",
             (user_id,),
         ).fetchall()
-    return [JobPosting(**row) for row in rows]
+    match_fields = [c.strip() for c in MATCH_COLUMNS.split(",")]
+    return [
+        JobPosting(
+            **{k: v for k, v in row.items() if k not in match_fields},
+            match=rating.MatchView(**{k: row[k] for k in match_fields}) if row["band"] else None,
+        )
+        for row in rows
+    ]

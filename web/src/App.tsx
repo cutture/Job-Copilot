@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { Matches } from "./Matches";
+import type { Match, RatedPosting } from "./Matches";
 import { Profile } from "./Profile";
 
 type JobPosting = {
@@ -11,6 +13,8 @@ type JobPosting = {
   filter_reason: string | null;
   salary_note: string | null;
   created_at: string;
+  rating_state?: "rated" | "rating" | "waiting" | null;
+  match?: Match | null;
 };
 
 function PostingRow({ posting }: { posting: JobPosting }) {
@@ -31,6 +35,8 @@ function PostingRow({ posting }: { posting: JobPosting }) {
       )}
       {posting.status === "queued" && <em> Working on the title…</em>}
       {posting.status === "model_unavailable" && <em> Our AI model couldn't read this posting.</em>}
+      {posting.status === "not_rated" && <em> Our AI model couldn't rate this posting.</em>}
+      {posting.rating_state === "rating" && <em> Rating…</em>}
       {posting.filter_reason && <div style={{ fontSize: 13 }}>{posting.filter_reason}</div>}
     </li>
   );
@@ -51,6 +57,7 @@ export function App() {
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<"postings" | "profile">("postings");
   const [showFiltered, setShowFiltered] = useState(false);
+  const [draft, setDraft] = useState("");
 
   useEffect(() => {
     fetchPostings()
@@ -58,8 +65,14 @@ export function App() {
       .catch(() => setError("We couldn't load your Job Postings. Try refreshing the page."));
   }, []);
 
-  const processing = postings?.some((posting) => posting.status === "queued") ?? false;
-  const shown = postings?.filter((posting) => posting.status !== "filtered") ?? [];
+  const processing =
+    postings?.some((posting) => posting.status === "queued" || posting.rating_state === "rating") ?? false;
+  const rated = (postings?.filter((posting) => posting.match) ?? []) as RatedPosting[];
+  const waiting = postings?.filter((posting) => posting.rating_state === "waiting").length ?? 0;
+  const shown =
+    postings?.filter(
+      (posting) => posting.status !== "filtered" && !posting.match && posting.rating_state !== "waiting",
+    ) ?? [];
   const filtered = postings?.filter((posting) => posting.status === "filtered") ?? [];
 
   useEffect(() => {
@@ -106,11 +119,17 @@ export function App() {
         <button aria-pressed={view === "postings"} onClick={() => setView("postings")}>
           Job Postings
         </button>{" "}
-        <button aria-pressed={view === "profile"} onClick={() => setView("profile")}>
+        <button
+          aria-pressed={view === "profile"}
+          onClick={() => {
+            setDraft("");
+            setView("profile");
+          }}
+        >
           Profile
         </button>
       </nav>
-      {view === "profile" ? <Profile /> : <>
+      {view === "profile" ? <Profile key={draft} draft={draft} /> : <>
       <form onSubmit={addPosting}>
         <label htmlFor="posting" style={{ display: "block", fontWeight: 600 }}>
           Paste a Job Posting
@@ -135,6 +154,18 @@ export function App() {
       {error && <p role="alert">{error}</p>}
       <h2>Your Job Postings</h2>
       {postings?.length === 0 && <p>No Job Postings yet.</p>}
+      <Matches
+        postings={rated}
+        onAddToProfile={(requirement) => {
+          setDraft(requirement);
+          setView("profile");
+        }}
+      />
+      {waiting > 0 && (
+        <p>
+          {waiting} {waiting === 1 ? "posting" : "postings"} waiting to be rated
+        </p>
+      )}
       <ul>
         {shown.map((posting) => (
           <PostingRow key={posting.id} posting={posting} />

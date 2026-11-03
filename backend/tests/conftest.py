@@ -38,7 +38,7 @@ def clean(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
         monkeypatch.delenv(name, raising=False)
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
-        conn.execute("TRUNCATE jobs, job_postings, model_calls, evidence, profiles")
+        conn.execute("TRUNCATE jobs, matches, job_postings, model_calls, evidence, profiles")
 
 
 @dataclass
@@ -50,6 +50,8 @@ class FakeProvider:
     output_tokens: int = 5
     error: Exception | None = None
     received: list[dict[str, Any]] = field(default_factory=list)
+    # Answers for particular models; any other model gets `text`.
+    answers: dict[str, str] = field(default_factory=dict)
 
 
 @pytest.fixture(autouse=True)
@@ -60,7 +62,8 @@ def provider(monkeypatch: pytest.MonkeyPatch) -> FakeProvider:
         fake.received.append({"model": model, "messages": messages, "max_tokens": max_tokens})
         if fake.error:
             raise fake.error
-        return gateway.ProviderAnswer(fake.text, fake.input_tokens, fake.output_tokens)
+        text = fake.answers.get(model, fake.text)
+        return gateway.ProviderAnswer(text, fake.input_tokens, fake.output_tokens)
 
     monkeypatch.setattr(gateway, "call_provider", call)
     return fake
