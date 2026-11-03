@@ -52,6 +52,10 @@ _Avoid_: Account, user data
 An item from the resume, public GitHub or a Profile entry that a factual claim can trace back to.
 _Avoid_: Proof, source, facts
 
+**Confirmed Evidence**:
+Evidence the person has checked: a resume item they confirmed or corrected, or one they wrote themselves. Only Confirmed Evidence can support a Claim or a Requirement Result.
+_Avoid_: Approved, verified, accepted Evidence
+
 **Self-reported**:
 Evidence that the person wrote themselves as a Profile entry, which counts as Evidence and is shown as self-reported.
 _Avoid_: Unverified, manual Evidence
