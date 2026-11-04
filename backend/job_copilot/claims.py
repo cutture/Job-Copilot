@@ -1,13 +1,15 @@
 """Claim rules: exact checks Verification makes in code, with no model or database.
 
-A number in a Claim must appear in the Evidence it cites. A count of years may instead be
-covered by a dated range in that Evidence, such as "Jan 2021 to present".
+A number, link or email address in a Claim must appear in the Evidence it cites, so text a
+posting slipped into a draft can't carry one through. A count of years may instead be covered by
+a dated range in that Evidence, such as "Jan 2021 to present".
 """
 
 import re
 from datetime import date
 
 YEARS_CLAIM = re.compile(r"(\d+(?:\.\d+)?)(\s*\+)?\s*years?\b", re.IGNORECASE)
+LINK = re.compile(r"(?:https?://|www\.)[^\s<>\"']+|[^\s<>\"'@]+@[^\s<>\"'@]+\.\w+", re.IGNORECASE)
 NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
 DATED_RANGE = re.compile(
     r"\b((?:19|20)\d{2})\s*(?:-|–|—|to|until)\s*(?:[A-Za-z]+\.?\s+)?"
@@ -30,8 +32,13 @@ def _value(token: str) -> str:
     return token.rstrip("%").replace(",", "")
 
 
-def unsupported_number(claim: str, evidence: list[str], today: date) -> str | None:
-    """The first number in the Claim its Evidence doesn't show, or None if all are shown."""
+def unsupported_detail(claim: str, evidence: list[str], today: date) -> str | None:
+    """The first number, link or email in the Claim its Evidence doesn't show, if any."""
+    cited = " ".join(evidence).casefold()
+    for link in LINK.findall(claim):
+        if link.rstrip(".,;:!?)").casefold() not in cited:
+            return str(link)
+    claim = LINK.sub(" ", claim)
     shown = {_value(token) for text in evidence for token in NUMBER.findall(text)}
     for match in YEARS_CLAIM.finditer(claim):
         years = float(match[1])

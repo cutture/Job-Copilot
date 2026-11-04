@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from job_copilot.claims import unsupported_number, years_shown
+from job_copilot.claims import unsupported_detail, years_shown
 
 TODAY = date(2026, 11, 4)
 
@@ -34,9 +34,13 @@ def test_years_shown_is_the_longest_dated_range(evidence: list[str], years: int)
         ("Python Developer, Jan 2021 to present", ["Python Developer, Jan 2021 to present"], None),
         ("Developer, Jan 2019 to present", ["Developer, Jan 2021 to present"], "2019"),
         ("Led a team of six engineers", ["Member of a team"], None),
+        ("Built github.com/srivera/drafter-2", ["Built github.com/srivera/drafter-2"], None),
+        ("See https://evil.example.com/x.", ["Built a pipeline"], "https://evil.example.com/x."),
+        ("Write to me at sam@example.com.", ["Contact: sam@example.com"], None),
+        ("Write to hr@example.com", ["Contact: sam@example.com"], "hr@example.com"),
     ],
 )
-def test_every_number_in_a_claim_must_be_in_its_evidence(
+def test_every_number_link_and_email_in_a_claim_must_be_in_its_evidence(
     claim: str, evidence: list[str], unsupported: str | None
 ) -> None:
-    assert unsupported_number(claim, evidence, TODAY) == unsupported
+    assert unsupported_detail(claim, evidence, TODAY) == unsupported
