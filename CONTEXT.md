@@ -94,6 +94,10 @@ _Avoid_: Tier, grade
 Judging a Match again against the current Profile, at the person's request. It is never automatic.
 _Avoid_: Refresh, re-rank
 
+**Profile changed**:
+A label on a Match whose rating relied on Evidence the person has since deleted. It stays until the Match is rated again.
+_Avoid_: Stale, outdated
+
 ### Applying
 
 **Apply**:
@@ -143,7 +147,7 @@ A Claim about something not mentioned anywhere in the resume or Profile.
 _Avoid_: Hallucination, stretched claim, false claim
 
 **Removed Claim**:
-A Claim that Verification took out and listed for the person with a reason: a Stretched Claim, an Invented Claim, one Verification couldn't check, or one removed with its job heading.
+A Claim taken out of an Application Pack and listed for the person with a reason: a Stretched Claim, an Invented Claim, one Verification couldn't check, one removed with its job heading, or one whose Evidence the person deleted.
 _Avoid_: Rejected claim, deleted claim
 
 **Keep Anyway**:
