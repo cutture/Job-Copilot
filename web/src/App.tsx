@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { Application } from "./Application";
 import { Matches, Origin } from "./Matches";
 import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches";
 import { Profile } from "./Profile";
@@ -57,6 +58,7 @@ export function App() {
   const [view, setView] = useState<"postings" | "profile">("postings");
   const [showFiltered, setShowFiltered] = useState(false);
   const [evidenceDraft, setEvidenceDraft] = useState("");
+  const [applicationId, setApplicationId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchPostings()
@@ -118,6 +120,37 @@ export function App() {
     }
   }
 
+  async function applyTo(posting: RatedPosting) {
+    if (posting.application_id) {
+      setApplicationId(posting.application_id);
+      return;
+    }
+    setError("");
+    const response = await fetch("/api/applications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_posting_id: posting.id }),
+    }).catch(() => null);
+    if (!response?.ok) {
+      setError("We couldn't start this Application. Try again.");
+      return;
+    }
+    setApplicationId((await response.json()).id);
+  }
+
+  function backToListings() {
+    setApplicationId(null);
+    refreshPostings();
+  }
+
+  if (applicationId) {
+    return (
+      <main style={{ maxWidth: 1320, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
+        <Application id={applicationId} onBack={backToListings} />
+      </main>
+    );
+  }
+
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
       <h1>Job Copilot</h1>
@@ -167,6 +200,7 @@ export function App() {
           setEvidenceDraft(draft);
           setView("profile");
         }}
+        onApply={applyTo}
       />
       {waiting > 0 && (
         <p>

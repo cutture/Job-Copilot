@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from job_copilot import profile, rating, search, sources
+from job_copilot import applications, profile, rating, search, sources
 from job_copilot.db import UserId, connect, current_user_id
 from job_copilot.sources import MAX_POSTING_LENGTH, MAX_TITLE_LENGTH
 
@@ -16,6 +16,7 @@ MANUAL_SOURCE = "Manual Source"
 app = FastAPI(title="Job Copilot")
 app.include_router(profile.router)
 app.include_router(search.router)
+app.include_router(applications.router)
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -65,6 +66,8 @@ class JobPosting(BaseModel):
     credit_text: str | None = None
     apply_url: str | None
     expired: bool
+    # The Application started by clicking Apply, if there is one.
+    application_id: UUID | None = None
     rating_state: rating.RatingState | None = None
     match: rating.MatchView | None = None
 
@@ -115,12 +118,13 @@ def list_postings(user_id: UserId) -> list[JobPosting]:
         rows = conn.execute(
             f"""SELECT {", ".join(f"p.{f}" for f in POSTING_FIELDS)},
                        {", ".join(f"m.{f}" for f in MATCH_FIELDS)},
-                       p.expired_at IS NOT NULL AS expired,
+                       p.expired_at IS NOT NULL AS expired, a.id AS application_id,
                        CASE WHEN p.status <> 'received' THEN NULL
                             WHEN m.job_posting_id IS NOT NULL THEN 'rated'
                             WHEN {rating.RATING_QUEUED} THEN 'rating'
                             ELSE 'waiting' END AS rating_state
                 FROM job_postings p LEFT JOIN matches m ON m.job_posting_id = p.id
+                LEFT JOIN applications a ON a.job_posting_id = p.id
                 WHERE p.user_id = %s AND p.expired_at IS NULL
                 ORDER BY p.created_at DESC""",
             (user_id,),
@@ -129,6 +133,7 @@ def list_postings(user_id: UserId) -> list[JobPosting]:
         JobPosting(
             **{f: row[f] for f in POSTING_FIELDS},
             expired=row["expired"],
+            application_id=row["application_id"],
             credit_text=_credit_text(row["source"]),
             rating_state=row["rating_state"],
             match=rating.MatchView(**{f: row[f] for f in MATCH_FIELDS})

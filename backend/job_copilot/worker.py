@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from job_copilot import filter, profile, rating, search
+from job_copilot import applications, filter, profile, rating, search
 from job_copilot.db import connect
 
 log = logging.getLogger(__name__)
@@ -94,6 +94,7 @@ HANDLERS: dict[str, tuple[Handler, Handler]] = {
     "extract_evidence": (profile.extract_evidence, profile.mark_extraction_failed),
     "rate_match": (rating.rate_match, rating.mark_not_rated),
     "search": (search.run_search, search.finish_search),
+    "generate_pack": (applications.generate_pack, applications.pack_failed),
 }
 
 

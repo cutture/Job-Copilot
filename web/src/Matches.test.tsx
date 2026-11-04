@@ -55,8 +55,20 @@ describe("Matches", () => {
     rated("d", "Hidden Low", "Low"),
   ];
 
+  it("applies to the selected Match, or opens its Application once started", () => {
+    const onApply = vi.fn();
+    const started = { ...rated("e", "Started High", "High", 3), application_id: "app-1" };
+    render(<Matches postings={[...all, started]} onAddToProfile={() => {}} onApply={onApply} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Application Pack" }));
+    fireEvent.click(screen.getByRole("button", { name: "View Plain High" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    expect(onApply.mock.calls.map(([posting]) => posting.id)).toEqual(["e", "a"]);
+  });
+
   it("groups by Band, sorts by nice-to-haves met and collapses Low but counts it", () => {
-    render(<Matches postings={all} onAddToProfile={() => {}} />);
+    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} />);
 
     expect(screen.getByRole("heading", { name: "High (2)" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Medium (1)" })).toBeTruthy();
@@ -70,7 +82,7 @@ describe("Matches", () => {
   });
 
   it("shows every Requirement with its quote and Evidence, and labels the rating an estimate", () => {
-    render(<Matches postings={all} onAddToProfile={() => {}} />);
+    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} />);
 
     expect(screen.getByRole("heading", { name: "Best High" })).toBeTruthy();
     expect(screen.getByText("Reason for Best High")).toBeTruthy();
@@ -82,7 +94,7 @@ describe("Matches", () => {
 
   it("offers one-click Add to Profile on a gap", () => {
     const add = vi.fn();
-    render(<Matches postings={all} onAddToProfile={add} />);
+    render(<Matches postings={all} onAddToProfile={add} onApply={() => {}} />);
 
     expect(screen.getByText("No Evidence found")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Add to Profile" }));
@@ -92,7 +104,7 @@ describe("Matches", () => {
 
   it("sends an empty Profile field to the Profile rather than asking for Evidence", () => {
     const add = vi.fn();
-    render(<Matches postings={all} onAddToProfile={add} />);
+    render(<Matches postings={all} onAddToProfile={add} onApply={() => {}} />);
 
     expect(screen.getByText("Your Profile: English")).toBeTruthy();
     expect(screen.getAllByText("No Evidence found")).toHaveLength(1);
@@ -102,7 +114,7 @@ describe("Matches", () => {
   });
 
   it("switches the detail to the Match picked", () => {
-    render(<Matches postings={all} onAddToProfile={() => {}} />);
+    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "View Some Medium" }));
 

@@ -1,3 +1,4 @@
+import json
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -39,8 +40,8 @@ def clean(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
         conn.execute(
-            "TRUNCATE jobs, matches, job_postings, watchlist, searches, model_calls, evidence, "
-            "profiles"
+            "TRUNCATE jobs, application_packs, applications, matches, job_postings, watchlist, "
+            "searches, model_calls, evidence, profiles"
         )
 
 
@@ -55,6 +56,8 @@ class FakeProvider:
     received: list[dict[str, Any]] = field(default_factory=list)
     # Answers for particular models; any other model gets `text`.
     answers: dict[str, str] = field(default_factory=dict)
+    # Answers for a request whose user message is JSON naming this "task".
+    tasks: dict[str, str] = field(default_factory=dict)
 
 
 @pytest.fixture(autouse=True)
@@ -66,6 +69,11 @@ def provider(monkeypatch: pytest.MonkeyPatch) -> FakeProvider:
         if fake.error:
             raise fake.error
         text = fake.answers.get(model, fake.text)
+        try:
+            task = json.loads(messages[-1]["content"]).get("task")
+        except (json.JSONDecodeError, AttributeError):
+            task = None
+        text = fake.tasks.get(task, text) if isinstance(task, str) else text
         return gateway.ProviderAnswer(text, fake.input_tokens, fake.output_tokens)
 
     monkeypatch.setattr(gateway, "call_provider", call)

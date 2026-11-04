@@ -39,6 +39,8 @@ export type RatedPosting = PostingOrigin & {
   title: string;
   posting_type: "employment" | "freelance" | null;
   match: Match;
+  // The Application started by clicking Apply, if there is one.
+  application_id?: string | null;
 };
 
 const BANDS: Band[] = ["High", "Medium", "Low"];
@@ -83,7 +85,13 @@ function Badges({ posting }: { posting: RatedPosting }) {
   );
 }
 
-function Detail({ posting, onAddToProfile }: { posting: RatedPosting; onAddToProfile: (draft: string) => void }) {
+type DetailProps = {
+  posting: RatedPosting;
+  onAddToProfile: (draft: string) => void;
+  onApply: (posting: RatedPosting) => void;
+};
+
+function Detail({ posting, onAddToProfile, onApply }: DetailProps) {
   const { match } = posting;
   return (
     <div style={{ ...card, position: "sticky", top: 8 }}>
@@ -92,6 +100,15 @@ function Detail({ posting, onAddToProfile }: { posting: RatedPosting; onAddToPro
       <div style={{ fontSize: 13 }}>
         <Origin posting={posting} /> · {age(posting)}
       </div>
+      <p>
+        <button
+          style={{ background: "#1f5fbf", borderColor: "#1f5fbf", color: "#fff" }}
+          onClick={() => onApply(posting)}
+        >
+          {posting.application_id ? "Open Application Pack" : "Apply"}
+        </button>{" "}
+        <span style={{ fontSize: 13 }}>Apply writes your Application Pack. Nothing is submitted.</span>
+      </p>
       <ul>
         {match.reasons.map((reason) => (
           <li key={reason}>{reason}</li>
@@ -151,10 +168,13 @@ function Detail({ posting, onAddToProfile }: { posting: RatedPosting; onAddToPro
 export function Matches({
   postings,
   onAddToProfile,
+  onApply,
 }: {
   postings: RatedPosting[];
   // Opens the Profile, with an Evidence item started from `draft` when it isn't empty.
   onAddToProfile: (draft: string) => void;
+  // Starts the posting's Application, or opens the one already started.
+  onApply: (posting: RatedPosting) => void;
 }) {
   const [showLow, setShowLow] = useState(false);
   const sorted = [...postings].sort(
@@ -199,7 +219,7 @@ export function Matches({
             </>
           )}
         </div>
-        <Detail posting={selected} onAddToProfile={onAddToProfile} />
+        <Detail posting={selected} onAddToProfile={onAddToProfile} onApply={onApply} />
       </div>
       <p style={{ fontSize: 13 }}>
         Interview Likelihood is an estimate of how well your Evidence covers the posting. It doesn't predict the
