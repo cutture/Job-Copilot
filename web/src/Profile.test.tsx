@@ -6,6 +6,8 @@ const baseProfile = {
   resume_filename: "resume.pdf",
   resume_text: "Sam Rivera\nPython Developer, Example Co",
   extraction_status: "done",
+  name: null,
+  contact: null,
   work_authorization: null,
   lives_in: null,
   education: null,

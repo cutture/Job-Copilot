@@ -5,13 +5,23 @@ import type { ApplicationData } from "./Application";
 
 const python = { text: "Python Developer, Example Co, Jan 2021 to present", origin: "resume" as const };
 
-function application(status: "generating" | "waiting" | "ready"): ApplicationData {
+function application(
+  status: "generating" | "waiting" | "ready",
+  changes: Partial<ApplicationData> = {},
+): ApplicationData {
   const ready = status === "ready";
   return {
     id: "a",
     title: "Applied AI Engineer",
     employer: "Northwind Labs",
     source: "Greenhouse",
+    apply_url: "https://job-boards.greenhouse.io/northwindlabs/jobs/1",
+    reviewed: false,
+    submitted_at: null,
+    outcome: null,
+    cost_usd: "0.0061",
+    has_name: true,
+    ...changes,
     pack: {
       version: 1,
       status,
@@ -94,5 +104,49 @@ describe("Application", () => {
 
     expect(await screen.findByText("Writing and checking your Application Pack…")).toBeTruthy();
     expect(calls).toContain("POST /api/applications/a/retry");
+  });
+
+  it("keeps downloads and Submitted locked until the review is ticked", async () => {
+    const calls = serve({
+      "GET /api/applications/a": () => application("ready"),
+      "PUT /api/applications/a/review": () => application("ready", { reviewed: true }),
+    });
+    render(<Application id="a" onBack={() => {}} />);
+
+    expect((await screen.findByRole("button", { name: "Resume DOCX" })).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "I submitted it on their site" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText(/cost \$0\.0061 so far/)).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText(/I've reviewed this Application Pack/));
+
+    const resume = await screen.findByRole("link", { name: "Resume DOCX" });
+    expect(resume.getAttribute("href")).toBe("/api/applications/a/resume.docx");
+    expect(screen.getByRole("link", { name: "Cover letter DOCX" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open employer's application page" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "I submitted it on their site" }).hasAttribute("disabled")).toBe(false);
+    expect(calls).toContain("PUT /api/applications/a/review");
+  });
+
+  it("reports an Outcome with one click once Submitted", async () => {
+    const submitted = { reviewed: true, submitted_at: "2026-11-04T10:00:00Z" };
+    const calls = serve({
+      "GET /api/applications/a": () => application("ready", submitted),
+      "PUT /api/applications/a/outcome": () => application("ready", { ...submitted, outcome: "interview" }),
+    });
+    render(<Application id="a" onBack={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Interview" }));
+
+    expect((await screen.findByRole("button", { name: "Interview", pressed: true })).textContent).toBe("Interview");
+    expect(screen.getByRole("button", { name: /✓ Submitted/ }).hasAttribute("disabled")).toBe(true);
+    expect(calls).toContain("PUT /api/applications/a/outcome");
+  });
+
+  it("asks for a name when the Profile has none", async () => {
+    serve({ "GET /api/applications/a": () => application("ready", { has_name: false }) });
+
+    render(<Application id="a" onBack={() => {}} />);
+
+    expect(await screen.findByText(/Add your name to your Profile/)).toBeTruthy();
   });
 });

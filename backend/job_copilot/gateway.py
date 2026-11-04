@@ -206,6 +206,7 @@ def complete(
     step: str,
     messages: list[dict[str, str]],
     max_output_tokens: int,
+    application_id: UUID | None = None,
 ) -> Completion:
     rule = MODELS.get(model)
     if rule is None or data_class not in rule.data_classes:
@@ -231,10 +232,19 @@ def complete(
     trace_id = uuid4().hex if settings else None
     with connect() as conn:
         conn.execute(
-            """INSERT INTO model_calls
-               (user_id, model, step, input_tokens, output_tokens, cost_usd, trace_id)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-            (user_id, model, step, answer.input_tokens, answer.output_tokens, cost, trace_id),
+            """INSERT INTO model_calls (user_id, model, step, input_tokens, output_tokens,
+                                        cost_usd, trace_id, application_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (
+                user_id,
+                model,
+                step,
+                answer.input_tokens,
+                answer.output_tokens,
+                cost,
+                trace_id,
+                application_id,
+            ),
         )
     if settings:
         _trace(

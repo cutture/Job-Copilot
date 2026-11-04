@@ -13,7 +13,30 @@ type Pack = {
   cover_letter: { paragraphs: Claim[][] } | null;
   removed_claims: RemovedClaim[] | null;
 };
-export type ApplicationData = { id: string; title: string; employer: string | null; source: string; pack: Pack };
+export type Outcome = "interview" | "offer" | "rejected" | "no_response";
+export type ApplicationData = {
+  id: string;
+  title: string;
+  employer: string | null;
+  source: string;
+  apply_url: string | null;
+  reviewed: boolean;
+  submitted_at: string | null;
+  outcome: Outcome | null;
+  cost_usd: string;
+  has_name: boolean;
+  pack: Pack;
+};
+export const OUTCOMES: Record<Outcome, string> = {
+  interview: "Interview",
+  offer: "Offer",
+  rejected: "Rejected",
+  no_response: "No response",
+};
+
+export function dollars(cost: string): string {
+  return `$${Number(cost).toFixed(4)}`;
+}
 
 const REFRESH_MS = 2000;
 const card: CSSProperties = { border: "1px solid #ccc", borderRadius: 8, padding: 12, marginBottom: 10 };
@@ -93,6 +116,67 @@ function allClaims(pack: Pack): Claim[] {
   ].filter((claim) => claim.evidence.length > 0);
 }
 
+type FinishProps = {
+  application: ApplicationData;
+  onReview: (reviewed: boolean) => void;
+  onSubmitted: () => void;
+  onOutcome: (outcome: Outcome) => void;
+};
+
+function Finish({ application, onReview, onSubmitted, onOutcome }: FinishProps) {
+  const { id, reviewed, submitted_at } = application;
+  const download = (path: string, label: string) =>
+    reviewed ? (
+      <a href={`/api/applications/${id}/${path}`} download style={{ marginRight: 8 }}>
+        {label}
+      </a>
+    ) : (
+      <button disabled>{label}</button>
+    );
+  return (
+    <div style={{ ...card, marginTop: 12 }}>
+      {!application.has_name && (
+        <p style={{ fontSize: 13, background: "#fff8e1", padding: "4px 8px" }}>
+          Add your name to your Profile so it appears on your documents and in their file names.
+        </p>
+      )}
+      <label>
+        <input type="checkbox" checked={reviewed} onChange={(event) => onReview(event.target.checked)} /> I've reviewed
+        this Application Pack
+      </label>
+      <div style={{ margin: "6px 0" }}>
+        {download("resume.docx", "Resume DOCX")} {download("cover-letter.docx", "Cover letter DOCX")}
+      </div>
+      <div>
+        {application.apply_url &&
+          (reviewed ? (
+            <a href={application.apply_url} target="_blank" rel="noreferrer noopener" style={{ marginRight: 8 }}>
+              Open employer's application page
+            </a>
+          ) : (
+            <button disabled>Open employer's application page</button>
+          ))}
+        <button disabled={!reviewed || !!submitted_at} onClick={onSubmitted}>
+          {submitted_at ? `✓ Submitted ${new Date(submitted_at).toLocaleString()}` : "I submitted it on their site"}
+        </button>
+      </div>
+      {submitted_at && (
+        <div role="group" aria-label="Outcome" style={{ marginTop: 6 }}>
+          Outcome:{" "}
+          {(Object.keys(OUTCOMES) as Outcome[]).map((outcome) => (
+            <button key={outcome} aria-pressed={application.outcome === outcome} onClick={() => onOutcome(outcome)}>
+              {OUTCOMES[outcome]}
+            </button>
+          ))}
+        </div>
+      )}
+      <p style={{ fontSize: 13, marginBottom: 0 }}>
+        Job Copilot never submits for you. This Application has cost {dollars(application.cost_usd)} so far.
+      </p>
+    </div>
+  );
+}
+
 export function Application({ id, onBack }: { id: string; onBack: () => void }) {
   const [application, setApplication] = useState<ApplicationData | null>(null);
   const [error, setError] = useState("");
@@ -115,15 +199,24 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
     return () => clearInterval(timer);
   }, [id, generating]);
 
-  async function retry() {
+  async function act(path: string, method: string, failure: string, body?: unknown) {
     setError("");
-    const response = await fetch(`/api/applications/${id}/retry`, { method: "POST" }).catch(() => null);
+    const response = await fetch(`/api/applications/${id}/${path}`, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }).catch(() => null);
     if (!response?.ok) {
-      setError("We couldn't retry. Try again in a moment.");
+      setError(failure);
       return;
     }
     setApplication(await response.json());
   }
+
+  const retry = () => act("retry", "POST", "We couldn't retry. Try again in a moment.");
+  const review = (reviewed: boolean) => act("review", "PUT", "We couldn't save your review. Try again.", { reviewed });
+  const submitted = () => act("submitted", "POST", "We couldn't mark it as Submitted. Try again.");
+  const report = (outcome: Outcome) => act("outcome", "PUT", "We couldn't save the Outcome. Try again.", { outcome });
 
   const pack = application?.pack;
   return (
@@ -183,7 +276,9 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
               ))}
             </ul>
           </div>
-          <p style={{ fontSize: 13 }}>Job Copilot never submits for you.</p>
+          {application && (
+            <Finish application={application} onReview={review} onSubmitted={submitted} onOutcome={report} />
+          )}
         </>
       )}
     </section>

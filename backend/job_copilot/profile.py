@@ -190,6 +190,8 @@ FILTER_FIELDS = {
     "min_pay": "jsonb",
 }
 PREFERENCE_FIELDS = (
+    "name",
+    "contact",
     "work_authorization",
     "lives_in",
     "education",
@@ -220,6 +222,9 @@ class MinimumPay(BaseModel):
 
 
 class Preferences(BaseModel):
+    # For the person's downloaded documents only; never sent to a model.
+    name: ShortText | None = None
+    contact: ShortText | None = None
     work_authorization: ShortText | None = None
     lives_in: ShortText | None = None
     education: ShortText | None = None
@@ -235,7 +240,7 @@ class Preferences(BaseModel):
     # Days back a search looks for postings; it can be shortened but never beyond 15.
     search_window_days: int = Field(default=15, ge=1, le=15)
 
-    @field_validator("work_authorization", "lives_in", "education")
+    @field_validator("name", "contact", "work_authorization", "lives_in", "education")
     @classmethod
     def clean_text(cls, value: str | None) -> str | None:
         return strip_controls(value) or None if value else None

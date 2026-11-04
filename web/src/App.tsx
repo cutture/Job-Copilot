@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Application } from "./Application";
+import { Applications } from "./Applications";
 import { Matches, Origin } from "./Matches";
 import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches";
 import { Profile } from "./Profile";
@@ -55,7 +56,7 @@ export function App() {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [view, setView] = useState<"postings" | "profile">("postings");
+  const [view, setView] = useState<"postings" | "applications" | "profile">("postings");
   const [showFiltered, setShowFiltered] = useState(false);
   const [evidenceDraft, setEvidenceDraft] = useState("");
   const [applicationId, setApplicationId] = useState<string | null>(null);
@@ -140,6 +141,7 @@ export function App() {
 
   function backToListings() {
     setApplicationId(null);
+    setView("postings");
     refreshPostings();
   }
 
@@ -158,6 +160,9 @@ export function App() {
         <button aria-pressed={view === "postings"} onClick={() => setView("postings")}>
           Job Postings
         </button>{" "}
+        <button aria-pressed={view === "applications"} onClick={() => setView("applications")}>
+          Applications
+        </button>{" "}
         <button
           aria-pressed={view === "profile"}
           onClick={() => {
@@ -168,7 +173,9 @@ export function App() {
           Profile
         </button>
       </nav>
-      {view === "profile" ? <Profile key={evidenceDraft} draft={evidenceDraft} /> : <>
+      {view === "applications" && <Applications onOpen={setApplicationId} />}
+      {view === "profile" && <Profile key={evidenceDraft} draft={evidenceDraft} />}
+      {view === "postings" && <>
       <Search onProgress={refreshPostings} />
       <form onSubmit={addPosting}>
         <label htmlFor="posting" style={{ display: "block", fontWeight: 600 }}>

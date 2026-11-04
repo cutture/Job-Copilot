@@ -12,6 +12,8 @@ type ProfileData = {
   resume_filename: string | null;
   resume_text: string | null;
   extraction_status: "queued" | "done" | "failed" | null;
+  name: string | null;
+  contact: string | null;
   work_authorization: string | null;
   lives_in: string | null;
   education: string | null;
@@ -27,6 +29,8 @@ type ProfileData = {
 };
 
 type Form = {
+  name: string;
+  contact: string;
   work_authorization: string;
   lives_in: string;
   education: string;
@@ -54,6 +58,8 @@ const field: CSSProperties = { display: "block", width: "100%", boxSizing: "bord
 
 function toForm(profile: ProfileData): Form {
   return {
+    name: profile.name ?? "",
+    contact: profile.contact ?? "",
     work_authorization: profile.work_authorization ?? "",
     lives_in: profile.lives_in ?? "",
     education: profile.education ?? "",
@@ -255,6 +261,8 @@ export function Profile({ draft = "" }: { draft?: string }) {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        name: form.name.trim() || null,
+        contact: form.contact.trim() || null,
         work_authorization: form.work_authorization.trim() || null,
         lives_in: form.lives_in.trim() || null,
         education: form.education.trim() || null,
@@ -388,6 +396,20 @@ export function Profile({ draft = "" }: { draft?: string }) {
             <div style={card}>
               <h2>Facts about you</h2>
               <p style={{ fontSize: 13 }}>Empty fields count as Unknown, never as a Hard Blocker.</p>
+              <label htmlFor="name">Your name</label>
+              <input id="name" style={field} value={form.name} onChange={set("name")} />
+              <label htmlFor="contact">Contact line</label>
+              <input
+                id="contact"
+                style={field}
+                placeholder="sam@example.com · +1 555 0100 · Remote, US"
+                value={form.contact}
+                onChange={set("contact")}
+              />
+              <p style={{ fontSize: 13, marginTop: 0 }}>
+                Your name and contact line appear only in your downloaded documents. They're never sent to an AI
+                model.
+              </p>
               <label htmlFor="work-authorization">Work authorization</label>
               <input id="work-authorization" style={field} value={form.work_authorization} onChange={set("work_authorization")} />
               <label htmlFor="lives-in">Where you live</label>
