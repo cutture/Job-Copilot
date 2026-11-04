@@ -38,6 +38,9 @@ def test_years_shown_is_the_longest_dated_range(evidence: list[str], years: int)
         ("See https://evil.example.com/x.", ["Built a pipeline"], "https://evil.example.com/x."),
         ("Write to me at sam@example.com.", ["Contact: sam@example.com"], None),
         ("Write to hr@example.com", ["Contact: sam@example.com"], "hr@example.com"),
+        ("Apply at evil.example.com/form", ["Built a pipeline"], "evil.example.com/form"),
+        ("Visit example.com.evil.test", ["See example.com"], "example.com.evil.test"),
+        ("Built APIs with Node.js", ["Built APIs with Node.js"], None),
     ],
 )
 def test_every_number_link_and_email_in_a_claim_must_be_in_its_evidence(

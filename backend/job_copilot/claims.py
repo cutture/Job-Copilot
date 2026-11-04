@@ -9,7 +9,14 @@ import re
 from datetime import date
 
 YEARS_CLAIM = re.compile(r"(\d+(?:\.\d+)?)(\s*\+)?\s*years?\b", re.IGNORECASE)
-LINK = re.compile(r"(?:https?://|www\.)[^\s<>\"']+|[^\s<>\"'@]+@[^\s<>\"'@]+\.\w+", re.IGNORECASE)
+# An email, a link with a scheme, or a bare host name such as example.com/jobs. Names like
+# Node.js count too, so the Evidence must name them the same way.
+LINK = re.compile(
+    r"[^\s<>\"'@]+@[^\s<>\"'@]+\.\w+"
+    r"|https?://[^\s<>\"']+"
+    r"|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b(?:/[^\s<>\"']*)?",
+    re.IGNORECASE,
+)
 NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
 DATED_RANGE = re.compile(
     r"\b((?:19|20)\d{2})\s*(?:-|–|—|to|until)\s*(?:[A-Za-z]+\.?\s+)?"
@@ -28,16 +35,20 @@ def years_shown(evidence: list[str], today: date) -> int:
     return max(spans)
 
 
+def _link(token: str) -> str:
+    return str(token).rstrip(".,;:!?)").casefold()
+
+
 def _value(token: str) -> str:
     return token.rstrip("%").replace(",", "")
 
 
 def unsupported_detail(claim: str, evidence: list[str], today: date) -> str | None:
     """The first number, link or email in the Claim its Evidence doesn't show, if any."""
-    cited = " ".join(evidence).casefold()
-    for link in LINK.findall(claim):
-        if link.rstrip(".,;:!?)").casefold() not in cited:
-            return str(link)
+    links = {_link(token) for text in evidence for token in LINK.findall(text)}
+    for token in LINK.findall(claim):
+        if _link(token) not in links:
+            return str(token)
     claim = LINK.sub(" ", claim)
     shown = {_value(token) for text in evidence for token in NUMBER.findall(text)}
     for match in YEARS_CLAIM.finditer(claim):

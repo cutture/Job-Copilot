@@ -38,7 +38,7 @@ def rated_match(client: TestClient, provider: FakeProvider) -> tuple[str, dict[s
     return posting["id"], ids
 
 
-def write(provider: FakeProvider, ids: dict[str, int], **verdicts: str) -> None:
+def write(provider: FakeProvider, ids: dict[str, int], **answers: str) -> None:
     """The writer's drafts, with planted traps, and Verification's verdicts on them."""
     py, rag, team = ids["python"], ids["retrieval"], ids["team"]
     resume = {
@@ -57,10 +57,15 @@ def write(provider: FakeProvider, ids: dict[str, int], **verdicts: str) -> None:
     }
     letter = {
         "paragraphs": [
-            [claim("Dear Northwind Labs hiring team,")],
-            [claim("I have 5 years of Python.", py), claim("I shipped retrieval systems.", rag)],
-            [claim("I bring 10 years of leadership."), claim("Thank you.")],
-            [claim("A fourth paragraph the letter has no room for.")],
+            {"sentences": [claim("Dear Northwind Labs hiring team,")]},
+            {
+                "sentences": [
+                    claim("I have 5 years of Python.", py),
+                    claim("I shipped retrieval systems.", rag),
+                ]
+            },
+            {"sentences": [claim("I bring 10 years of leadership."), claim("Thank you.")]},
+            {"sentences": [claim("A fourth paragraph the letter has no room for.")]},
         ]
     }
     checked = [
@@ -79,8 +84,8 @@ def write(provider: FakeProvider, ids: dict[str, int], **verdicts: str) -> None:
     ]
     provider.tasks = {
         "resume": json.dumps(resume),
-        "cover_letter": json.dumps(letter),
-        "verify": verdicts.get("verify", json.dumps({"statements": checked})),
+        "cover_letter": answers.get("cover_letter", json.dumps(letter)),
+        "verify": answers.get("verify", json.dumps({"statements": checked})),
     }
 
 
@@ -235,6 +240,19 @@ def test_a_pack_whose_verification_fails_is_never_saved_or_shown(
     with psycopg.connect(TEST_DB) as conn:
         stored = conn.execute("SELECT resume, cover_letter FROM application_packs").fetchone()
     assert stored == (None, None)
+
+
+def test_a_cover_letter_in_the_wrong_shape_makes_the_pack_wait(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting_id, ids = rated_match(client, provider)
+    # Sentences with no paragraphs around them.
+    write(provider, ids, cover_letter=json.dumps({"paragraphs": [claim("Hello.")]}))
+    started = apply(client, posting_id)
+    run_worker()
+
+    pack = client.get(f"/api/applications/{started['id']}").json()["pack"]
+    assert (pack["status"], pack["cover_letter"]) == ("waiting", None)
 
 
 def test_apply_again_opens_the_same_application(client: TestClient, provider: FakeProvider) -> None:

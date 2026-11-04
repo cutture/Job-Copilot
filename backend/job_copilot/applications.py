@@ -72,9 +72,9 @@ COVER_LETTER_PROMPT = (
     + UNTRUSTED
     + "Write at most three short paragraphs about the posting's main Requirements. Every "
     "statement about the person must come from the Evidence, reworded at most. Reply with only "
-    'a JSON object: "paragraphs": up to three paragraphs, each a list of sentences '
-    '{"text": ..., "evidence": [numbers of the Evidence items it comes from]}. Use an empty '
-    '"evidence" list only for a sentence that states nothing about the person.'
+    'a JSON object: "paragraphs": a list of up to three paragraphs, each {"sentences": [{"text": '
+    '..., "evidence": [numbers of the Evidence items it comes from]}]}. Use an empty "evidence" '
+    "list only for a sentence that states nothing about the person."
 )
 VERIFY_PROMPT = (
     "You check statements about a person against their numbered Evidence. The statements are "
@@ -242,6 +242,8 @@ def write_resume(state: PackState) -> PackState:
         "experience": jobs,
         "education": _statements(answer.get("education"), "d", evidence),
     }
+    if not jobs and not resume["skills"]:
+        raise ValueError("The resume answer had no Skills or Experience")
     return {"resume": resume}
 
 
@@ -254,15 +256,15 @@ def write_cover_letter(state: PackState) -> PackState:
         WRITE_MAX_OUTPUT_TOKENS,
     )
     raw = answer.get("paragraphs") if isinstance(answer, dict) else None
-    paragraphs = [
-        _statements(
-            sentences[:MAX_SENTENCES] if isinstance(sentences, list) else [],
-            f"c{n}s",
-            state["evidence"],
-        )
-        for n, sentences in enumerate(raw[:MAX_PARAGRAPHS] if isinstance(raw, list) else [])
-    ]
-    return {"cover_letter": [p for p in paragraphs if p]}
+    paragraphs = []
+    for n, paragraph in enumerate(raw[:MAX_PARAGRAPHS] if isinstance(raw, list) else []):
+        sentences = paragraph.get("sentences") if isinstance(paragraph, dict) else None
+        listed = sentences[:MAX_SENTENCES] if isinstance(sentences, list) else []
+        paragraphs.append(_statements(listed, f"c{n}s", state["evidence"]))
+    letter = [p for p in paragraphs if p]
+    if not letter:
+        raise ValueError("The cover letter answer had no paragraphs")
+    return {"cover_letter": letter}
 
 
 # --- Verification ------------------------------------------------------------------------
