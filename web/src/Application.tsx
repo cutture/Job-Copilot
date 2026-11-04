@@ -3,13 +3,13 @@ import type { CSSProperties } from "react";
 
 type EvidenceRef = { text: string; origin: "resume" | "self_reported" | "profile" };
 type Claim = { text: string; evidence: EvidenceRef[] };
-type RemovedClaim = { text: string; kind: "stretched" | "invented" | "unchecked"; reason: string; next_step: string };
+type RemovedClaim = { text: string; kind: "stretched" | "invented" | "unchecked" | "with_heading"; reason: string; next_step: string };
 type Pack = {
   version: number;
   status: "generating" | "waiting" | "ready";
   warning: string | null;
   model: string | null;
-  resume: { skills: Claim[]; experience: { heading: Claim; bullets: Claim[] }[]; education: Claim[] } | null;
+  resume: { skills: Claim[]; experience: { heading: Claim; lines: Claim[] }[]; education: Claim[] } | null;
   cover_letter: { paragraphs: Claim[][] } | null;
   removed_claims: RemovedClaim[] | null;
 };
@@ -26,7 +26,12 @@ const page: CSSProperties = {
 };
 const sectionHeading: CSSProperties = { margin: "12px 0 2px", borderBottom: "1px solid #52606d", fontSize: 14 };
 const ORIGINS = { resume: "Resume", self_reported: "Profile entry (self-reported)", profile: "Your Profile" };
-const KINDS = { stretched: "Stretched", invented: "No Evidence", unchecked: "Not checked" };
+const KINDS = {
+  stretched: "Stretched",
+  invented: "No Evidence",
+  unchecked: "Not checked",
+  with_heading: "Removed with its job heading",
+};
 
 async function getApplication(id: string): Promise<ApplicationData> {
   const response = await fetch(`/api/applications/${id}`);
@@ -44,12 +49,12 @@ function Resume({ resume }: { resume: NonNullable<Pack["resume"]> }) {
         </>
       )}
       {resume.experience.length > 0 && <h4 style={sectionHeading}>Experience</h4>}
-      {resume.experience.map((job) => (
-        <div key={job.heading.text}>
-          <b>{job.heading.text}</b>
+      {resume.experience.map((role) => (
+        <div key={role.heading.text}>
+          <b>{role.heading.text}</b>
           <ul style={{ margin: "4px 0", paddingLeft: 20 }}>
-            {job.bullets.map((bullet) => (
-              <li key={bullet.text}>{bullet.text}</li>
+            {role.lines.map((line) => (
+              <li key={line.text}>{line.text}</li>
             ))}
           </ul>
         </div>
@@ -82,7 +87,7 @@ function allClaims(pack: Pack): Claim[] {
   const resume = pack.resume!;
   return [
     ...resume.skills,
-    ...resume.experience.flatMap((job) => [job.heading, ...job.bullets]),
+    ...resume.experience.flatMap((role) => [role.heading, ...role.lines]),
     ...resume.education,
     ...pack.cover_letter!.paragraphs.flat(),
   ].filter((claim) => claim.evidence.length > 0);

@@ -20,7 +20,7 @@ function application(status: "generating" | "waiting" | "ready"): ApplicationDat
       resume: ready
         ? {
             skills: [{ text: "Python", evidence: [python] }],
-            experience: [{ heading: { text: python.text, evidence: [python] }, bullets: [] }],
+            experience: [{ heading: { text: python.text, evidence: [python] }, lines: [] }],
             education: [],
           }
         : null,

@@ -10,20 +10,29 @@ from fastapi.testclient import TestClient
 from job_copilot import worker
 from job_copilot.api import app, current_user_id
 from tests.conftest import TEST_DB, FakeProvider
-from tests.test_rating import POSTING, add_evidence, answer, rate_posting, set_profile, three_met
+from tests.test_rating import (
+    POSTING,
+    add_evidence,
+    answer,
+    rate_posting,
+    requirement,
+    set_profile,
+    three_met,
+)
 
 PYTHON = "Python Developer, Example Co, Jan 2021 to present"
 RETRIEVAL = "Shipped Python retrieval systems to production"
 TEAM = "Member of a team of six engineers"
 EDUCATION = "BSc Computer Science, Example University"
+TOO_LONG = "Built " + "very " * 130 + "large systems"
 
 
 def claim(text: str, *evidence: int) -> dict[str, Any]:
     return {"text": text, "evidence": list(evidence)}
 
 
-def verdict(statement_id: str, name: str, *evidence: int) -> dict[str, Any]:
-    return {"id": statement_id, "verdict": name, "evidence": list(evidence)}
+def judgement(claim_id: str, name: str, *evidence: Any) -> dict[str, Any]:
+    return {"id": claim_id, "verdict": name, "evidence": list(evidence)}
 
 
 def rated_match(client: TestClient, provider: FakeProvider) -> tuple[str, dict[str, int]]:
@@ -33,16 +42,23 @@ def rated_match(client: TestClient, provider: FakeProvider) -> tuple[str, dict[s
         "retrieval": add_evidence(client, RETRIEVAL),
         "team": add_evidence(client, TEAM),
     }
-    posting = rate_posting(client, provider, answer(*three_met(ids["retrieval"])))
+    nice = requirement("Terraform", "Terraform is a plus", kind="nice_to_have", result="missing")
+    posting = rate_posting(client, provider, answer(*three_met(ids["retrieval"]), nice))
     assert posting["match"]["band"] == "High"
     return posting["id"], ids
 
 
 def write(provider: FakeProvider, ids: dict[str, int], **answers: str) -> None:
-    """The writer's drafts, with planted traps, and Verification's verdicts on them."""
+    """The writer's drafts, with planted traps, and Verification's judgements on them."""
     py, rag, team = ids["python"], ids["retrieval"], ids["team"]
     resume = {
-        "skills": [claim("Python", py), claim("Kubernetes"), claim("FastAPI", py)],
+        "skills": [
+            claim("Python", py),
+            claim("Kubernetes"),
+            claim("FastAPI", py),
+            {"text": "Rust", "evidence": [True]},
+            claim(TOO_LONG, rag),
+        ],
         "experience": [
             {
                 "heading": claim(PYTHON, py),
@@ -51,7 +67,11 @@ def write(provider: FakeProvider, ids: dict[str, int], **answers: str) -> None:
                     claim("Led a team of six engineers", team),
                     claim("Cut support costs by 40%", rag),
                 ],
-            }
+            },
+            {
+                "heading": claim("Staff Engineer, Example Corp, 2010 to 2012"),
+                "bullets": [claim("Worked in a team of six engineers", team)],
+            },
         ],
         "education": [claim(EDUCATION, 0)],
     }
@@ -69,18 +89,21 @@ def write(provider: FakeProvider, ids: dict[str, int], **answers: str) -> None:
         ]
     }
     checked = [
-        verdict("s0", "reworded", py),
-        verdict("s1", "not_a_claim"),
-        # s2 gets no verdict.
-        verdict("e0", "reworded", py),
-        verdict("e0b0", "reworded", rag),
-        verdict("e0b1", "stretched", team),
-        verdict("d0", "reworded", 0),
-        verdict("c0s0", "not_a_claim"),
-        verdict("c1s0", "reworded", py),
-        verdict("c1s1", "reworded", rag),
-        verdict("c2s0", "not_a_claim"),
-        verdict("c2s1", "not_a_claim"),
+        judgement("s0", "reworded", py),
+        judgement("s1", "not_a_claim"),
+        # s2 gets no judgement.
+        judgement("s3", "reworded", True),
+        judgement("e0", "reworded", py),
+        judgement("e0b0", "reworded", rag),
+        judgement("e0b1", "stretched", team),
+        judgement("e1", "invented"),
+        judgement("e1b0", "reworded", team),
+        judgement("d0", "reworded", 0),
+        judgement("c0s0", "not_a_claim"),
+        judgement("c1s0", "reworded", py),
+        judgement("c1s1", "reworded", rag),
+        judgement("c2s0", "not_a_claim"),
+        judgement("c2s1", "not_a_claim"),
     ]
     provider.tasks = {
         "resume": json.dumps(resume),
@@ -139,9 +162,10 @@ def test_apply_starts_an_application_and_a_verified_pack(
     resume = pack["resume"]
     assert list(resume) == ["skills", "experience", "education"]
     assert texts(resume["skills"]) == ["Python"]
-    job = resume["experience"][0]
-    assert job["heading"]["text"] == PYTHON
-    assert texts(job["bullets"]) == ["Shipped retrieval systems to production"]
+    assert len(resume["experience"]) == 1
+    role = resume["experience"][0]
+    assert role["heading"]["text"] == PYTHON
+    assert texts(role["lines"]) == ["Shipped retrieval systems to production"]
     assert texts(resume["education"]) == [EDUCATION]
     assert resume["skills"][0]["evidence"] == [{"text": PYTHON, "origin": "self_reported"}]
     assert resume["education"][0]["evidence"] == [
@@ -168,15 +192,24 @@ def test_verification_removes_stretched_and_invented_claims_and_lists_them(
     removed = client.get(f"/api/applications/{started['id']}").json()["pack"]["removed_claims"]
 
     by_text = {r["text"]: r for r in removed}
+    too_long = next(text for text in by_text if text.startswith("Built very"))
     assert {text: r["kind"] for text, r in by_text.items()} == {
         # A resume line always states something about the person.
         "Kubernetes": "invented",
         "FastAPI": "unchecked",
+        # true isn't an Evidence number, so nothing supports it.
+        "Rust": "invented",
+        too_long: "unchecked",
         "Led a team of six engineers": "stretched",
         # Caught by code before the model saw it.
         "Cut support costs by 40%": "stretched",
+        "Staff Engineer, Example Corp, 2010 to 2012": "invented",
+        "Worked in a team of six engineers": "with_heading",
         "I bring 10 years of leadership.": "invented",
     }
+    # Too long to check, and shown shortened, never cut and kept.
+    assert by_text[too_long]["reason"] == "It's too long to check."
+    assert too_long.endswith("…") and len(too_long) == 601
     assert by_text["Led a team of six engineers"]["reason"] == (
         f"It goes beyond what your Evidence says: “{TEAM}”"
     )
@@ -198,6 +231,10 @@ def test_each_part_is_its_own_call_and_verification_sees_no_writing_context(
     tasks = [json.loads(c["messages"][-1]["content"])["task"] for c in calls]
     assert tasks == ["resume", "cover_letter", "verify"]
     assert {c["model"] for c in calls} == {"anthropic/claude-haiku-5-5"}
+    # The cover letter is about the main Requirements only.
+    asked = [json.loads(c["messages"][-1]["content"])["requirements"] for c in calls[:2]]
+    assert "Terraform" in [r["requirement"] for r in asked[0]]
+    assert {r["kind"] for r in asked[1]} <= {"hard_blocker", "must_have"}
     verification = calls[2]
     sent = json.dumps(verification["messages"])
     assert POSTING[:40] not in sent
@@ -237,6 +274,7 @@ def test_a_pack_whose_verification_fails_is_never_saved_or_shown(
 
     pack = client.get(f"/api/applications/{started['id']}").json()["pack"]
     assert (pack["status"], pack["resume"], pack["cover_letter"]) == ("waiting", None, None)
+    assert pack["warning"].startswith("We couldn't use our AI model's answer")
     with psycopg.connect(TEST_DB) as conn:
         stored = conn.execute("SELECT resume, cover_letter FROM application_packs").fetchone()
     assert stored == (None, None)

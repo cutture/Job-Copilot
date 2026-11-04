@@ -124,7 +124,7 @@ def list_postings(user_id: UserId) -> list[JobPosting]:
                             WHEN {rating.RATING_QUEUED} THEN 'rating'
                             ELSE 'waiting' END AS rating_state
                 FROM job_postings p LEFT JOIN matches m ON m.job_posting_id = p.id
-                LEFT JOIN applications a ON a.job_posting_id = p.id
+                LEFT JOIN applications a ON a.job_posting_id = p.id AND a.user_id = p.user_id
                 WHERE p.user_id = %s AND p.expired_at IS NULL
                 ORDER BY p.created_at DESC""",
             (user_id,),

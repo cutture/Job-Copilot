@@ -185,10 +185,13 @@ def search_now(user_id: UserId) -> SearchStatus:
 
 def _recheck(conn: Any, user_id: UUID, window: int) -> None:
     """After a preference change, run Filter again on postings still in the Search Window."""
-    # ponytail: every posting counts as unapplied until Applications exist (#24).
+    # A posting the person has applied to keeps its rating.
     rows = conn.execute(
         """UPDATE job_postings SET status = 'queued', filter_reason = NULL
            WHERE user_id = %s AND expired_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM applications a
+                             WHERE a.job_posting_id = job_postings.id
+                               AND a.user_id = job_postings.user_id)
              AND status IN ('received', 'filtered', 'model_unavailable', 'not_rated')
              AND COALESCE(posted_on, created_at::date) >= current_date - %s
            RETURNING id""",

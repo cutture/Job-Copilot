@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from job_copilot import rating, sources, worker
 from job_copilot.api import app, current_user_id
+from job_copilot.filter import FILTER_MODEL
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_filter import facts, prefer
 from tests.test_rating import answer
@@ -359,6 +360,25 @@ def test_a_preference_filter_doesnt_read_triggers_no_recheck(
     search(client)
 
     assert len(provider.received) == calls
+
+
+def test_a_recheck_leaves_postings_with_an_application_alone(
+    client: TestClient, boards: FakeBoards, provider: FakeProvider
+) -> None:
+    prefer(client)
+    watch(client, boards, "northwindlabs", "Northwind Labs")
+    boards.jobs["northwindlabs"] = [job(1, 2)]
+    search(client)
+    posting = listed(client)["Applied AI Engineer"]
+    applied = client.post("/api/applications", json={"job_posting_id": posting["id"]})
+    assert applied.status_code == 201
+    filtered = len([c for c in provider.received if c["model"] == FILTER_MODEL])
+
+    prefer(client, work_type="employment")
+    search(client)
+
+    assert len([c for c in provider.received if c["model"] == FILTER_MODEL]) == filtered
+    assert listed(client)["Applied AI Engineer"]["status"] == "received"
 
 
 def test_a_recheck_includes_postings_a_model_couldnt_process(

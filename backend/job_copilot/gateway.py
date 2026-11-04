@@ -72,6 +72,7 @@ class Completion:
     text: str
     cost_usd: Decimal
     trace_id: str | None
+    model: str
 
 
 def strip_fences(answer: str) -> str:
@@ -250,4 +251,4 @@ def complete(
             },
         )
     log.info("Model call done: step=%s model=%s trace=%s", step, model, trace_id)
-    return Completion(answer.text, cost, trace_id)
+    return Completion(answer.text, cost, trace_id, model)

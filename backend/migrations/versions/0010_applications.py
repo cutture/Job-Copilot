@@ -29,6 +29,8 @@ def upgrade() -> None:
             version integer NOT NULL,
             status text NOT NULL DEFAULT 'generating'
                 CHECK (status IN ('generating', 'waiting', 'ready')),
+            -- Why a waiting Pack is waiting, when that is known.
+            failure text CHECK (failure IN ('model_unavailable', 'unusable_answer')),
             -- Documents are saved only once Verification has run on them.
             resume jsonb,
             cover_letter jsonb,
