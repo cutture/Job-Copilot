@@ -143,7 +143,7 @@ A Claim about something not mentioned anywhere in the resume or Profile.
 _Avoid_: Hallucination, stretched claim, false claim
 
 **Removed Claim**:
-A Claim that Verification took out and listed for the person with a reason.
+A Claim that Verification took out and listed for the person with a reason: a Stretched Claim, an Invented Claim, one Verification couldn't check, or one removed with its job heading.
 _Avoid_: Rejected claim, deleted claim
 
 **Keep Anyway**:
