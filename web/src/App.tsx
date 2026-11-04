@@ -189,7 +189,9 @@ export function App() {
         </button>
       </nav>
       {view === "applications" && <Applications onOpen={setApplicationId} />}
-      {view === "profile" && <Profile key={evidenceDraft} draft={evidenceDraft} />}
+      {view === "profile" && (
+        <Profile key={evidenceDraft} draft={evidenceDraft} onEverythingDeleted={() => setPostings([])} />
+      )}
       {view === "postings" && <>
       <Search onProgress={refreshPostings} />
       <form onSubmit={addPosting}>

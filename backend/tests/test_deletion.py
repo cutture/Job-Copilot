@@ -7,6 +7,7 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
+from job_copilot import gateway
 from job_copilot.api import app, current_user_id
 from job_copilot.deletion import USER_TABLES
 from tests.conftest import TEST_DB, FakeProvider
@@ -109,6 +110,73 @@ def test_deleting_a_pack_keeps_the_application_which_can_get_a_new_pack(
     assert client.post(f"{base}/pack").status_code == 409
 
 
+def test_deleting_a_pack_deletes_every_version(client: TestClient, provider: FakeProvider) -> None:
+    _, application_id = ready_application(client, provider)
+    with psycopg.connect(TEST_DB) as conn:
+        conn.execute(
+            """INSERT INTO application_packs (user_id, application_id, version)
+               VALUES (%s, %s, 2)""",
+            (USER, application_id),
+        )
+
+    client.delete(f"/api/applications/{application_id}/pack")
+
+    assert rows("application_packs") == 0
+
+
+def test_a_submitted_applications_pack_stays_with_it(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    _, application_id = ready_application(client, provider)
+    base = f"/api/applications/{application_id}"
+    client.put(f"{base}/review", json={"reviewed": True})
+    client.post(f"{base}/submitted")
+
+    refused = client.delete(f"{base}/pack")
+
+    assert refused.status_code == 409
+    assert "Delete the Application" in refused.json()["detail"]
+    assert client.get(base).json()["pack"]["status"] == "ready"
+
+
+def test_edited_evidence_is_still_found_when_deleted(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting_id, ids = rated_match(client, provider)
+    write(provider, ids)
+    application_id = apply(client, posting_id)["id"]
+    run_worker()
+    client.patch(f"/api/evidence/{ids['retrieval']}", json={"text": "Shipped search systems"})
+
+    client.delete(f"/api/evidence/{ids['retrieval']}")
+
+    removed = client.get(f"/api/applications/{application_id}").json()["pack"]["removed_claims"]
+    assert {r["text"]: r["kind"] for r in removed}[RETRIEVAL_LINE] == "evidence_deleted"
+
+
+def test_evidence_deleted_while_a_pack_is_written_is_taken_out(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posting_id, ids = rated_match(client, provider)
+    write(provider, ids)
+    application_id = apply(client, posting_id)["id"]
+    answer_model = gateway.call_provider
+
+    def delete_while_verifying(model: str, messages: list[dict[str, str]], tokens: int) -> Any:
+        if '"task": "verify"' in messages[-1]["content"]:
+            client.delete(f"/api/evidence/{ids['retrieval']}")
+        return answer_model(model, messages, tokens)
+
+    monkeypatch.setattr(gateway, "call_provider", delete_while_verifying)
+    run_worker()
+
+    pack = client.get(f"/api/applications/{application_id}").json()["pack"]
+    assert pack["resume"]["experience"][0]["lines"] == []
+    assert {r["text"]: r["kind"] for r in pack["removed_claims"]}[RETRIEVAL_SENTENCE] == (
+        "evidence_deleted"
+    )
+
+
 def test_deleting_evidence_changes_unsubmitted_packs_and_marks_submitted_ones_and_matches(
     client: TestClient, provider: FakeProvider
 ) -> None:
@@ -137,11 +205,11 @@ def test_deleting_evidence_changes_unsubmitted_packs_and_marks_submitted_ones_an
     moved = {r["text"]: r for r in changed["pack"]["removed_claims"]}
     assert moved[RETRIEVAL_LINE]["kind"] == moved[RETRIEVAL_SENTENCE]["kind"] == "evidence_deleted"
     assert moved[RETRIEVAL_LINE]["reason"] == "Its Evidence was deleted from your Profile."
-    # Submitted: the Pack stays as it was sent, with that Evidence marked "source removed".
+    # Submitted: the Pack stays as it was sent, with that Evidence marked deleted.
     kept = client.get(f"/api/applications/{sent}").json()
     assert kept["reviewed"] is True
     line = kept["pack"]["resume"]["experience"][0]["lines"][0]
-    assert line["text"] == RETRIEVAL_LINE and line["evidence"][0]["source_removed"] is True
+    assert line["text"] == RETRIEVAL_LINE and line["evidence"][0]["deleted"] is True
     assert kept["pack"]["removed_claims"] == before["removed_claims"]
     # Only the unapplied Match that cited it shows "Profile changed".
     matches = {p["id"]: p["match"] for p in client.get("/api/job-postings").json()}
@@ -185,6 +253,9 @@ def test_delete_everything_needs_delete_typed_and_leaves_no_row_for_the_person(
     assert queued is not None and queued[0] > 0
     assert report["not_deleted"][0].startswith(f"{queued[0]} traces at Langfuse are queued")
     assert any("downloaded stay on your computer" in item for item in report["not_deleted"])
+    assert report["notes"] == [
+        "The spending ledger is deleted too, so this month's spending cap starts again from $0."
+    ]
 
 
 def test_every_table_with_a_persons_rows_is_deleted_by_delete_everything() -> None:

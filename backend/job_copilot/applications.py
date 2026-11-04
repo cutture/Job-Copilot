@@ -124,6 +124,8 @@ class Removal(NamedTuple):
 
 
 UNCHECKED = Removal("unchecked", "Verification couldn't check it.")
+WITH_HEADING = Removal("with_heading", "Its job heading was taken out.")
+EVIDENCE_DELETED = Removal("evidence_deleted", "Its Evidence was deleted from your Profile.")
 TOO_LONG = Removal("unchecked", "It's too long to check.")
 
 
@@ -136,7 +138,7 @@ class PackState(TypedDict, total=False):
     application_id: UUID
     posting: str
     requirements: list[dict[str, Any]]
-    evidence: dict[int, dict[str, str]]
+    evidence: dict[int, dict[str, Any]]
     resume: dict[str, Any]
     cover_letter: list[list[DraftClaim]]
     # The model that wrote the Pack.
@@ -149,7 +151,9 @@ class EvidenceRef(BaseModel):
     text: str
     origin: str
     # The Evidence was deleted after this Pack was Submitted; the Pack stays as it was sent.
-    source_removed: bool = False
+    deleted: bool = False
+    # The Evidence item's ID; None for a Profile fact, and for Packs made before IDs were kept.
+    id: int | None = None
 
 
 class Claim(BaseModel):
@@ -257,7 +261,7 @@ def _ask(
     return json.loads(gateway.strip_fences(completion.text)), completion.model
 
 
-def _numbered(evidence: dict[int, dict[str, str]]) -> list[dict[str, Any]]:
+def _numbered(evidence: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"number": n, "text": e["text"]} for n, e in evidence.items()]
 
 
@@ -475,7 +479,7 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
         else:
             # A line without its role's heading would read as part of another role.
             for line in role["lines"]:
-                verified(line, Removal("with_heading", "Its job heading was taken out."))
+                verified(line, WITH_HEADING)
     letter = CoverLetter(paragraphs=[p for p in map(all_verified, state["cover_letter"]) if p])
     return (
         Resume(
@@ -488,15 +492,21 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
     )
 
 
-def _evidence(user_id: UUID) -> dict[int, dict[str, str]]:
-    items = {e.id: {"text": e.text, "origin": e.origin} for e in confirmed_evidence(user_id)}
+def _evidence(user_id: UUID) -> dict[int, dict[str, Any]]:
+    items: dict[int, dict[str, Any]] = {
+        e.id: {"text": e.text, "origin": e.origin, "id": e.id} for e in confirmed_evidence(user_id)
+    }
     with connect() as conn:
         ensure_profile(conn, user_id)
         row: Any = conn.execute(
             "SELECT education FROM profiles WHERE user_id = %s", (user_id,)
         ).fetchone()
     if row["education"]:
-        items[EDUCATION_EVIDENCE] = {"text": f"Education: {row['education']}", "origin": "profile"}
+        items[EDUCATION_EVIDENCE] = {
+            "text": f"Education: {row['education']}",
+            "origin": "profile",
+            "id": None,
+        }
     return items
 
 
@@ -542,6 +552,16 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
         _wait(user_id, pack_id, "unusable_answer")
         return
     with connect() as conn:
+        # Evidence deleted while the Pack was being written leaves it like any other deletion.
+        still = {
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM evidence WHERE user_id = %s AND confirmed", (user_id,)
+            ).fetchall()
+        }
+        for number, item in start["evidence"].items():
+            if item["id"] is not None and number not in still:
+                removed += take_out_evidence(resume, letter, item["id"], item["text"], False)[1]
         conn.execute(
             """UPDATE application_packs SET status = 'ready', resume = %s, cover_letter = %s,
                    removed_claims = %s, model = %s
@@ -724,12 +744,16 @@ def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
     return pack
 
 
-def check_reviewed(pack: Any) -> None:
-    """Downloads and "I submitted it" stay locked until the verified Pack is reviewed."""
+def _check_ready(pack: Any) -> None:
     if pack["id"] is None:
         raise HTTPException(409, NO_PACK)
     if pack["status"] != "ready":
         raise HTTPException(409, NOT_READY)
+
+
+def check_reviewed(pack: Any) -> None:
+    """Downloads and "I submitted it" stay locked until the verified Pack is reviewed."""
+    _check_ready(pack)
     if pack["reviewed_at"] is None:
         raise HTTPException(409, NOT_REVIEWED)
 
@@ -739,10 +763,7 @@ def review_pack(application_id: UUID, review: Review, user_id: UserId) -> Applic
     """The tick that unlocks downloads and "I submitted it"."""
     with connect() as conn:
         pack = latest_pack(conn, user_id, application_id)
-        if pack["id"] is None:
-            raise HTTPException(409, NO_PACK)
-        if pack["status"] != "ready":
-            raise HTTPException(409, NOT_READY)
+        _check_ready(pack)
         if pack["submitted_at"] is not None:
             raise HTTPException(409, "This Application is Submitted, so its review stays.")
         conn.execute(
@@ -776,3 +797,155 @@ def report_outcome(application_id: UUID, report: OutcomeReport, user_id: UserId)
             (report.outcome, application_id, user_id),
         )
     return application_view(user_id, application_id)
+
+
+# --- Deleting Packs and Evidence ---------------------------------------------------------
+
+
+def drop_queued_work(conn: Any, user_id: UUID, key: str, ids: list[Any]) -> None:
+    """Queued work for records that are going, so a worker never writes them back."""
+    conn.execute(
+        "DELETE FROM jobs WHERE user_id = %s AND payload ->> %s = ANY(%s)",
+        (user_id, key, [str(i) for i in ids]),
+    )
+
+
+def delete_packs(conn: Any, user_id: UUID, application_ids: list[Any]) -> None:
+    """Delete every Pack version of these Applications, and any work queued for them."""
+    packs = conn.execute(
+        """DELETE FROM application_packs WHERE user_id = %s AND application_id = ANY(%s)
+           RETURNING id""",
+        (user_id, application_ids),
+    ).fetchall()
+    drop_queued_work(conn, user_id, "pack_id", [p["id"] for p in packs])
+
+
+@router.delete("/api/applications/{application_id}/pack")
+def delete_pack(application_id: UUID, user_id: UserId) -> ApplicationView:
+    """Delete every version of the Pack; the Application stays."""
+    with connect() as conn:
+        pack = latest_pack(conn, user_id, application_id)
+        if pack["id"] is None:
+            raise HTTPException(409, NO_PACK)
+        if pack["submitted_at"] is not None:
+            raise HTTPException(
+                409,
+                "A Submitted Application keeps the Pack you sent. "
+                "Delete the Application to delete its Pack.",
+            )
+        delete_packs(conn, user_id, [application_id])
+    return application_view(user_id, application_id)
+
+
+@router.post("/api/applications/{application_id}/pack", status_code=202)
+def write_new_pack(application_id: UUID, user_id: UserId) -> ApplicationView:
+    """Write a new Pack for an Application whose Pack was deleted."""
+    with connect() as conn:
+        if latest_pack(conn, user_id, application_id)["id"] is not None:
+            raise HTTPException(409, "This Application already has an Application Pack.")
+        pack: Any = conn.execute(
+            """INSERT INTO application_packs (user_id, application_id, version)
+               SELECT %s, %s, COALESCE(max(version), 0) + 1 FROM application_packs
+               WHERE application_id = %s AND user_id = %s RETURNING id""",
+            (user_id, application_id, application_id, user_id),
+        ).fetchone()
+        queue_pack(conn, user_id, pack["id"])
+    return application_view(user_id, application_id)
+
+
+def take_out_evidence(
+    resume: Resume, letter: CoverLetter, evidence_id: int, text: str, submitted: bool
+) -> tuple[bool, list[RemovedClaim]]:
+    """Take a deleted Evidence item out of a Pack's Claims, changing them in place.
+
+    A Submitted Pack keeps every Claim as it was sent, with that Evidence marked deleted.
+    Otherwise a Claim that loses its only Evidence becomes a Removed Claim. Returns whether
+    anything changed, and the Claims removed.
+    """
+    changed = False
+    removed: list[RemovedClaim] = []
+
+    def cites(ref: EvidenceRef) -> bool:
+        # Packs made before IDs were kept are matched by the Evidence text.
+        return ref.id == evidence_id if ref.id is not None else ref.text == text
+
+    def listed(text: str, removal: Removal) -> RemovedClaim:
+        return RemovedClaim(
+            text=text, kind=removal.kind, reason=removal.reason, next_step=NEXT_STEP
+        )
+
+    def still_supported(claim: Claim) -> bool:
+        nonlocal changed
+        gone = [ref for ref in claim.evidence if cites(ref)]
+        if not gone:
+            return True
+        changed = True
+        if submitted:
+            for ref in gone:
+                ref.deleted = True
+            return True
+        claim.evidence = [ref for ref in claim.evidence if not cites(ref)]
+        if claim.evidence:
+            return True
+        removed.append(listed(claim.text, EVIDENCE_DELETED))
+        return False
+
+    def kept(claims: list[Claim]) -> list[Claim]:
+        return [c for c in claims if still_supported(c)]
+
+    roles: list[Role] = []
+    for role in resume.experience:
+        if still_supported(role.heading):
+            roles.append(Role(heading=role.heading, lines=kept(role.lines)))
+        else:
+            removed.extend(listed(line.text, WITH_HEADING) for line in role.lines)
+    resume.skills, resume.experience = kept(resume.skills), roles
+    resume.education = kept(resume.education)
+    letter.paragraphs = [p for p in map(kept, letter.paragraphs) if p]
+    return changed, removed
+
+
+def forget_evidence(conn: Any, user_id: UUID, evidence_id: int, text: str) -> None:
+    """Change the Matches and Packs that relied on an Evidence item being deleted."""
+    conn.execute(
+        # Ratings made before Evidence IDs were kept are matched by the Evidence text.
+        """UPDATE matches m SET profile_changed = true
+           WHERE m.user_id = %s
+             AND NOT EXISTS (SELECT 1 FROM applications a
+                             WHERE a.job_posting_id = m.job_posting_id AND a.user_id = m.user_id)
+             AND EXISTS (SELECT 1 FROM jsonb_array_elements(m.requirements) r
+                         WHERE CASE WHEN jsonb_array_length(COALESCE(r -> 'evidence_ids', '[]'))
+                                         > 0
+                                    THEN r -> 'evidence_ids' @> %s
+                                    ELSE r -> 'evidence' ? %s END)""",
+        (user_id, Jsonb([evidence_id]), text),
+    )
+    packs = conn.execute(
+        """SELECT pack.id, pack.resume, pack.cover_letter,
+                  a.submitted_at IS NOT NULL AS submitted
+           FROM application_packs pack
+           JOIN applications a ON a.id = pack.application_id AND a.user_id = pack.user_id
+           WHERE pack.user_id = %s AND pack.status = 'ready'
+           FOR UPDATE OF pack""",
+        (user_id,),
+    ).fetchall()
+    for pack in packs:
+        resume, letter = Resume(**pack["resume"]), CoverLetter(**pack["cover_letter"])
+        changed, removed = take_out_evidence(resume, letter, evidence_id, text, pack["submitted"])
+        if not changed:
+            continue
+        conn.execute(
+            # Changed documents need reviewing again; a Submitted Pack's review stays.
+            """UPDATE application_packs SET resume = %s, cover_letter = %s,
+                   removed_claims = removed_claims || %s,
+                   reviewed_at = CASE WHEN %s THEN reviewed_at END
+               WHERE id = %s AND user_id = %s""",
+            (
+                Jsonb(resume.model_dump()),
+                Jsonb(letter.model_dump()),
+                Jsonb([r.model_dump() for r in removed]),
+                pack["submitted"],
+                pack["id"],
+                user_id,
+            ),
+        )

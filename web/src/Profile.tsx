@@ -174,7 +174,7 @@ function EvidenceRow({
   );
 }
 
-export function Profile({ draft = "" }: { draft?: string }) {
+export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; onEverythingDeleted?: () => void }) {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [newItem, setNewItem] = useState(draft);
@@ -533,7 +533,12 @@ export function Profile({ draft = "" }: { draft?: string }) {
           )}
         </div>
       </div>
-      <DeleteEverything onDeleted={setDeletion} />
+      <DeleteEverything
+        onDeleted={(report) => {
+          setDeletion(report);
+          onEverythingDeleted?.();
+        }}
+      />
     </section>
   );
 }

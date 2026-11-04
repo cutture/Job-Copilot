@@ -170,12 +170,14 @@ describe("Application", () => {
 
   it("marks Evidence deleted after a Pack was Submitted", async () => {
     const sent = application("ready", { reviewed: true, submitted_at: "2026-11-04T10:00:00Z" });
-    sent.pack!.resume!.skills[0].evidence = [{ ...python, source_removed: true }];
+    sent.pack!.resume!.skills[0].evidence = [{ ...python, deleted: true }];
     serve({ "GET /api/applications/a": () => sent });
 
     render(<Application id="a" onBack={() => {}} />);
 
-    expect(await screen.findByText("(source removed)")).toBeTruthy();
+    expect(await screen.findByText("(Evidence deleted)")).toBeTruthy();
+    // A Submitted Application keeps the Pack that was sent.
+    expect(screen.queryByRole("button", { name: "Delete this Pack" })).toBeNull();
   });
 
   it("asks for a name when the Profile has none", async () => {

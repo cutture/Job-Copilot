@@ -90,6 +90,8 @@ class RequirementView(BaseModel):
     gap: str | None
     # The Profile field that decides this Requirement, if one does.
     profile_field: str | None = None
+    # The IDs of the Evidence items cited, so deleting one finds the Matches it changes.
+    evidence_ids: list[int] = []
 
 
 class MatchView(BaseModel):
@@ -125,13 +127,14 @@ def _years(value: float) -> str:
 def _judge(
     raw: _Requirement, quote: str, evidence: dict[int, str], facts: dict[str, Any], asks: list[str]
 ) -> RequirementView:
-    cited = [evidence[i] for i in dict.fromkeys(raw.evidence) if i in evidence]
+    cited_ids = [i for i in dict.fromkeys(raw.evidence) if i in evidence]
+    cited = [evidence[i] for i in cited_ids]
     result, gap = raw.result, raw.gap
     fact = raw.profile_field if raw.profile_field in FACT_NAMES else None
     kind = "hard_blocker" if fact in HARD_BLOCKER_FACTS else raw.kind
     if fact and facts[fact]:
         # A Profile fact supports the Requirement it decides.
-        cited = [f"Your Profile: {_short_safe(facts[fact])}"]
+        cited, cited_ids = [f"Your Profile: {_short_safe(facts[fact])}"], []
     # Met and Partial need Confirmed Evidence; Missing and Unknown cite the posting only.
     if result in ("met", "partial") and not cited:
         result = "missing"
@@ -149,7 +152,7 @@ def _judge(
         result = "unknown"
         asks.append(f"Add your {FACT_NAMES[fact]} to your Profile")
     if result in ("missing", "unknown"):
-        cited, gap = [], None
+        cited, cited_ids, gap = [], [], None
     elif result == "partial" and not gap:
         gap = "Only related Evidence found"
     return RequirementView(
@@ -160,6 +163,7 @@ def _judge(
         evidence=cited,
         gap=_short_safe(gap) if gap else None,
         profile_field=fact,
+        evidence_ids=cited_ids,
     )
 
 

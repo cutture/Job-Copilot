@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
 
-export type DeletionReport = { deleted: Record<string, number>; not_deleted: string[] };
+export type DeletionReport = { deleted: Record<string, number>; not_deleted: string[]; notes: string[] };
 
 const card: CSSProperties = { border: "1px solid #f0b8b2", borderRadius: 8, padding: 16, marginBottom: 12 };
 
@@ -56,6 +56,9 @@ export function DeletionReportView({ report }: { report: DeletionReport }) {
           </li>
         ))}
       </ul>
+      {report.notes.map((note) => (
+        <p key={note}>{note}</p>
+      ))}
       <h3>What Job Copilot couldn't delete</h3>
       <ul>
         {report.not_deleted.map((item) => (

@@ -168,10 +168,15 @@ def test_apply_starts_an_application_and_a_verified_pack(
     assert texts(role["lines"]) == ["Shipped retrieval systems to production"]
     assert texts(resume["education"]) == [EDUCATION]
     assert resume["skills"][0]["evidence"] == [
-        {"text": PYTHON, "origin": "self_reported", "source_removed": False}
+        {"text": PYTHON, "origin": "self_reported", "deleted": False, "id": ids["python"]}
     ]
     assert resume["education"][0]["evidence"] == [
-        {"text": f"Education: {EDUCATION}", "origin": "profile", "source_removed": False}
+        {
+            "text": f"Education: {EDUCATION}",
+            "origin": "profile",
+            "deleted": False,
+            "id": None,
+        }
     ]
     paragraphs = pack["cover_letter"]["paragraphs"]
     assert [texts(p) for p in paragraphs] == [

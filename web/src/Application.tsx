@@ -8,7 +8,7 @@ type EvidenceRef = {
   text: string;
   origin: "resume" | "self_reported" | "profile";
   // Deleted after this Pack was Submitted; the Pack stays as it was sent.
-  source_removed?: boolean;
+  deleted?: boolean;
 };
 type Claim = { text: string; evidence: EvidenceRef[] };
 type RemovedClaim = {
@@ -315,7 +315,7 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
                   {claim.evidence.map((item) => (
                     <div key={item.text} style={{ fontSize: 13 }}>
                       {ORIGINS[item.origin]}: {item.text}
-                      {item.source_removed && <strong> (source removed)</strong>}
+                      {item.deleted && <strong> (Evidence deleted)</strong>}
                     </div>
                   ))}
                 </li>
@@ -329,7 +329,7 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
       )}
       {application && (
         <p>
-          {pack && pack.status !== "generating" && (
+          {pack && pack.status !== "generating" && !application.submitted_at && (
             <ConfirmDelete
               label="Delete this Pack"
               question="Delete this Application Pack? The Application stays."

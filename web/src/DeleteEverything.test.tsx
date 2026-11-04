@@ -5,6 +5,7 @@ import { DeleteEverything, DeletionReportView } from "./DeleteEverything";
 const report = {
   deleted: { "Job Postings": 4, Applications: 1 },
   not_deleted: ["Files you downloaded stay on your computer. Delete them yourself."],
+  notes: ["The spending ledger is deleted too, so this month's spending cap starts again from $0."],
 };
 
 afterEach(() => {
@@ -40,5 +41,6 @@ describe("DeleteEverything", () => {
 
     expect(screen.getByText("Job Postings: 4 deleted")).toBeTruthy();
     expect(screen.getByText(/downloaded stay on your computer/)).toBeTruthy();
+    expect(screen.getByText(/spending cap starts again/)).toBeTruthy();
   });
 });
