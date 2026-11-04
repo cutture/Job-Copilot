@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Application } from "./Application";
 import { Applications } from "./Applications";
-import { Matches, Origin } from "./Matches";
+import { ConfirmDelete } from "./ConfirmDelete";
+import { Matches, Origin, deleteQuestion } from "./Matches";
 import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches";
 import { Profile } from "./Profile";
 import { Search } from "./Search";
@@ -16,9 +17,10 @@ type JobPosting = PostingOrigin & {
   salary_note: string | null;
   rating_state?: RatingState | null;
   match?: Match | null;
+  application_id?: string | null;
 };
 
-function PostingRow({ posting }: { posting: JobPosting }) {
+function PostingRow({ posting, onDelete }: { posting: JobPosting; onDelete: (posting: JobPosting) => void }) {
   return (
     <li>
       <strong>{posting.title}</strong> <Origin posting={posting} />
@@ -39,6 +41,9 @@ function PostingRow({ posting }: { posting: JobPosting }) {
       {posting.status === "not_rated" && <em> Our AI model couldn't rate this posting.</em>}
       {posting.rating_state === "rating" && <em> Rating…</em>}
       {posting.filter_reason && <div style={{ fontSize: 13 }}>{posting.filter_reason}</div>}
+      <div>
+        <ConfirmDelete question={deleteQuestion(posting)} onConfirm={() => onDelete(posting)} />
+      </div>
     </li>
   );
 }
@@ -139,6 +144,16 @@ export function App() {
     setApplicationId((await response.json()).id);
   }
 
+  async function deletePosting(posting: { id: string }) {
+    setError("");
+    const response = await fetch(`/api/job-postings/${posting.id}`, { method: "DELETE" }).catch(() => null);
+    if (!response?.ok) {
+      setError("We couldn't delete this Job Posting. Try again.");
+      return;
+    }
+    refreshPostings();
+  }
+
   function backToListings() {
     setApplicationId(null);
     setView("postings");
@@ -208,6 +223,7 @@ export function App() {
           setView("profile");
         }}
         onApply={applyTo}
+        onDelete={deletePosting}
       />
       {waiting > 0 && (
         <p>
@@ -216,7 +232,7 @@ export function App() {
       )}
       <ul>
         {shown.map((posting) => (
-          <PostingRow key={posting.id} posting={posting} />
+          <PostingRow key={posting.id} posting={posting} onDelete={deletePosting} />
         ))}
       </ul>
       {filtered.length > 0 && (
@@ -228,7 +244,7 @@ export function App() {
           {showFiltered && (
             <ul>
               {filtered.map((posting) => (
-                <PostingRow key={posting.id} posting={posting} />
+                <PostingRow key={posting.id} posting={posting} onDelete={deletePosting} />
               ))}
             </ul>
           )}

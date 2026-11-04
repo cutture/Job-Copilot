@@ -40,8 +40,8 @@ def clean(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
         conn.execute(
-            "TRUNCATE jobs, application_packs, applications, matches, job_postings, watchlist, "
-            "searches, model_calls, evidence, profiles"
+            "TRUNCATE jobs, application_packs, applications, matches, deleted_postings, "
+            "job_postings, watchlist, searches, model_calls, evidence, profiles, trace_deletions"
         )
 
 

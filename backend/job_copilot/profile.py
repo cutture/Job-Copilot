@@ -431,14 +431,3 @@ def change_evidence(evidence_id: int, change: EvidenceChange, user_id: UserId) -
     if row is None:
         raise HTTPException(404, "Evidence not found")
     return EvidenceItem(**row)
-
-
-@router.delete("/api/evidence/{evidence_id}", status_code=204)
-def delete_evidence(evidence_id: int, user_id: UserId) -> None:
-    with connect() as conn:
-        deleted = conn.execute(
-            "DELETE FROM evidence WHERE id = %s AND user_id = %s RETURNING id",
-            (evidence_id, user_id),
-        ).fetchone()
-    if deleted is None:
-        raise HTTPException(404, "Evidence not found")

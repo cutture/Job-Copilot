@@ -74,12 +74,13 @@ def test_a_person_sees_only_their_own_postings(client: TestClient) -> None:
 
 
 def test_every_table_carries_a_user_id() -> None:
+    # trace_deletions keeps trace IDs after Delete everything, deliberately with no user.
     with psycopg.connect(TEST_DB) as conn:
         rows = conn.execute(
             """
             SELECT t.table_name FROM information_schema.tables t
             WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
-              AND t.table_name NOT IN ('users', 'alembic_version')
+              AND t.table_name NOT IN ('users', 'alembic_version', 'trace_deletions')
               AND NOT EXISTS (
                 SELECT 1 FROM information_schema.columns c
                 WHERE c.table_schema = 'public' AND c.table_name = t.table_name

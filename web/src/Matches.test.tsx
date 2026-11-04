@@ -58,7 +58,7 @@ describe("Matches", () => {
   it("applies to the selected Match, or opens its Application once started", () => {
     const onApply = vi.fn();
     const started = { ...rated("e", "Started High", "High", 3), application_id: "app-1" };
-    render(<Matches postings={[...all, started]} onAddToProfile={() => {}} onApply={onApply} />);
+    render(<Matches postings={[...all, started]} onAddToProfile={() => {}} onApply={onApply} onDelete={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Open Application Pack" }));
     fireEvent.click(screen.getByRole("button", { name: "View Plain High" }));
@@ -67,8 +67,28 @@ describe("Matches", () => {
     expect(onApply.mock.calls.map(([posting]) => posting.id)).toEqual(["e", "a"]);
   });
 
+  it("deletes a Match's Job Posting after one confirmation that names its Application", () => {
+    const onDelete = vi.fn();
+    const started = { ...rated("e", "Started High", "High", 3), application_id: "app-1" };
+    render(<Matches postings={[...all, started]} onAddToProfile={() => {}} onApply={() => {}} onDelete={onDelete} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByText(/Its Application and Application Pack go too/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+
+    expect(onDelete.mock.calls.map(([posting]) => posting.id)).toEqual(["e"]);
+  });
+
+  it("says when Evidence a rating relied on was deleted", () => {
+    const changed = rated("a", "Changed High", "High", 9);
+    changed.match.profile_changed = true;
+    render(<Matches postings={[changed]} onAddToProfile={() => {}} onApply={() => {}} onDelete={() => {}} />);
+
+    expect(screen.getByText(/Profile changed/)).toBeTruthy();
+  });
+
   it("groups by Band, sorts by nice-to-haves met and collapses Low but counts it", () => {
-    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} />);
+    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} onDelete={() => {}} />);
 
     expect(screen.getByRole("heading", { name: "High (2)" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Medium (1)" })).toBeTruthy();
@@ -82,7 +102,7 @@ describe("Matches", () => {
   });
 
   it("shows every Requirement with its quote and Evidence, and labels the rating an estimate", () => {
-    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} />);
+    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} onDelete={() => {}} />);
 
     expect(screen.getByRole("heading", { name: "Best High" })).toBeTruthy();
     expect(screen.getByText("Reason for Best High")).toBeTruthy();
@@ -94,7 +114,7 @@ describe("Matches", () => {
 
   it("offers one-click Add to Profile on a gap", () => {
     const add = vi.fn();
-    render(<Matches postings={all} onAddToProfile={add} onApply={() => {}} />);
+    render(<Matches postings={all} onAddToProfile={add} onApply={() => {}} onDelete={() => {}} />);
 
     expect(screen.getByText("No Evidence found")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Add to Profile" }));
@@ -104,7 +124,7 @@ describe("Matches", () => {
 
   it("sends an empty Profile field to the Profile rather than asking for Evidence", () => {
     const add = vi.fn();
-    render(<Matches postings={all} onAddToProfile={add} onApply={() => {}} />);
+    render(<Matches postings={all} onAddToProfile={add} onApply={() => {}} onDelete={() => {}} />);
 
     expect(screen.getByText("Your Profile: English")).toBeTruthy();
     expect(screen.getAllByText("No Evidence found")).toHaveLength(1);
@@ -114,7 +134,7 @@ describe("Matches", () => {
   });
 
   it("switches the detail to the Match picked", () => {
-    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} />);
+    render(<Matches postings={all} onAddToProfile={() => {}} onApply={() => {}} onDelete={() => {}} />);
 
     fireEvent.click(screen.getByRole("button", { name: "View Some Medium" }));
 

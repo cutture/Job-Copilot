@@ -147,6 +147,37 @@ describe("Application", () => {
     expect(calls).toContain("PUT /api/applications/a/outcome");
   });
 
+  it("offers a new Pack once the Pack is deleted, and deletes the Application", async () => {
+    const calls = serve({
+      "GET /api/applications/a": () => application("ready"),
+      "DELETE /api/applications/a/pack": () => ({ ...application("ready"), pack: null }),
+      "POST /api/applications/a/pack": () => application("generating"),
+      "DELETE /api/applications/a": () => ({}),
+    });
+    const onBack = vi.fn();
+    render(<Application id="a" onBack={onBack} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete this Pack" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Write a new Application Pack" }));
+    expect(await screen.findByText("Writing and checking your Application Pack…")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete this Application" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    await vi.waitFor(() => expect(onBack).toHaveBeenCalled());
+    expect(calls).toEqual(expect.arrayContaining(["DELETE /api/applications/a/pack", "DELETE /api/applications/a"]));
+  });
+
+  it("marks Evidence deleted after a Pack was Submitted", async () => {
+    const sent = application("ready", { reviewed: true, submitted_at: "2026-11-04T10:00:00Z" });
+    sent.pack!.resume!.skills[0].evidence = [{ ...python, source_removed: true }];
+    serve({ "GET /api/applications/a": () => sent });
+
+    render(<Application id="a" onBack={() => {}} />);
+
+    expect(await screen.findByText("(source removed)")).toBeTruthy();
+  });
+
   it("asks for a name when the Profile has none", async () => {
     serve({ "GET /api/applications/a": () => application("ready", { name: null, contact: null }) });
 

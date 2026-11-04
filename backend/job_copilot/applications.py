@@ -60,6 +60,7 @@ WARNINGS = {
 UNKNOWN_FAILURE = f"We couldn't write this Application Pack, so it is waiting. {STILL_WORKS}"
 NOT_REVIEWED = "Tick “I've reviewed this Application Pack” first."
 NOT_READY = "This Application Pack isn't ready yet."
+NO_PACK = "This Application has no Application Pack."
 NEXT_STEP = (
     "If it's true, add Evidence for it to your Profile, then generate the Pack again. "
     "Otherwise, leave it out."
@@ -104,7 +105,7 @@ VERIFY_PROMPT = (
     '"evidence": [numbers of the Evidence items that support it]}.'
 )
 
-RemovedKind = Literal["stretched", "invented", "unchecked", "with_heading"]
+RemovedKind = Literal["stretched", "invented", "unchecked", "with_heading", "evidence_deleted"]
 Failure = Literal["model_unavailable", "unusable_answer"]
 Outcome = Literal["interview", "offer", "rejected", "no_response"]
 
@@ -147,6 +148,8 @@ class PackState(TypedDict, total=False):
 class EvidenceRef(BaseModel):
     text: str
     origin: str
+    # The Evidence was deleted after this Pack was Submitted; the Pack stays as it was sent.
+    source_removed: bool = False
 
 
 class Claim(BaseModel):
@@ -205,7 +208,8 @@ class ApplicationView(BaseModel):
     # From the Profile, for the top of both files and the letter's signature.
     name: str | None
     contact: str | None
-    pack: PackView
+    # None once the person has deleted it.
+    pack: PackView | None
 
 
 class ApplicationRow(BaseModel):
@@ -213,7 +217,7 @@ class ApplicationRow(BaseModel):
     title: str
     employer: str | None
     source: str
-    status: Literal["generating", "waiting", "ready", "reviewed", "submitted"]
+    status: Literal["generating", "waiting", "ready", "reviewed", "submitted", "no_pack"]
     submitted_at: datetime | None
     outcome: Outcome | None
     cost_usd: Decimal
@@ -456,7 +460,7 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
                 RemovedClaim(text=shown, kind=kind, reason=reason, next_step=NEXT_STEP)
             )
             return None
-        refs = [EvidenceRef(**evidence[n]) for n in supported[draft["id"]]]
+        refs = [EvidenceRef.model_validate(evidence[n]) for n in supported[draft["id"]]]
         return Claim(text=draft["text"], evidence=refs)
 
     def all_verified(drafts: list[DraftClaim]) -> list[Claim]:
@@ -568,14 +572,14 @@ COST = """(SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
            WHERE application_id = a.id AND user_id = a.user_id)"""
 
 
-def _queue_pack(conn: Any, user_id: UUID, pack_id: int) -> None:
+def queue_pack(conn: Any, user_id: UUID, pack_id: int) -> None:
     conn.execute(
         "INSERT INTO jobs (user_id, kind, payload) VALUES (%s, 'generate_pack', %s)",
         (user_id, Jsonb({"pack_id": pack_id})),
     )
 
 
-def _view(user_id: UUID, application_id: UUID) -> ApplicationView:
+def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
     with connect() as conn:
         row: Any = conn.execute(
             f"""SELECT a.id, a.job_posting_id, p.title, p.employer, a.source, a.band,
@@ -586,7 +590,7 @@ def _view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        pack.cover_letter, pack.removed_claims
                 FROM applications a
                 JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
-                JOIN application_packs pack ON pack.id = {LATEST_PACK}
+                LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
                 LEFT JOIN profiles pr ON pr.user_id = a.user_id
                 WHERE a.id = %s AND a.user_id = %s""",
             (application_id, user_id),
@@ -595,15 +599,19 @@ def _view(user_id: UUID, application_id: UUID) -> ApplicationView:
         raise HTTPException(404, "Application not found")
     ready = row["status"] == "ready"
     waiting = row["status"] == "waiting"
-    pack = PackView(
-        version=row["version"],
-        status=row["status"],
-        warning=WARNINGS.get(row["failure"], UNKNOWN_FAILURE) if waiting else None,
-        model=row["model"],
-        # Only a verified Pack's documents are ever shown.
-        resume=Resume(**row["resume"]) if ready else None,
-        cover_letter=CoverLetter(**row["cover_letter"]) if ready else None,
-        removed_claims=[RemovedClaim(**r) for r in row["removed_claims"]] if ready else None,
+    pack = (
+        None
+        if row["version"] is None
+        else PackView(
+            version=row["version"],
+            status=row["status"],
+            warning=WARNINGS.get(row["failure"], UNKNOWN_FAILURE) if waiting else None,
+            model=row["model"],
+            # Only a verified Pack's documents are ever shown.
+            resume=Resume(**row["resume"]) if ready else None,
+            cover_letter=CoverLetter(**row["cover_letter"]) if ready else None,
+            removed_claims=[RemovedClaim(**r) for r in row["removed_claims"]] if ready else None,
+        )
     )
     return ApplicationView(
         **{f: row[f] for f in ApplicationView.model_fields if f != "pack"}, pack=pack
@@ -651,13 +659,13 @@ def apply(new: NewApplication, user_id: UserId, response: Response) -> Applicati
                    VALUES (%s, %s, 1) RETURNING id""",
                 (user_id, application_id),
             ).fetchone()
-            _queue_pack(conn, user_id, pack["id"])
-    return _view(user_id, application_id)
+            queue_pack(conn, user_id, pack["id"])
+    return application_view(user_id, application_id)
 
 
 @router.get("/api/applications/{application_id}")
 def get_application(application_id: UUID, user_id: UserId) -> ApplicationView:
-    return _view(user_id, application_id)
+    return application_view(user_id, application_id)
 
 
 @router.post("/api/applications/{application_id}/retry", status_code=202)
@@ -670,8 +678,8 @@ def retry_pack(application_id: UUID, user_id: UserId) -> ApplicationView:
             "UPDATE application_packs SET status = 'generating', failure = NULL WHERE id = %s",
             (latest["id"],),
         )
-        _queue_pack(conn, user_id, latest["id"])
-    return _view(user_id, application_id)
+        queue_pack(conn, user_id, latest["id"])
+    return application_view(user_id, application_id)
 
 
 @router.get("/api/applications")
@@ -681,11 +689,12 @@ def list_applications(user_id: UserId) -> list[ApplicationRow]:
             f"""SELECT a.id, p.title, p.employer, a.source, a.submitted_at, a.outcome,
                        {COST} AS cost_usd,
                        CASE WHEN a.submitted_at IS NOT NULL THEN 'submitted'
+                            WHEN pack.id IS NULL THEN 'no_pack'
                             WHEN pack.reviewed_at IS NOT NULL THEN 'reviewed'
                             ELSE pack.status END AS status
                 FROM applications a
                 JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
-                JOIN application_packs pack ON pack.id = {LATEST_PACK}
+                LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
                 WHERE a.user_id = %s
                 ORDER BY a.created_at DESC""",
             (user_id,),
@@ -694,19 +703,20 @@ def list_applications(user_id: UserId) -> list[ApplicationRow]:
 
 
 def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
-    """The newest Pack of the person's Application, locked for change; 404 if there is none.
+    """The newest Pack of the person's Application, with the Application locked for change.
 
     It comes with what the files and the Application's steps need: the posting's title and
-    employer, when it was Submitted, and the person's name and contact line.
+    employer, when it was Submitted, and the person's name and contact line. Its Pack fields
+    are None when the Application has no Pack; there's a 404 when there is no Application.
     """
     pack = conn.execute(
         f"""SELECT pack.*, a.submitted_at, p.title, p.employer, pr.name, pr.contact
             FROM applications a
-            JOIN application_packs pack ON pack.id = {LATEST_PACK}
+            LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
             JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
             LEFT JOIN profiles pr ON pr.user_id = a.user_id
             WHERE a.id = %s AND a.user_id = %s
-            FOR UPDATE OF pack""",
+            FOR UPDATE OF a""",
         (application_id, user_id),
     ).fetchone()
     if pack is None:
@@ -716,6 +726,8 @@ def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
 
 def check_reviewed(pack: Any) -> None:
     """Downloads and "I submitted it" stay locked until the verified Pack is reviewed."""
+    if pack["id"] is None:
+        raise HTTPException(409, NO_PACK)
     if pack["status"] != "ready":
         raise HTTPException(409, NOT_READY)
     if pack["reviewed_at"] is None:
@@ -727,6 +739,8 @@ def review_pack(application_id: UUID, review: Review, user_id: UserId) -> Applic
     """The tick that unlocks downloads and "I submitted it"."""
     with connect() as conn:
         pack = latest_pack(conn, user_id, application_id)
+        if pack["id"] is None:
+            raise HTTPException(409, NO_PACK)
         if pack["status"] != "ready":
             raise HTTPException(409, NOT_READY)
         if pack["submitted_at"] is not None:
@@ -735,7 +749,7 @@ def review_pack(application_id: UUID, review: Review, user_id: UserId) -> Applic
             "UPDATE application_packs SET reviewed_at = %s WHERE id = %s AND user_id = %s",
             (datetime.now(UTC) if review.reviewed else None, pack["id"], user_id),
         )
-    return _view(user_id, application_id)
+    return application_view(user_id, application_id)
 
 
 @router.post("/api/applications/{application_id}/submitted")
@@ -748,7 +762,7 @@ def mark_submitted(application_id: UUID, user_id: UserId) -> ApplicationView:
                WHERE id = %s AND user_id = %s""",
             (application_id, user_id),
         )
-    return _view(user_id, application_id)
+    return application_view(user_id, application_id)
 
 
 @router.put("/api/applications/{application_id}/outcome")
@@ -761,4 +775,4 @@ def report_outcome(application_id: UUID, report: OutcomeReport, user_id: UserId)
                WHERE id = %s AND user_id = %s""",
             (report.outcome, application_id, user_id),
         )
-    return _view(user_id, application_id)
+    return application_view(user_id, application_id)

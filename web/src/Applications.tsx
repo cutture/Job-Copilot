@@ -7,7 +7,7 @@ type ApplicationRow = {
   title: string;
   employer: string | null;
   source: string;
-  status: "generating" | "waiting" | "ready" | "reviewed" | "submitted";
+  status: "generating" | "waiting" | "ready" | "reviewed" | "submitted" | "no_pack";
   submitted_at: string | null;
   outcome: Outcome | null;
   cost_usd: string;
@@ -19,6 +19,7 @@ const STATUSES = {
   ready: "Ready for review",
   reviewed: "Reviewed",
   submitted: "Submitted",
+  no_pack: "No Pack",
 };
 const cell = { textAlign: "left" as const, padding: "4px 8px", borderTop: "1px solid #e4e7eb" };
 

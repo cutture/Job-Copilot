@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
+import { ConfirmDelete } from "./ConfirmDelete";
 
 export type Band = "High" | "Medium" | "Low";
 export type RatingState = "rated" | "rating" | "waiting";
@@ -21,6 +22,8 @@ export type Match = {
   gaps: string[];
   profile_prompts: string[];
   requirements: Requirement[];
+  // Evidence this rating relied on was deleted.
+  profile_changed?: boolean;
 };
 
 export type PostingOrigin = {
@@ -89,14 +92,26 @@ type DetailProps = {
   posting: RatedPosting;
   onAddToProfile: (draft: string) => void;
   onApply: (posting: RatedPosting) => void;
+  onDelete: (posting: RatedPosting) => void;
 };
 
-function Detail({ posting, onAddToProfile, onApply }: DetailProps) {
+export function deleteQuestion(posting: { application_id?: string | null }): string {
+  return posting.application_id
+    ? "Delete this Job Posting? Its Application and Application Pack go too."
+    : "Delete this Job Posting?";
+}
+
+function Detail({ posting, onAddToProfile, onApply, onDelete }: DetailProps) {
   const { match } = posting;
   return (
     <div style={{ ...card, position: "sticky", top: 8 }}>
       <h2 style={{ marginTop: 0 }}>{posting.title}</h2>
       <Badges posting={posting} />
+      {match.profile_changed && (
+        <p style={{ fontSize: 13, background: "#fff8e1", padding: "4px 8px" }}>
+          Profile changed: Evidence this rating relied on was deleted.
+        </p>
+      )}
       <div style={{ fontSize: 13 }}>
         <Origin posting={posting} /> · {age(posting)}
       </div>
@@ -107,7 +122,8 @@ function Detail({ posting, onAddToProfile, onApply }: DetailProps) {
         >
           {posting.application_id ? "Open Application Pack" : "Apply"}
         </button>{" "}
-        <span style={{ fontSize: 13 }}>Apply writes your Application Pack. Nothing is submitted.</span>
+        <span style={{ fontSize: 13 }}>Apply writes your Application Pack. Nothing is submitted.</span>{" "}
+        <ConfirmDelete question={deleteQuestion(posting)} onConfirm={() => onDelete(posting)} />
       </p>
       <ul>
         {match.reasons.map((reason) => (
@@ -169,12 +185,14 @@ export function Matches({
   postings,
   onAddToProfile,
   onApply,
+  onDelete,
 }: {
   postings: RatedPosting[];
   // Opens the Profile, with an Evidence item started from `draft` when it isn't empty.
   onAddToProfile: (draft: string) => void;
   // Starts the posting's Application, or opens the one already started.
   onApply: (posting: RatedPosting) => void;
+  onDelete: (posting: RatedPosting) => void;
 }) {
   const [showLow, setShowLow] = useState(false);
   const sorted = [...postings].sort(
@@ -219,7 +237,7 @@ export function Matches({
             </>
           )}
         </div>
-        <Detail posting={selected} onAddToProfile={onAddToProfile} onApply={onApply} />
+        <Detail posting={selected} onAddToProfile={onAddToProfile} onApply={onApply} onDelete={onDelete} />
       </div>
       <p style={{ fontSize: 13 }}>
         Interview Likelihood is an estimate of how well your Evidence covers the posting. It doesn't predict the

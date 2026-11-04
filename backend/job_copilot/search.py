@@ -213,9 +213,19 @@ def _save_postings(
     adapter = sources.ADAPTERS[board.source]
     credit_url = adapter.credit_url(board)
     today = datetime.now(UTC).date()
+    # Postings the person deleted stay deleted.
+    deleted = {
+        row["external_id"]
+        for row in conn.execute(
+            "SELECT external_id FROM deleted_postings WHERE user_id = %s AND source = %s",
+            (user_id, board.source),
+        ).fetchall()
+    }
     for posting in postings:
         posted_on = posting.posted_on or today
         if (today - posted_on).days > window or not posting.apply_url.startswith("https://"):
+            continue
+        if posting.external_id in deleted:
             continue
         row = conn.execute(
             """INSERT INTO job_postings (user_id, source, title, text, watchlist_id, external_id,

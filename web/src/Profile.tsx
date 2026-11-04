@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ChangeEvent, CSSProperties } from "react";
+import { ConfirmDelete } from "./ConfirmDelete";
+import { DeleteEverything, DeletionReportView } from "./DeleteEverything";
+import type { DeletionReport } from "./DeleteEverything";
 
 type Evidence = {
   id: number;
@@ -110,7 +113,6 @@ function EvidenceRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   async function change(body: object) {
     const response = await fetch(`/api/evidence/${item.id}`, {
@@ -130,7 +132,6 @@ function EvidenceRow({
     const response = await fetch(`/api/evidence/${item.id}`, { method: "DELETE" }).catch(() => null);
     if (!response?.ok) {
       onError("We couldn't delete that item. Try again.");
-      setConfirmingDelete(false);
       return;
     }
     onChanged();
@@ -165,14 +166,7 @@ function EvidenceRow({
           <div>
             {!item.confirmed && <button onClick={() => change({ confirmed: true })}>Confirm</button>}{" "}
             <button onClick={() => setEditing(true)}>Edit</button>{" "}
-            {confirmingDelete ? (
-              <>
-                <button onClick={remove}>Yes, delete</button>{" "}
-                <button onClick={() => setConfirmingDelete(false)}>Keep it</button>
-              </>
-            ) : (
-              <button onClick={() => setConfirmingDelete(true)}>Delete</button>
-            )}
+            <ConfirmDelete question="Delete this Evidence item?" onConfirm={remove} />
           </div>
         </>
       )}
@@ -187,6 +181,7 @@ export function Profile({ draft = "" }: { draft?: string }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [confirmingAll, setConfirmingAll] = useState(false);
+  const [deletion, setDeletion] = useState<DeletionReport | null>(null);
 
   async function refresh(resetForm = false) {
     try {
@@ -314,6 +309,8 @@ export function Profile({ draft = "" }: { draft?: string }) {
         },
     );
   }
+
+  if (deletion) return <DeletionReportView report={deletion} />;
 
   return (
     <section>
@@ -536,6 +533,7 @@ export function Profile({ draft = "" }: { draft?: string }) {
           )}
         </div>
       </div>
+      <DeleteEverything onDeleted={setDeletion} />
     </section>
   );
 }

@@ -99,6 +99,8 @@ class MatchView(BaseModel):
     profile_prompts: list[str]
     nice_met: int
     requirements: list[RequirementView]
+    # Evidence this rating relied on has since been deleted.
+    profile_changed: bool = False
 
 
 def _comparable(text: str) -> str:
@@ -280,7 +282,8 @@ def rate_match(user_id: UUID, payload: dict[str, Any]) -> None:
                    band = EXCLUDED.band, nice_met = EXCLUDED.nice_met,
                    reasons = EXCLUDED.reasons, gaps = EXCLUDED.gaps,
                    profile_prompts = EXCLUDED.profile_prompts, requirements = EXCLUDED.requirements,
-                   rubric_version = EXCLUDED.rubric_version, rated_at = now()""",
+                   rubric_version = EXCLUDED.rubric_version, rated_at = now(),
+                   profile_changed = false""",
             (
                 posting_id,
                 user_id,

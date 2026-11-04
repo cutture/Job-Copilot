@@ -1,11 +1,22 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
+import { ConfirmDelete } from "./ConfirmDelete";
 import { OUTCOMES, dollars } from "./labels";
 import type { Outcome } from "./labels";
 
-type EvidenceRef = { text: string; origin: "resume" | "self_reported" | "profile" };
+type EvidenceRef = {
+  text: string;
+  origin: "resume" | "self_reported" | "profile";
+  // Deleted after this Pack was Submitted; the Pack stays as it was sent.
+  source_removed?: boolean;
+};
 type Claim = { text: string; evidence: EvidenceRef[] };
-type RemovedClaim = { text: string; kind: "stretched" | "invented" | "unchecked" | "with_heading"; reason: string; next_step: string };
+type RemovedClaim = {
+  text: string;
+  kind: "stretched" | "invented" | "unchecked" | "with_heading" | "evidence_deleted";
+  reason: string;
+  next_step: string;
+};
 type Pack = {
   version: number;
   status: "generating" | "waiting" | "ready";
@@ -28,7 +39,8 @@ export type ApplicationData = {
   // From the Profile; both files start with them and the letter is signed with the name.
   name: string | null;
   contact: string | null;
-  pack: Pack;
+  // None once the person deletes it.
+  pack: Pack | null;
 };
 type Signature = Pick<ApplicationData, "name" | "contact">;
 
@@ -47,6 +59,7 @@ const KINDS = {
   stretched: "Stretched",
   invented: "No Evidence",
   unchecked: "Not checked",
+  evidence_deleted: "Evidence deleted",
   with_heading: "Removed with its job heading",
 };
 
@@ -200,7 +213,7 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
       .catch(() => setError("We couldn't load this Application. Try refreshing the page."));
   }, [id]);
 
-  const generating = application?.pack.status === "generating";
+  const generating = application?.pack?.status === "generating";
   useEffect(() => {
     if (!generating) return;
     // A failed refresh just tries again on the next tick.
@@ -232,6 +245,17 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
   const submitted = () => update("submitted", "POST", "We couldn't mark it as Submitted. Try again.");
   const report = (outcome: Outcome) =>
     update("outcome", "PUT", "We couldn't save the Outcome. Try again.", { outcome });
+  const deletePack = () => update("pack", "DELETE", "We couldn't delete the Pack. Try again.");
+  const writePack = () => update("pack", "POST", "We couldn't start a new Pack. Try again.");
+
+  async function deleteApplication() {
+    const response = await fetch(`/api/applications/${id}`, { method: "DELETE" }).catch(() => null);
+    if (!response?.ok) {
+      setError("We couldn't delete this Application. Try again.");
+      return;
+    }
+    onBack();
+  }
 
   const pack = application?.pack;
   return (
@@ -247,6 +271,12 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
         </h2>
       )}
       {error && <p role="alert">{error}</p>}
+      {application && !pack && (
+        <div style={card}>
+          <p style={{ marginTop: 0 }}>This Application has no Application Pack.</p>
+          <button onClick={writePack}>Write a new Application Pack</button>
+        </div>
+      )}
       {pack?.status === "generating" && <p>Writing and checking your Application Pack…</p>}
       {pack?.status === "waiting" && (
         <div role="alert" style={{ ...card, background: "#fdecea" }}>
@@ -285,6 +315,7 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
                   {claim.evidence.map((item) => (
                     <div key={item.text} style={{ fontSize: 13 }}>
                       {ORIGINS[item.origin]}: {item.text}
+                      {item.source_removed && <strong> (source removed)</strong>}
                     </div>
                   ))}
                 </li>
@@ -295,6 +326,22 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
             <Finish application={application} onReview={review} onSubmitted={submitted} onOutcome={report} />
           )}
         </>
+      )}
+      {application && (
+        <p>
+          {pack && pack.status !== "generating" && (
+            <ConfirmDelete
+              label="Delete this Pack"
+              question="Delete this Application Pack? The Application stays."
+              onConfirm={deletePack}
+            />
+          )}{" "}
+          <ConfirmDelete
+            label="Delete this Application"
+            question="Delete this Application and its Pack? The Job Posting stays."
+            onConfirm={deleteApplication}
+          />
+        </p>
       )}
     </section>
   );
