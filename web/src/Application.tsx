@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
+import { OUTCOMES, dollars } from "./labels";
+import type { Outcome } from "./labels";
 
 type EvidenceRef = { text: string; origin: "resume" | "self_reported" | "profile" };
 type Claim = { text: string; evidence: EvidenceRef[] };
@@ -13,7 +15,6 @@ type Pack = {
   cover_letter: { paragraphs: Claim[][] } | null;
   removed_claims: RemovedClaim[] | null;
 };
-export type Outcome = "interview" | "offer" | "rejected" | "no_response";
 export type ApplicationData = {
   id: string;
   title: string;
@@ -24,19 +25,12 @@ export type ApplicationData = {
   submitted_at: string | null;
   outcome: Outcome | null;
   cost_usd: string;
-  has_name: boolean;
+  // From the Profile; both files start with them and the letter is signed with the name.
+  name: string | null;
+  contact: string | null;
   pack: Pack;
 };
-export const OUTCOMES: Record<Outcome, string> = {
-  interview: "Interview",
-  offer: "Offer",
-  rejected: "Rejected",
-  no_response: "No response",
-};
-
-export function dollars(cost: string): string {
-  return `$${Number(cost).toFixed(4)}`;
-}
+type Signature = Pick<ApplicationData, "name" | "contact">;
 
 const REFRESH_MS = 2000;
 const card: CSSProperties = { border: "1px solid #ccc", borderRadius: 8, padding: 12, marginBottom: 10 };
@@ -62,9 +56,20 @@ async function getApplication(id: string): Promise<ApplicationData> {
   return response.json();
 }
 
-function Resume({ resume }: { resume: NonNullable<Pack["resume"]> }) {
+// The top of both files, as they download.
+function Header({ name, contact }: Signature) {
+  return (
+    <>
+      {name && <b style={{ display: "block" }}>{name}</b>}
+      {contact && <div>{contact}</div>}
+    </>
+  );
+}
+
+function Resume({ resume, signature }: { resume: NonNullable<Pack["resume"]>; signature: Signature }) {
   return (
     <div style={page} aria-label="Resume">
+      <Header {...signature} />
       {resume.skills.length > 0 && (
         <>
           <h4 style={sectionHeading}>Skills</h4>
@@ -94,14 +99,16 @@ function Resume({ resume }: { resume: NonNullable<Pack["resume"]> }) {
   );
 }
 
-function CoverLetter({ letter }: { letter: NonNullable<Pack["cover_letter"]> }) {
+function CoverLetter({ letter, signature }: { letter: NonNullable<Pack["cover_letter"]>; signature: Signature }) {
   return (
     <div style={page} aria-label="Cover letter">
+      <Header {...signature} />
       {letter.paragraphs.map((paragraph) => (
         <p key={paragraph.map((sentence) => sentence.text).join(" ")}>
           {paragraph.map((sentence) => sentence.text).join(" ")}
         </p>
       ))}
+      {signature.name && <p>{signature.name}</p>}
     </div>
   );
 }
@@ -135,13 +142,19 @@ function Finish({ application, onReview, onSubmitted, onOutcome }: FinishProps) 
     );
   return (
     <div style={{ ...card, marginTop: 12 }}>
-      {!application.has_name && (
+      {!application.name && (
         <p style={{ fontSize: 13, background: "#fff8e1", padding: "4px 8px" }}>
-          Add your name to your Profile so it appears on your documents and in their file names.
+          Add your name to your Profile so it appears in your files and their names.
         </p>
       )}
       <label>
-        <input type="checkbox" checked={reviewed} onChange={(event) => onReview(event.target.checked)} /> I've reviewed
+        <input
+          type="checkbox"
+          checked={reviewed}
+          disabled={!!submitted_at}
+          onChange={(event) => onReview(event.target.checked)}
+        />{" "}
+        I've reviewed
         this Application Pack
       </label>
       <div style={{ margin: "6px 0" }}>
@@ -199,7 +212,7 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
     return () => clearInterval(timer);
   }, [id, generating]);
 
-  async function act(path: string, method: string, failure: string, body?: unknown) {
+  async function update(path: string, method: string, failure: string, body?: unknown) {
     setError("");
     const response = await fetch(`/api/applications/${id}/${path}`, {
       method,
@@ -213,10 +226,12 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
     setApplication(await response.json());
   }
 
-  const retry = () => act("retry", "POST", "We couldn't retry. Try again in a moment.");
-  const review = (reviewed: boolean) => act("review", "PUT", "We couldn't save your review. Try again.", { reviewed });
-  const submitted = () => act("submitted", "POST", "We couldn't mark it as Submitted. Try again.");
-  const report = (outcome: Outcome) => act("outcome", "PUT", "We couldn't save the Outcome. Try again.", { outcome });
+  const retry = () => update("retry", "POST", "We couldn't retry. Try again in a moment.");
+  const review = (reviewed: boolean) =>
+    update("review", "PUT", "We couldn't save your review. Try again.", { reviewed });
+  const submitted = () => update("submitted", "POST", "We couldn't mark it as Submitted. Try again.");
+  const report = (outcome: Outcome) =>
+    update("outcome", "PUT", "We couldn't save the Outcome. Try again.", { outcome });
 
   const pack = application?.pack;
   return (
@@ -258,8 +273,8 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-            <Resume resume={pack.resume!} />
-            <CoverLetter letter={pack.cover_letter!} />
+            <Resume resume={pack.resume!} signature={application!} />
+            <CoverLetter letter={pack.cover_letter!} signature={application!} />
           </div>
           <div style={{ ...card, marginTop: 12 }}>
             <h3 style={{ marginTop: 0 }}>Evidence</h3>

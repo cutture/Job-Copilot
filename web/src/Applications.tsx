@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { OUTCOMES, dollars } from "./Application";
-import type { Outcome } from "./Application";
+import { OUTCOMES, dollars } from "./labels";
+import type { Outcome } from "./labels";
 
 type ApplicationRow = {
   id: string;
@@ -42,7 +42,7 @@ export function Applications({ onOpen }: { onOpen: (id: string) => void }) {
     <table style={{ borderCollapse: "collapse", width: "100%" }}>
       <thead>
         <tr>
-          {["Job", "Source", "Status", "Submitted", "Cost"].map((heading) => (
+          {["Job Posting", "Source", "Status", "Outcome", "Submitted", "Cost"].map((heading) => (
             <th key={heading} style={cell}>
               {heading}
             </th>
@@ -59,7 +59,8 @@ export function Applications({ onOpen }: { onOpen: (id: string) => void }) {
               </button>
             </td>
             <td style={cell}>{row.source}</td>
-            <td style={cell}>{row.outcome ? OUTCOMES[row.outcome] : STATUSES[row.status]}</td>
+            <td style={cell}>{STATUSES[row.status]}</td>
+            <td style={cell}>{row.outcome ? OUTCOMES[row.outcome] : "None yet"}</td>
             <td style={cell}>{row.submitted_at ? new Date(row.submitted_at).toLocaleString() : "Not yet"}</td>
             <td style={cell}>{dollars(row.cost_usd)}</td>
           </tr>

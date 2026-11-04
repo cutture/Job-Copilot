@@ -43,6 +43,7 @@ def test_the_resume_is_one_column_ordered_skills_experience_education() -> None:
     ]
     assert not document.tables and not document.inline_shapes
     assert len(document.sections) == 1
+    assert document.core_properties.created.year >= 2026
     # Evidence and its labels are for the app only.
     assert "Resume line the Claim came from" not in str(opened(content))
     assert document.core_properties.author == "Sam Rivera"
@@ -68,3 +69,7 @@ def test_files_are_named_name_role_employer() -> None:
         "AI-ML-Engineer-Remote-Cover-letter.docx"
     )
     assert filename("José Núñez", "../../etc", None, "Resume") == "José-Núñez-etc-Resume.docx"
+    # A title that already names the employer doesn't name it twice.
+    assert filename("Sam", "ML Engineer, Northwind Labs", "Northwind Labs", "Resume") == (
+        "Sam-ML-Engineer-Northwind-Labs-Resume.docx"
+    )

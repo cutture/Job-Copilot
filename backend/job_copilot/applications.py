@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Response
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from job_copilot import claims, gateway
 from job_copilot.db import UserId, connect
@@ -59,6 +59,7 @@ WARNINGS = {
 }
 UNKNOWN_FAILURE = f"We couldn't write this Application Pack, so it is waiting. {STILL_WORKS}"
 NOT_REVIEWED = "Tick “I've reviewed this Application Pack” first."
+NOT_READY = "This Application Pack isn't ready yet."
 NEXT_STEP = (
     "If it's true, add Evidence for it to your Profile, then generate the Pack again. "
     "Otherwise, leave it out."
@@ -201,8 +202,9 @@ class ApplicationView(BaseModel):
     outcome: Outcome | None
     # Every model call made for this Application, including failed attempts' paid parts.
     cost_usd: Decimal
-    # Files carry the person's name only when their Profile has one.
-    has_name: bool
+    # From the Profile, for the top of both files and the letter's signature.
+    name: str | None
+    contact: str | None
     pack: PackView
 
 
@@ -222,7 +224,7 @@ class Review(BaseModel):
 
 
 class OutcomeReport(BaseModel):
-    outcome: Outcome = Field()
+    outcome: Outcome
 
 
 class NewApplication(BaseModel):
@@ -579,7 +581,7 @@ def _view(user_id: UUID, application_id: UUID) -> ApplicationView:
             f"""SELECT a.id, a.job_posting_id, p.title, p.employer, a.source, a.band,
                        a.rubric_version, a.created_at, p.apply_url,
                        pack.reviewed_at IS NOT NULL AS reviewed, a.submitted_at, a.outcome,
-                       {COST} AS cost_usd, pr.name IS NOT NULL AS has_name,
+                       {COST} AS cost_usd, pr.name, pr.contact,
                        pack.version, pack.status, pack.failure, pack.model, pack.resume,
                        pack.cover_letter, pack.removed_claims
                 FROM applications a
@@ -692,10 +694,17 @@ def list_applications(user_id: UserId) -> list[ApplicationRow]:
 
 
 def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
-    """The newest Pack of the person's Application, locked for change; 404 if there is none."""
+    """The newest Pack of the person's Application, locked for change; 404 if there is none.
+
+    It comes with what the files and the Application's steps need: the posting's title and
+    employer, when it was Submitted, and the person's name and contact line.
+    """
     pack = conn.execute(
-        f"""SELECT pack.* FROM applications a
+        f"""SELECT pack.*, a.submitted_at, p.title, p.employer, pr.name, pr.contact
+            FROM applications a
             JOIN application_packs pack ON pack.id = {LATEST_PACK}
+            JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
+            LEFT JOIN profiles pr ON pr.user_id = a.user_id
             WHERE a.id = %s AND a.user_id = %s
             FOR UPDATE OF pack""",
         (application_id, user_id),
@@ -705,13 +714,23 @@ def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
     return pack
 
 
+def check_reviewed(pack: Any) -> None:
+    """Downloads and "I submitted it" stay locked until the verified Pack is reviewed."""
+    if pack["status"] != "ready":
+        raise HTTPException(409, NOT_READY)
+    if pack["reviewed_at"] is None:
+        raise HTTPException(409, NOT_REVIEWED)
+
+
 @router.put("/api/applications/{application_id}/review")
 def review_pack(application_id: UUID, review: Review, user_id: UserId) -> ApplicationView:
     """The tick that unlocks downloads and "I submitted it"."""
     with connect() as conn:
         pack = latest_pack(conn, user_id, application_id)
         if pack["status"] != "ready":
-            raise HTTPException(409, "Only a verified Application Pack can be reviewed.")
+            raise HTTPException(409, NOT_READY)
+        if pack["submitted_at"] is not None:
+            raise HTTPException(409, "This Application is Submitted, so its review stays.")
         conn.execute(
             "UPDATE application_packs SET reviewed_at = %s WHERE id = %s AND user_id = %s",
             (datetime.now(UTC) if review.reviewed else None, pack["id"], user_id),
@@ -723,8 +742,7 @@ def review_pack(application_id: UUID, review: Review, user_id: UserId) -> Applic
 def mark_submitted(application_id: UUID, user_id: UserId) -> ApplicationView:
     """The person says they submitted it themselves; nothing here ever submits."""
     with connect() as conn:
-        if latest_pack(conn, user_id, application_id)["reviewed_at"] is None:
-            raise HTTPException(409, NOT_REVIEWED)
+        check_reviewed(latest_pack(conn, user_id, application_id))
         conn.execute(
             """UPDATE applications SET submitted_at = COALESCE(submitted_at, now())
                WHERE id = %s AND user_id = %s""",
@@ -736,12 +754,11 @@ def mark_submitted(application_id: UUID, user_id: UserId) -> ApplicationView:
 @router.put("/api/applications/{application_id}/outcome")
 def report_outcome(application_id: UUID, report: OutcomeReport, user_id: UserId) -> ApplicationView:
     with connect() as conn:
-        updated = conn.execute(
+        if latest_pack(conn, user_id, application_id)["submitted_at"] is None:
+            raise HTTPException(409, "Mark the Application as Submitted first.")
+        conn.execute(
             """UPDATE applications SET outcome = %s, outcome_at = now()
-               WHERE id = %s AND user_id = %s AND submitted_at IS NOT NULL RETURNING id""",
+               WHERE id = %s AND user_id = %s""",
             (report.outcome, application_id, user_id),
-        ).fetchone()
-    if updated is None:
-        _view(user_id, application_id)  # Another person's Application is not found.
-        raise HTTPException(409, "Mark the Application as Submitted first.")
+        )
     return _view(user_id, application_id)

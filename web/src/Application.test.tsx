@@ -20,7 +20,8 @@ function application(
     submitted_at: null,
     outcome: null,
     cost_usd: "0.0061",
-    has_name: true,
+    name: "Sam Rivera",
+    contact: "sam@example.com",
     ...changes,
     pack: {
       version: 1,
@@ -79,6 +80,9 @@ describe("Application", () => {
     const resume = await screen.findByLabelText("Resume");
     expect([...resume.querySelectorAll("h4")].map((h) => h.textContent)).toEqual(["Skills", "Experience"]);
     expect(screen.getByLabelText("Cover letter").textContent).toContain("Dear Northwind Labs hiring team,");
+    // As the files download: name and contact line on top, the letter signed with the name.
+    expect(resume.textContent!.startsWith("Sam Riverasam@example.com")).toBe(true);
+    expect(screen.getByLabelText("Cover letter").textContent!.endsWith("Sam Rivera")).toBe(true);
     expect(screen.getAllByText("Resume: Python Developer, Example Co, Jan 2021 to present")).toHaveLength(2);
     expect(screen.getByText("Led a team of six engineers").tagName).toBe("S");
     expect(screen.getByText(/goes beyond what your Evidence says/)).toBeTruthy();
@@ -139,11 +143,12 @@ describe("Application", () => {
 
     expect((await screen.findByRole("button", { name: "Interview", pressed: true })).textContent).toBe("Interview");
     expect(screen.getByRole("button", { name: /✓ Submitted/ }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByLabelText(/I've reviewed this Application Pack/).hasAttribute("disabled")).toBe(true);
     expect(calls).toContain("PUT /api/applications/a/outcome");
   });
 
   it("asks for a name when the Profile has none", async () => {
-    serve({ "GET /api/applications/a": () => application("ready", { has_name: false }) });
+    serve({ "GET /api/applications/a": () => application("ready", { name: null, contact: null }) });
 
     render(<Application id="a" onBack={() => {}} />);
 

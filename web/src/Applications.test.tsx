@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 describe("Applications", () => {
-  it("shows each Application's job, Source, status, Submitted time and cost", async () => {
+  it("shows each Application's Job Posting, Source, status, Outcome, Submitted time and cost", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>

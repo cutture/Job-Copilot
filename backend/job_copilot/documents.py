@@ -6,16 +6,17 @@ Experience, Education.
 """
 
 import re
+from datetime import UTC, datetime
 from io import BytesIO
-from typing import Any, Literal
+from typing import Literal
 from urllib.parse import quote
 from uuid import UUID
 
 from docx import Document
 from docx.document import Document as DocumentObject
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Response
 
-from job_copilot.applications import NOT_REVIEWED, CoverLetter, Resume, latest_pack
+from job_copilot.applications import CoverLetter, Resume, check_reviewed, latest_pack
 from job_copilot.db import UserId, connect
 
 router = APIRouter()
@@ -24,12 +25,16 @@ MAX_FILENAME_PART = 60
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
-def _new(name: str | None, title: str) -> DocumentObject:
+def _blank_document(name: str | None, title: str) -> DocumentObject:
     document = Document()
     # python-docx would otherwise name itself as the author.
     document.core_properties.author = name or ""
     document.core_properties.title = title
     document.core_properties.comments = ""
+    # The template's own dates would otherwise say 2013.
+    now = datetime.now(UTC)
+    document.core_properties.created = now
+    document.core_properties.modified = now
     return document
 
 
@@ -47,7 +52,7 @@ def _bytes(document: DocumentObject) -> bytes:
 
 
 def resume_docx(resume: Resume, name: str | None, contact: str | None) -> bytes:
-    document = _new(name, "Resume")
+    document = _blank_document(name, "Resume")
     _header(document, name, contact)
     if resume.skills:
         document.add_heading("Skills", level=2)
@@ -66,7 +71,7 @@ def resume_docx(resume: Resume, name: str | None, contact: str | None) -> bytes:
 
 
 def cover_letter_docx(letter: CoverLetter, name: str | None, contact: str | None) -> bytes:
-    document = _new(name, "Cover letter")
+    document = _blank_document(name, "Cover letter")
     _header(document, name, contact)
     for paragraph in letter.paragraphs:
         document.add_paragraph(" ".join(sentence.text for sentence in paragraph))
@@ -77,6 +82,9 @@ def cover_letter_docx(letter: CoverLetter, name: str | None, contact: str | None
 
 def filename(name: str | None, role: str, employer: str | None, document: str) -> str:
     """`Name-Role-Employer`, then which document it is, e.g. `Sam-Rivera-...-Resume.docx`."""
+    # A pasted posting's title often names the employer already.
+    if employer and employer.casefold() in role.casefold():
+        employer = None
     parts = (name, role, employer, document)
     safe = [re.sub(r"[^\w]+", "-", part).strip("-_")[:MAX_FILENAME_PART] for part in parts if part]
     return "-".join(part for part in safe if part) + ".docx"
@@ -87,24 +95,14 @@ def _download(
 ) -> Response:
     with connect() as conn:
         pack = latest_pack(conn, user_id, application_id)
-        row: Any = conn.execute(
-            """SELECT p.title, p.employer, pr.name, pr.contact
-               FROM applications a
-               JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
-               LEFT JOIN profiles pr ON pr.user_id = a.user_id
-               WHERE a.id = %s AND a.user_id = %s""",
-            (application_id, user_id),
-        ).fetchone()
-    # Downloads stay locked until the person has reviewed this verified Pack.
-    if pack["status"] != "ready" or pack["reviewed_at"] is None:
-        raise HTTPException(409, NOT_REVIEWED)
+    check_reviewed(pack)
     if which == "Resume":
-        content = resume_docx(Resume(**pack["resume"]), row["name"], row["contact"])
+        content = resume_docx(Resume(**pack["resume"]), pack["name"], pack["contact"])
     else:
         content = cover_letter_docx(
-            CoverLetter(**pack["cover_letter"]), row["name"], row["contact"]
+            CoverLetter(**pack["cover_letter"]), pack["name"], pack["contact"]
         )
-    name = filename(row["name"], row["title"], row["employer"], which)
+    name = filename(pack["name"], pack["title"], pack["employer"], which)
     return Response(
         content,
         media_type=DOCX,

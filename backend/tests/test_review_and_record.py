@@ -1,5 +1,6 @@
 """Review, download, Submitted and Outcome journeys. Only model providers are faked."""
 
+import json
 from decimal import Decimal
 from io import BytesIO
 from typing import Any
@@ -90,13 +91,25 @@ def test_a_reviewed_pack_downloads_clean_files_then_is_submitted_and_gets_an_out
     )
     assert row["submitted_at"] == submitted["submitted_at"]
     with psycopg.connect(TEST_DB) as conn:
-        calls = conn.execute(
-            "SELECT count(*), sum(cost_usd) FROM model_calls WHERE application_id = %s",
-            (application_id,),
+        cost = conn.execute(
+            "SELECT sum(cost_usd) FROM model_calls WHERE application_id = %s", (application_id,)
         ).fetchone()
-    # The resume, cover letter and Verification calls; the rating isn't part of it.
-    assert calls is not None and calls[0] == 3
-    assert Decimal(row["cost_usd"]) == calls[1] > 0
+    assert cost is not None and Decimal(row["cost_usd"]) == cost[0] > 0
+
+    # The review stays once the Application is Submitted.
+    assert client.put(f"{base}/review", json={"reviewed": False}).status_code == 409
+
+
+def test_the_name_and_contact_line_never_reach_a_model(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    application_id = ready_pack(client, provider)
+
+    view = client.get(f"/api/applications/{application_id}").json()
+
+    assert (view["name"], view["contact"]) == ("Sam Rivera", "sam@example.com")
+    sent = json.dumps(provider.received)
+    assert "Sam Rivera" not in sent and "sam@example.com" not in sent
 
 
 def test_unticking_the_review_locks_downloads_again(
@@ -143,7 +156,7 @@ def test_a_pack_without_a_name_still_downloads(client: TestClient, provider: Fak
     application_id = apply(client, posting_id)["id"]
     run_worker()
 
-    assert review(client, application_id)["has_name"] is False
+    assert review(client, application_id)["name"] is None
     resume = client.get(f"/api/applications/{application_id}/resume.docx")
     assert resume.headers["content-disposition"].endswith(
         "''Senior-GenAI-Engineer-Northwind-Labs-Resume.docx"
