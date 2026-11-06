@@ -96,8 +96,10 @@ def check(posting_id: str) -> None:
     if pack["status"] != "ready":
         print("warning:", pack["warning"])
         return
-    resume = pack["resume"]
-    print("resume claims:", {key: len(value) for key, value in resume.items()})
+    print(
+        "resume claims by section:",
+        {s["kind"]: len(s["claims"]) + len(s["roles"]) for s in pack["resume"]["sections"]},
+    )
     print("cover letter sentences:", [len(p) for p in pack["cover_letter"]["paragraphs"]])
     removed = [r["text"] for r in pack["removed_claims"]]
     print("removed claims:", dict(Counter(r["kind"] for r in pack["removed_claims"])))
