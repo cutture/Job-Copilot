@@ -258,12 +258,15 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
   }
 
   const pack = application?.pack;
+  const back = (
+    <p>
+      <button onClick={onBack}>← Back to job listings</button>{" "}
+      <span style={{ fontSize: 13 }}>Your draft stays saved.</span>
+    </p>
+  );
   return (
     <section>
-      <p>
-        <button onClick={onBack}>← Back to job listings</button>{" "}
-        <span style={{ fontSize: 13 }}>Your draft stays saved.</span>
-      </p>
+      {back}
       {application && (
         <h2>
           Final documents: {application.title}
@@ -343,6 +346,8 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
           />
         </p>
       )}
+      {/* A long Pack page ends where it started, so there's no scrolling back up. */}
+      {back}
     </section>
   );
 }

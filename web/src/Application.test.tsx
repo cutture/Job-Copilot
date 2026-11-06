@@ -180,6 +180,18 @@ describe("Application", () => {
     expect(screen.queryByRole("button", { name: "Delete this Pack" })).toBeNull();
   });
 
+  it("offers Back to job listings at the top and the bottom of the page", async () => {
+    serve({ "GET /api/applications/a": () => application("ready") });
+    const onBack = vi.fn();
+    render(<Application id="a" onBack={onBack} />);
+
+    await screen.findByLabelText("Resume");
+    const buttons = screen.getAllByRole("button", { name: "← Back to job listings" });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[1]);
+    expect(onBack).toHaveBeenCalled();
+  });
+
   it("asks for a name when the Profile has none", async () => {
     serve({ "GET /api/applications/a": () => application("ready", { name: null, contact: null }) });
 
