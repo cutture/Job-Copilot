@@ -4,7 +4,7 @@ from io import BytesIO
 
 from docx import Document
 
-from job_copilot.applications import Claim, CoverLetter, EvidenceRef, Resume, Role
+from job_copilot.applications import Claim, CoverLetter, EvidenceRef, Resume, Role, Section
 from job_copilot.documents import cover_letter_docx, filename, resume_docx
 
 SOURCE = [EvidenceRef(text="Resume line the Claim came from", origin="self_reported")]
@@ -20,11 +20,20 @@ def opened(content: bytes) -> list[str]:
 
 def test_the_resume_is_one_column_ordered_skills_experience_education() -> None:
     resume = Resume(
-        skills=[claim("Python"), claim("FastAPI")],
-        experience=[
-            Role(heading=claim("Python Developer, Example Co"), lines=[claim("Shipped systems")])
-        ],
-        education=[claim("BSc Computer Science")],
+        sections=[
+            Section(kind="skills", heading="Skills", claims=[claim("Python"), claim("FastAPI")]),
+            Section(
+                kind="experience",
+                heading="Experience",
+                roles=[
+                    Role(
+                        heading=claim("Python Developer, Example Co"),
+                        lines=[claim("Shipped systems")],
+                    )
+                ],
+            ),
+            Section(kind="education", heading="Education", claims=[claim("BSc Computer Science")]),
+        ]
     )
 
     content = resume_docx(resume, "Sam Rivera", "sam@example.com")
@@ -47,6 +56,31 @@ def test_the_resume_is_one_column_ordered_skills_experience_education() -> None:
     # Evidence and its labels are for the app only.
     assert "Resume line the Claim came from" not in str(opened(content))
     assert document.core_properties.author == "Sam Rivera"
+
+
+def test_sections_render_in_the_packs_order_with_their_own_headings() -> None:
+    resume = Resume(
+        sections=[
+            Section(kind="education", heading="Education", claims=[claim("BSc Computer Science")]),
+            Section(kind="skills", heading="Core Skills", claims=[claim("Python")]),
+        ]
+    )
+
+    assert opened(resume_docx(resume, None, None)) == [
+        "Education",
+        "BSc Computer Science",
+        "Core Skills",
+        "Python",
+    ]
+
+
+def test_a_resume_saved_before_sections_reads_as_sections_and_drops_empty_ones() -> None:
+    fixed = {"skills": [claim("Python").model_dump()], "experience": [], "education": []}
+
+    resume = Resume.model_validate(fixed)
+
+    assert [(s.kind, s.heading) for s in resume.sections] == [("skills", "Skills")]
+    assert resume.sections[0].claims[0].text == "Python"
 
 
 def test_the_cover_letter_is_its_paragraphs_signed_with_the_name() -> None:

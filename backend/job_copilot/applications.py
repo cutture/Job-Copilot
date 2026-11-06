@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Response
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from job_copilot import claims, gateway
 from job_copilot.db import UserId, connect
@@ -105,6 +105,26 @@ VERIFY_PROMPT = (
     '"evidence": [numbers of the Evidence items that support it]}.'
 )
 
+SectionKind = Literal[
+    "summary",
+    "skills",
+    "experience",
+    "education",
+    "qualifications",
+    "affiliations",
+    "certifications",
+    "custom",
+]
+# The heading each standard section shows unless the person's own resume names it otherwise.
+HEADINGS: dict[SectionKind, str] = {
+    "summary": "Summary",
+    "skills": "Skills",
+    "experience": "Experience",
+    "education": "Education",
+    "qualifications": "Qualifications",
+    "affiliations": "Affiliations",
+    "certifications": "Certifications",
+}
 RemovedKind = Literal["stretched", "invented", "unchecked", "with_heading", "evidence_deleted"]
 Failure = Literal["model_unavailable", "unusable_answer"]
 Outcome = Literal["interview", "offer", "rejected", "no_response"]
@@ -116,6 +136,20 @@ class DraftClaim(TypedDict):
     id: str
     text: str
     evidence: list[int]
+
+
+class DraftRole(TypedDict):
+    heading: DraftClaim
+    lines: list[DraftClaim]
+
+
+class DraftSection(TypedDict):
+    """A resume section as the writer drafted it. Experience holds roles; the rest hold Claims."""
+
+    kind: "SectionKind"
+    heading: str
+    claims: list[DraftClaim]
+    roles: list[DraftRole]
 
 
 class Removal(NamedTuple):
@@ -140,7 +174,7 @@ class PackState(TypedDict, total=False):
     posting: str
     requirements: list[dict[str, Any]]
     evidence: dict[int, dict[str, Any]]
-    resume: dict[str, Any]
+    resume: list[DraftSection]
     cover_letter: list[list[DraftClaim]]
     # The model that wrote the Pack.
     model: str
@@ -167,10 +201,38 @@ class Role(BaseModel):
     lines: list[Claim]
 
 
+class Section(BaseModel):
+    kind: SectionKind
+    heading: str
+    # Experience holds roles; every other kind holds Claims.
+    claims: list[Claim] = []
+    roles: list[Role] = []
+
+    def filled(self) -> bool:
+        return bool(self.claims or self.roles)
+
+
 class Resume(BaseModel):
-    skills: list[Claim]
-    experience: list[Role]
-    education: list[Claim]
+    """The resume's sections, in the order they're shown, each with at least one Claim."""
+
+    sections: list[Section]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_fixed_sections(cls, data: Any) -> Any:
+        # Packs saved before sections existed hold fixed Skills, Experience and Education.
+        if not isinstance(data, dict) or "sections" in data:
+            return data
+        fixed = [
+            Section(kind="skills", heading=HEADINGS["skills"], claims=data.get("skills", [])),
+            Section(
+                kind="experience", heading=HEADINGS["experience"], roles=data.get("experience", [])
+            ),
+            Section(
+                kind="education", heading=HEADINGS["education"], claims=data.get("education", [])
+            ),
+        ]
+        return {"sections": [section for section in fixed if section.filled()]}
 
 
 class CoverLetter(BaseModel):
@@ -312,22 +374,29 @@ def write_resume(state: PackState) -> PackState:
     )
     answer = answer if isinstance(answer, dict) else {}
     evidence = state["evidence"]
-    roles = []
+    roles: list[DraftRole] = []
     raw_roles = answer.get("experience")
     for n, raw in enumerate(raw_roles[:MAX_ROLES] if isinstance(raw_roles, list) else []):
         raw = raw if isinstance(raw, dict) else {}
         heading = _draft(raw.get("heading"), f"e{n}", evidence)
         if heading:
             roles.append(
-                {"heading": heading, "lines": _drafts(raw.get("bullets"), f"e{n}b", evidence)}
+                DraftRole(heading=heading, lines=_drafts(raw.get("bullets"), f"e{n}b", evidence))
             )
-    resume = {
-        "skills": _drafts(answer.get("skills"), "s", evidence),
-        "experience": roles,
-        "education": _drafts(answer.get("education"), "d", evidence),
-    }
-    if not roles and not resume["skills"]:
+    skills = _drafts(answer.get("skills"), "s", evidence)
+    if not roles and not skills:
         raise ValueError("The resume answer had no Skills or Experience")
+
+    def section(
+        kind: SectionKind, claims: list[DraftClaim], roles: list[DraftRole]
+    ) -> DraftSection:
+        return DraftSection(kind=kind, heading=HEADINGS[kind], claims=claims, roles=roles)
+
+    resume = [
+        section("skills", skills, []),
+        section("experience", [], roles),
+        section("education", _drafts(answer.get("education"), "d", evidence), []),
+    ]
     return {"resume": resume, "model": model}
 
 
@@ -354,9 +423,15 @@ def write_cover_letter(state: PackState) -> PackState:
 # --- Verification ------------------------------------------------------------------------
 
 
-def _resume_drafts(resume: dict[str, Any]) -> list[DraftClaim]:
-    roles = [d for role in resume["experience"] for d in (role["heading"], *role["lines"])]
-    return [*resume["skills"], *roles, *resume["education"]]
+def _resume_drafts(resume: list[DraftSection]) -> list[DraftClaim]:
+    return [
+        draft
+        for section in resume
+        for draft in (
+            *section["claims"],
+            *(d for role in section["roles"] for d in (role["heading"], *role["lines"])),
+        )
+    ]
 
 
 def verify(state: PackState) -> PackState:
@@ -471,26 +546,27 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
     def all_verified(drafts: list[DraftClaim]) -> list[Claim]:
         return [c for c in map(verified, drafts) if c]
 
-    resume = state["resume"]
-    roles = []
-    for role in resume["experience"]:
-        heading = verified(role["heading"])
-        if heading:
-            roles.append(Role(heading=heading, lines=all_verified(role["lines"])))
-        else:
-            # A line without its role's heading would read as part of another role.
-            for line in role["lines"]:
-                verified(line, WITH_HEADING)
+    sections = []
+    for drafted in state["resume"]:
+        roles = []
+        for role in drafted["roles"]:
+            heading = verified(role["heading"])
+            if heading:
+                roles.append(Role(heading=heading, lines=all_verified(role["lines"])))
+            else:
+                # A line without its role's heading would read as part of another role.
+                for line in role["lines"]:
+                    verified(line, WITH_HEADING)
+        section = Section(
+            kind=drafted["kind"],
+            heading=drafted["heading"],
+            claims=all_verified(drafted["claims"]),
+            roles=roles,
+        )
+        if section.filled():
+            sections.append(section)
     letter = CoverLetter(paragraphs=[p for p in map(all_verified, state["cover_letter"]) if p])
-    return (
-        Resume(
-            skills=all_verified(resume["skills"]),
-            experience=roles,
-            education=all_verified(resume["education"]),
-        ),
-        letter,
-        taken_out,
-    )
+    return Resume(sections=sections), letter, taken_out
 
 
 def _evidence(user_id: UUID) -> dict[int, dict[str, Any]]:
@@ -920,14 +996,15 @@ def take_out_evidence(
     def kept(claims: list[Claim]) -> list[Claim]:
         return [c for c in claims if still_supported(c)]
 
-    roles: list[Role] = []
-    for role in resume.experience:
-        if still_supported(role.heading):
-            roles.append(Role(heading=role.heading, lines=kept(role.lines)))
-        else:
-            removed.extend(listed(line.text, WITH_HEADING) for line in role.lines)
-    resume.skills, resume.experience = kept(resume.skills), roles
-    resume.education = kept(resume.education)
+    for section in resume.sections:
+        roles: list[Role] = []
+        for role in section.roles:
+            if still_supported(role.heading):
+                roles.append(Role(heading=role.heading, lines=kept(role.lines)))
+            else:
+                removed.extend(listed(line.text, WITH_HEADING) for line in role.lines)
+        section.claims, section.roles = kept(section.claims), roles
+    resume.sections = [section for section in resume.sections if section.filled()]
     letter.paragraphs = [p for p in map(kept, letter.paragraphs) if p]
     return changed, removed
 

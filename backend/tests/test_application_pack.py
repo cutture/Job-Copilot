@@ -128,6 +128,11 @@ def texts(claims: list[dict[str, Any]]) -> list[str]:
     return [c["text"] for c in claims]
 
 
+def by_kind(resume: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """A served resume's sections by kind."""
+    return {section["kind"]: section for section in resume["sections"]}
+
+
 def test_apply_starts_an_application_and_a_verified_pack(
     client: TestClient, provider: FakeProvider
 ) -> None:
@@ -160,17 +165,22 @@ def test_apply_starts_an_application_and_a_verified_pack(
         "anthropic/claude-haiku-5-5",
     )
     resume = pack["resume"]
-    assert list(resume) == ["skills", "experience", "education"]
-    assert texts(resume["skills"]) == ["Python"]
-    assert len(resume["experience"]) == 1
-    role = resume["experience"][0]
+    assert [(s["kind"], s["heading"]) for s in resume["sections"]] == [
+        ("skills", "Skills"),
+        ("experience", "Experience"),
+        ("education", "Education"),
+    ]
+    sections = by_kind(resume)
+    assert texts(sections["skills"]["claims"]) == ["Python"]
+    assert len(sections["experience"]["roles"]) == 1
+    role = sections["experience"]["roles"][0]
     assert role["heading"]["text"] == PYTHON
     assert texts(role["lines"]) == ["Shipped retrieval systems to production"]
-    assert texts(resume["education"]) == [EDUCATION]
-    assert resume["skills"][0]["evidence"] == [
+    assert texts(sections["education"]["claims"]) == [EDUCATION]
+    assert sections["skills"]["claims"][0]["evidence"] == [
         {"text": PYTHON, "origin": "self_reported", "deleted": False, "id": ids["python"]}
     ]
-    assert resume["education"][0]["evidence"] == [
+    assert sections["education"]["claims"][0]["evidence"] == [
         {
             "text": f"Education: {EDUCATION}",
             "origin": "profile",

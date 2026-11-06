@@ -17,12 +17,15 @@ type RemovedClaim = {
   reason: string;
   next_step: string;
 };
+type Role = { heading: Claim; lines: Claim[] };
+// Experience holds roles; every other kind holds Claims.
+type Section = { kind: string; heading: string; claims: Claim[]; roles: Role[] };
 type Pack = {
   version: number;
   status: "generating" | "waiting" | "ready";
   warning: string | null;
   model: string | null;
-  resume: { skills: Claim[]; experience: { heading: Claim; lines: Claim[] }[]; education: Claim[] } | null;
+  resume: { sections: Section[] } | null;
   cover_letter: { paragraphs: Claim[][] } | null;
   removed_claims: RemovedClaim[] | null;
 };
@@ -83,31 +86,24 @@ function Resume({ resume, signature }: { resume: NonNullable<Pack["resume"]>; si
   return (
     <div style={page} aria-label="Resume">
       <Header {...signature} />
-      {resume.skills.length > 0 && (
-        <>
-          <h4 style={sectionHeading}>Skills</h4>
-          {resume.skills.map((skill) => skill.text).join(", ")}
-        </>
-      )}
-      {resume.experience.length > 0 && <h4 style={sectionHeading}>Experience</h4>}
-      {resume.experience.map((role) => (
-        <div key={role.heading.text}>
-          <b>{role.heading.text}</b>
-          <ul style={{ margin: "4px 0", paddingLeft: 20 }}>
-            {role.lines.map((line) => (
-              <li key={line.text}>{line.text}</li>
-            ))}
-          </ul>
+      {resume.sections.map((section) => (
+        <div key={section.heading}>
+          <h4 style={sectionHeading}>{section.heading}</h4>
+          {section.kind === "skills"
+            ? section.claims.map((skill) => skill.text).join(", ")
+            : section.claims.map((claim) => <div key={claim.text}>{claim.text}</div>)}
+          {section.roles.map((role) => (
+            <div key={role.heading.text}>
+              <b>{role.heading.text}</b>
+              <ul style={{ margin: "4px 0", paddingLeft: 20 }}>
+                {role.lines.map((line) => (
+                  <li key={line.text}>{line.text}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       ))}
-      {resume.education.length > 0 && (
-        <>
-          <h4 style={sectionHeading}>Education</h4>
-          {resume.education.map((item) => (
-            <div key={item.text}>{item.text}</div>
-          ))}
-        </>
-      )}
     </div>
   );
 }
@@ -127,11 +123,11 @@ function CoverLetter({ letter, signature }: { letter: NonNullable<Pack["cover_le
 }
 
 function allClaims(pack: Pack): Claim[] {
-  const resume = pack.resume!;
   return [
-    ...resume.skills,
-    ...resume.experience.flatMap((role) => [role.heading, ...role.lines]),
-    ...resume.education,
+    ...pack.resume!.sections.flatMap((section) => [
+      ...section.claims,
+      ...section.roles.flatMap((role) => [role.heading, ...role.lines]),
+    ]),
     ...pack.cover_letter!.paragraphs.flat(),
   ].filter((claim) => claim.evidence.length > 0);
 }

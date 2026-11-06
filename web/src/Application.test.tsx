@@ -30,9 +30,15 @@ function application(
       model: ready ? "anthropic/claude-haiku-5-5" : null,
       resume: ready
         ? {
-            skills: [{ text: "Python", evidence: [python] }],
-            experience: [{ heading: { text: python.text, evidence: [python] }, lines: [] }],
-            education: [],
+            sections: [
+              { kind: "skills", heading: "Skills", claims: [{ text: "Python", evidence: [python] }], roles: [] },
+              {
+                kind: "experience",
+                heading: "Experience",
+                claims: [],
+                roles: [{ heading: { text: python.text, evidence: [python] }, lines: [] }],
+              },
+            ],
           }
         : null,
       cover_letter: ready
@@ -170,7 +176,7 @@ describe("Application", () => {
 
   it("marks Evidence deleted after a Pack was Submitted", async () => {
     const sent = application("ready", { reviewed: true, submitted_at: "2026-11-04T10:00:00Z" });
-    sent.pack!.resume!.skills[0].evidence = [{ ...python, deleted: true }];
+    sent.pack!.resume!.sections[0].claims[0].evidence = [{ ...python, deleted: true }];
     serve({ "GET /api/applications/a": () => sent });
 
     render(<Application id="a" onBack={() => {}} />);

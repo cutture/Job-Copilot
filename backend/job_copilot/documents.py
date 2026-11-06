@@ -1,8 +1,8 @@
 """The document renderer: DOCX files of a verified Application Pack.
 
 It takes only the saved documents, which hold verified Claims and no Removed Claims, and writes
-only their text: no Evidence, labels, tables or images. The resume is one column ordered Skills,
-Experience, Education.
+only their text: no Evidence, labels, tables or images. The resume is one column, its sections
+in the order the Pack holds them.
 """
 
 import re
@@ -54,19 +54,17 @@ def _bytes(document: DocumentObject) -> bytes:
 def resume_docx(resume: Resume, name: str | None, contact: str | None) -> bytes:
     document = _blank_document(name, "Resume")
     _header(document, name, contact)
-    if resume.skills:
-        document.add_heading("Skills", level=2)
-        document.add_paragraph(", ".join(skill.text for skill in resume.skills))
-    if resume.experience:
-        document.add_heading("Experience", level=2)
-        for role in resume.experience:
+    for section in resume.sections:
+        document.add_heading(section.heading, level=2)
+        if section.kind == "skills":
+            document.add_paragraph(", ".join(skill.text for skill in section.claims))
+        else:
+            for claim in section.claims:
+                document.add_paragraph(claim.text)
+        for role in section.roles:
             document.add_paragraph().add_run(role.heading.text).bold = True
             for line in role.lines:
                 document.add_paragraph(line.text, style="List Bullet")
-    if resume.education:
-        document.add_heading("Education", level=2)
-        for item in resume.education:
-            document.add_paragraph(item.text)
     return _bytes(document)
 
 

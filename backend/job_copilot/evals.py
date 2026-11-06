@@ -120,9 +120,14 @@ class LabelsMetric(BaseMetric):  # type: ignore[no-untyped-call]
 
 
 def _documents_text(pack: applications.WrittenPack) -> tuple[str, str]:
-    resume = pack.resume
-    lines = [c.text for c in resume.skills + resume.education]
-    lines += [c.text for role in resume.experience for c in (role.heading, *role.lines)]
+    lines = [
+        claim.text
+        for section in pack.resume.sections
+        for claim in (
+            *section.claims,
+            *(c for role in section.roles for c in (role.heading, *role.lines)),
+        )
+    ]
     letter = [s.text for p in pack.cover_letter.paragraphs for s in p]
     return "\n".join(lines), "\n".join(letter)
 

@@ -1,17 +1,20 @@
 """Deleting items and everything. Only model providers and Source responses are faked."""
 
+from io import BytesIO
 from typing import Any
 from uuid import UUID
 
 import psycopg
 import pytest
+from docx import Document
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from job_copilot import gateway
 from job_copilot.api import app, current_user_id
 from job_copilot.deletion import EVAL_TABLES, USER_TABLES
 from tests.conftest import TEST_DB, FakeProvider
-from tests.test_application_pack import apply, rated_match, run_worker, write
+from tests.test_application_pack import apply, by_kind, rated_match, run_worker, write
 from tests.test_filter import prefer
 from tests.test_rating import POSTING, answer, rate_posting, three_met
 from tests.test_search import FakeBoards, boards, job, listed, search, watch
@@ -110,6 +113,36 @@ def test_deleting_a_pack_keeps_the_application_which_can_get_a_new_pack(
     assert client.post(f"{base}/pack").status_code == 409
 
 
+def test_a_pack_saved_before_sections_still_opens_downloads_and_takes_deletions(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting_id, ids = rated_match(client, provider)
+    write(provider, ids)
+    application_id = apply(client, posting_id)["id"]
+    run_worker()
+    sections = by_kind(client.get(f"/api/applications/{application_id}").json()["pack"]["resume"])
+    fixed = {
+        "skills": sections["skills"]["claims"],
+        "experience": sections["experience"]["roles"],
+        "education": sections["education"]["claims"],
+    }
+    with psycopg.connect(TEST_DB) as conn:
+        conn.execute("UPDATE application_packs SET resume = %s", (Jsonb(fixed),))
+
+    base = f"/api/applications/{application_id}"
+    resume = client.get(base).json()["pack"]["resume"]
+    assert [s["kind"] for s in resume["sections"]] == ["skills", "experience", "education"]
+    client.put(f"{base}/review", json={"reviewed": True})
+    downloaded = Document(BytesIO(client.get(f"{base}/resume.docx").content))
+    assert RETRIEVAL_LINE in [paragraph.text for paragraph in downloaded.paragraphs]
+
+    client.delete(f"/api/evidence/{ids['retrieval']}")
+
+    changed = client.get(base).json()["pack"]
+    assert by_kind(changed["resume"])["experience"]["roles"][0]["lines"] == []
+    assert RETRIEVAL_LINE in {r["text"] for r in changed["removed_claims"]}
+
+
 def test_deleting_a_pack_deletes_every_version(client: TestClient, provider: FakeProvider) -> None:
     _, application_id = ready_application(client, provider)
     with psycopg.connect(TEST_DB) as conn:
@@ -171,7 +204,7 @@ def test_evidence_deleted_while_a_pack_is_written_is_taken_out(
     run_worker()
 
     pack = client.get(f"/api/applications/{application_id}").json()["pack"]
-    assert pack["resume"]["experience"][0]["lines"] == []
+    assert by_kind(pack["resume"])["experience"]["roles"][0]["lines"] == []
     assert {r["text"]: r["kind"] for r in pack["removed_claims"]}[RETRIEVAL_SENTENCE] == (
         "evidence_deleted"
     )
@@ -201,14 +234,14 @@ def test_deleting_evidence_changes_unsubmitted_packs_and_marks_submitted_ones_an
     # Unsubmitted: Claims resting only on that Evidence become Claims without Evidence.
     changed = client.get(f"/api/applications/{draft}").json()
     assert changed["reviewed"] is False
-    assert changed["pack"]["resume"]["experience"][0]["lines"] == []
+    assert by_kind(changed["pack"]["resume"])["experience"]["roles"][0]["lines"] == []
     moved = {r["text"]: r for r in changed["pack"]["removed_claims"]}
     assert moved[RETRIEVAL_LINE]["kind"] == moved[RETRIEVAL_SENTENCE]["kind"] == "evidence_deleted"
     assert moved[RETRIEVAL_LINE]["reason"] == "Its Evidence was deleted from your Profile."
     # Submitted: the Pack stays as it was sent, with that Evidence marked deleted.
     kept = client.get(f"/api/applications/{sent}").json()
     assert kept["reviewed"] is True
-    line = kept["pack"]["resume"]["experience"][0]["lines"][0]
+    line = by_kind(kept["pack"]["resume"])["experience"]["roles"][0]["lines"][0]
     assert line["text"] == RETRIEVAL_LINE and line["evidence"][0]["deleted"] is True
     assert kept["pack"]["removed_claims"] == before["removed_claims"]
     # Only the unapplied Match that cited it shows "Profile changed".
