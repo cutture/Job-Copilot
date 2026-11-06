@@ -103,6 +103,8 @@ class MatchView(BaseModel):
     requirements: list[RequirementView]
     # Evidence this rating relied on has since been deleted.
     profile_changed: bool = False
+    # How the posting's seniority compared, as the Band rules used it; not saved.
+    seniority: bands.Seniority = "fits"
 
 
 def _comparable(text: str) -> str:
@@ -234,6 +236,7 @@ def judge(answer: Any, posting: str, evidence: dict[int, str], facts: dict[str, 
         profile_prompts=list(dict.fromkeys(asks)),
         nice_met=rated.nice_met,
         requirements=requirements + languages,
+        seniority=seniority,
     )
 
 
@@ -248,17 +251,8 @@ def _facts(user_id: UUID) -> dict[str, Any]:
     return dict(row)
 
 
-def rate_match(user_id: UUID, payload: dict[str, Any]) -> None:
-    posting_id = payload["job_posting_id"]
-    with connect() as conn:
-        posting = conn.execute(
-            "SELECT text FROM job_postings WHERE id = %s AND user_id = %s AND status = 'received'",
-            (posting_id, user_id),
-        ).fetchone()
-    if posting is None:
-        return
-    facts = _facts(user_id)
-    evidence = {item.id: item.text for item in confirmed_evidence(user_id)}
+def rate(user_id: UUID, posting: str, evidence: dict[int, str], facts: dict[str, Any]) -> MatchView:
+    """Rate one posting against this Evidence and these Profile facts."""
     person = {
         "evidence": [{"number": n, "text": text} for n, text in evidence.items()],
         "facts": {name: facts[name] for name in FACT_NAMES},
@@ -270,13 +264,24 @@ def rate_match(user_id: UUID, payload: dict[str, Any]) -> None:
         step="rating",
         messages=[
             {"role": "system", "content": PROMPT},
-            {"role": "user", "content": json.dumps({"posting": posting["text"], **person})},
+            {"role": "user", "content": json.dumps({"posting": posting, **person})},
         ],
         max_output_tokens=RATING_MAX_OUTPUT_TOKENS,
     )
-    match = judge(
-        json.loads(gateway.strip_fences(completion.text)), posting["text"], evidence, facts
-    )
+    return judge(json.loads(gateway.strip_fences(completion.text)), posting, evidence, facts)
+
+
+def rate_match(user_id: UUID, payload: dict[str, Any]) -> None:
+    posting_id = payload["job_posting_id"]
+    with connect() as conn:
+        posting = conn.execute(
+            "SELECT text FROM job_postings WHERE id = %s AND user_id = %s AND status = 'received'",
+            (posting_id, user_id),
+        ).fetchone()
+    if posting is None:
+        return
+    evidence = {item.id: item.text for item in confirmed_evidence(user_id)}
+    match = rate(user_id, posting["text"], evidence, _facts(user_id))
     with connect() as conn:
         conn.execute(
             """INSERT INTO matches (job_posting_id, user_id, band, nice_met, reasons, gaps,

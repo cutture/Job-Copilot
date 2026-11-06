@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from job_copilot import gateway
 from job_copilot.api import app, current_user_id
-from job_copilot.deletion import USER_TABLES
+from job_copilot.deletion import EVAL_TABLES, USER_TABLES
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_application_pack import apply, rated_match, run_worker, write
 from tests.test_filter import prefer
@@ -264,8 +264,8 @@ def test_every_table_with_a_persons_rows_is_deleted_by_delete_everything() -> No
             """SELECT table_name FROM information_schema.columns
                WHERE column_name = 'user_id' AND table_schema = 'public'"""
         ).fetchall()
-    # A new table holding a person's rows must join USER_TABLES.
-    assert {row[0] for row in found} == set(USER_TABLES)
+    # A new table holding a person's rows must join USER_TABLES, or EVAL_TABLES for eval data.
+    assert {row[0] for row in found} == set(USER_TABLES) | set(EVAL_TABLES)
 
 
 def test_another_persons_items_cant_be_deleted(client: TestClient, provider: FakeProvider) -> None:

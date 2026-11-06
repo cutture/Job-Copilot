@@ -31,6 +31,8 @@ USER_TABLES = {
     "evidence": "Evidence items",
     "profiles": "Profile",
 }
+# Eval Runs hold only invented data, so they stay unless the person asks for them to go.
+EVAL_TABLES = {"eval_results": "Eval Case results", "eval_runs": "Eval Runs"}
 # Said in every report, because no app can delete these.
 NOT_DELETED = [
     "Files you downloaded stay on your computer. Delete them yourself.",
@@ -46,6 +48,7 @@ LEDGER_NOTE = (
 
 class DeleteEverything(BaseModel):
     confirm: Literal["DELETE"]
+    include_eval_runs: bool = False
 
 
 class DeletionReport(BaseModel):
@@ -119,7 +122,7 @@ def delete_evidence(evidence_id: int, user_id: UserId) -> None:
 
 
 @router.post("/api/delete-everything")
-def delete_everything(_: DeleteEverything, user_id: UserId) -> DeletionReport:
+def delete_everything(request: DeleteEverything, user_id: UserId) -> DeletionReport:
     """Delete every record of the person's. The typed DELETE is checked by the request model."""
     with connect() as conn:
         traces: Any = conn.execute(
@@ -133,9 +136,10 @@ def delete_everything(_: DeleteEverything, user_id: UserId) -> DeletionReport:
                ON CONFLICT DO NOTHING""",
             (user_id,),
         )
+        tables = USER_TABLES | (EVAL_TABLES if request.include_eval_runs else {})
         deleted = {
             label: conn.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,)).rowcount
-            for table, label in USER_TABLES.items()
+            for table, label in tables.items()
         }
     not_deleted = list(NOT_DELETED)
     if traces["traces"]:

@@ -41,7 +41,8 @@ def clean(monkeypatch: pytest.MonkeyPatch) -> None:
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
         conn.execute(
             "TRUNCATE jobs, application_packs, applications, matches, deleted_postings, "
-            "job_postings, watchlist, searches, model_calls, evidence, profiles, trace_deletions"
+            "job_postings, watchlist, searches, model_calls, evidence, profiles, trace_deletions, "
+            "eval_results, eval_runs"
         )
 
 

@@ -30,10 +30,11 @@ describe("DeleteEverything", () => {
     fireEvent.change(screen.getByLabelText("Type DELETE to confirm"), { target: { value: "delete" } });
     expect(button.hasAttribute("disabled")).toBe(true);
     fireEvent.change(screen.getByLabelText("Type DELETE to confirm"), { target: { value: "DELETE" } });
+    fireEvent.click(screen.getByLabelText(/Also delete Eval Runs/));
     fireEvent.click(button);
 
     await vi.waitFor(() => expect(onDeleted).toHaveBeenCalledWith(report));
-    expect(sent).toEqual([JSON.stringify({ confirm: "DELETE" })]);
+    expect(sent).toEqual([JSON.stringify({ confirm: "DELETE", include_eval_runs: true })]);
   });
 
   it("lists the report", () => {

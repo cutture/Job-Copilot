@@ -135,7 +135,8 @@ def _not_shown(detail: str, kind: RemovedKind) -> Removal:
 
 class PackState(TypedDict, total=False):
     user_id: UUID
-    application_id: UUID
+    # None when the Pack isn't for a saved Application, as in an Eval Run.
+    application_id: UUID | None
     posting: str
     requirements: list[dict[str, Any]]
     evidence: dict[int, dict[str, Any]]
@@ -510,6 +511,29 @@ def _evidence(user_id: UUID) -> dict[int, dict[str, Any]]:
     return items
 
 
+def write_pack(
+    user_id: UUID,
+    posting: str,
+    requirements: list[dict[str, Any]],
+    evidence: dict[int, dict[str, Any]],
+    application_id: UUID | None = None,
+) -> tuple[Resume, CoverLetter, list[RemovedClaim], str]:
+    """Write and verify a Pack: its documents, its Removed Claims and the model that wrote it."""
+    final = cast(
+        PackState,
+        WORKFLOW.invoke(
+            PackState(
+                user_id=user_id,
+                application_id=application_id,
+                posting=posting,
+                requirements=requirements,
+                evidence=evidence,
+            )
+        ),
+    )
+    return (*_documents(final), final["model"])
+
+
 def _wait(user_id: UUID, pack_id: int, failure: Failure | None) -> None:
     with connect() as conn:
         conn.execute(
@@ -532,16 +556,11 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
         ).fetchone()
     if row is None:
         return
-    start = PackState(
-        user_id=user_id,
-        application_id=row["id"],
-        posting=row["text"],
-        requirements=row["requirements"],
-        evidence=_evidence(user_id),
-    )
+    evidence = _evidence(user_id)
     try:
-        final = cast(PackState, WORKFLOW.invoke(start))
-        resume, letter, removed = _documents(final)
+        resume, letter, removed, model = write_pack(
+            user_id, row["text"], row["requirements"], evidence, row["id"]
+        )
     except gateway.GatewayError as error:
         # Includes the monthly cap: personal-data work waits rather than use another model.
         log.warning("Application Pack waiting: %s", type(error).__name__)
@@ -559,7 +578,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
                 "SELECT id FROM evidence WHERE user_id = %s AND confirmed", (user_id,)
             ).fetchall()
         }
-        for number, item in start["evidence"].items():
+        for number, item in evidence.items():
             if item["id"] is not None and number not in still:
                 removed += take_out_evidence(resume, letter, item["id"], item["text"], False)[1]
         conn.execute(
@@ -570,7 +589,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
                 Jsonb(resume.model_dump()),
                 Jsonb(letter.model_dump()),
                 Jsonb([r.model_dump() for r in removed]),
-                final["model"],
+                model,
                 pack_id,
                 user_id,
             ),

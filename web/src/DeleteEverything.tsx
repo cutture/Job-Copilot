@@ -7,6 +7,7 @@ const card: CSSProperties = { border: "1px solid #f0b8b2", borderRadius: 8, padd
 
 export function DeleteEverything({ onDeleted }: { onDeleted: (report: DeletionReport) => void }) {
   const [typed, setTyped] = useState("");
+  const [includeEvalRuns, setIncludeEvalRuns] = useState(false);
   const [error, setError] = useState("");
 
   async function deleteEverything() {
@@ -14,7 +15,7 @@ export function DeleteEverything({ onDeleted }: { onDeleted: (report: DeletionRe
     const response = await fetch("/api/delete-everything", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: typed }),
+      body: JSON.stringify({ confirm: typed, include_eval_runs: includeEvalRuns }),
     }).catch(() => null);
     if (!response?.ok) {
       setError("We couldn't delete everything. Nothing was deleted, so try again.");
@@ -34,6 +35,16 @@ export function DeleteEverything({ onDeleted }: { onDeleted: (report: DeletionRe
         Some things are out of Job Copilot's reach: files you downloaded, what AI model providers already received, and
         your API keys. The report afterwards says what happens to each. Export comes later, so download any files you
         want to keep first.
+      </p>
+      <p>
+        <label>
+          <input
+            type="checkbox"
+            checked={includeEvalRuns}
+            onChange={(event) => setIncludeEvalRuns(event.target.checked)}
+          />{" "}
+          Also delete Eval Runs. They hold only invented test data, so they stay unless you tick this.
+        </label>
       </p>
       <label htmlFor="confirm-delete">Type DELETE to confirm</label>{" "}
       <input id="confirm-delete" value={typed} onChange={(event) => setTyped(event.target.value)} />{" "}
