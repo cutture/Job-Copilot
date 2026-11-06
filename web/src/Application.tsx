@@ -28,7 +28,8 @@ type SectionKind =
   | "affiliations"
   | "certifications"
   | "custom";
-type Section = { kind: SectionKind; heading: string; claims: Claim[]; roles: Role[] };
+type Group = { heading: Claim; claims: Claim[] };
+type Section = { kind: SectionKind; heading: string; claims: Claim[]; groups: Group[]; roles: Role[] };
 type Pack = {
   version: number;
   status: "generating" | "waiting" | "ready";
@@ -134,6 +135,19 @@ function Heading({ text, pair, accent }: { text: string; pair: Pair; accent: Acc
   );
 }
 
+// Skills as the files set them: two columns of bullets when styled, one line when plain.
+function Skills({ skills, styled }: { skills: Claim[]; styled: boolean }) {
+  return styled ? (
+    <ul style={{ columns: 2, margin: "4px 0", paddingLeft: 20 }}>
+      {skills.map((skill) => (
+        <li key={skill.text}>{skill.text}</li>
+      ))}
+    </ul>
+  ) : (
+    <div>{skills.map((skill) => skill.text).join(", ")}</div>
+  );
+}
+
 function Resume({ resume, signature, pair, accent }: Props<{ resume: NonNullable<Pack["resume"]> }>) {
   const styled = pair === "styled";
   return (
@@ -142,16 +156,25 @@ function Resume({ resume, signature, pair, accent }: Props<{ resume: NonNullable
       {resume.sections.map((section, position) => (
         <div key={`${section.kind}-${position}`}>
           <Heading text={section.heading} pair={pair} accent={accent} />
-          {section.kind === "skills" ? (
-            styled ? (
-              <ul style={{ columns: 2, margin: "4px 0", paddingLeft: 20 }}>
-                {section.claims.map((skill) => (
-                  <li key={skill.text}>{skill.text}</li>
-                ))}
-              </ul>
-            ) : (
-              section.claims.map((skill) => skill.text).join(", ")
-            )
+          {section.kind === "summary" ? (
+            <div>{section.claims.map((sentence) => sentence.text).join(" ")}</div>
+          ) : section.kind === "skills" ? (
+            <>
+              {section.claims.length > 0 && <Skills skills={section.claims} styled={styled} />}
+              {section.groups.map((group) =>
+                styled ? (
+                  <div key={group.heading.text}>
+                    <b>{group.heading.text}</b>
+                    <Skills skills={group.claims} styled />
+                  </div>
+                ) : (
+                  <div key={group.heading.text}>
+                    <b>{group.heading.text}: </b>
+                    {group.claims.map((skill) => skill.text).join(", ")}
+                  </div>
+                ),
+              )}
+            </>
           ) : (
             section.claims.map((claim) => <div key={claim.text}>{claim.text}</div>)
           )}
@@ -198,6 +221,7 @@ function allClaims(pack: Pack): Claim[] {
   return [
     ...pack.resume!.sections.flatMap((section) => [
       ...section.claims,
+      ...section.groups.flatMap((group) => [group.heading, ...group.claims]),
       ...section.roles.flatMap((role) => [role.heading, ...role.lines]),
     ]),
     ...pack.cover_letter!.paragraphs.flat(),

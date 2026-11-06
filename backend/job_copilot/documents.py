@@ -29,7 +29,7 @@ from docx.text.paragraph import Paragraph
 from fastapi import APIRouter, HTTPException, Response
 
 from job_copilot import ats
-from job_copilot.applications import CoverLetter, Resume, check_reviewed, latest_pack
+from job_copilot.applications import Claim, CoverLetter, Resume, check_reviewed, latest_pack
 from job_copilot.db import UserId, connect
 from job_copilot.profile import AccentColour
 
@@ -96,8 +96,15 @@ def resume_docx(resume: Resume, name: str | None, contact: str | None) -> bytes:
     _header(document, name, contact)
     for section in resume.sections:
         document.add_heading(section.heading, level=2)
-        if section.kind == "skills":
-            document.add_paragraph(", ".join(skill.text for skill in section.claims))
+        if section.kind == "summary":
+            document.add_paragraph(" ".join(sentence.text for sentence in section.claims))
+        elif section.kind == "skills":
+            if section.claims:
+                document.add_paragraph(", ".join(skill.text for skill in section.claims))
+            for group in section.groups:
+                grouped = document.add_paragraph()
+                grouped.add_run(f"{group.heading.text}: ").bold = True
+                grouped.add_run(", ".join(skill.text for skill in group.claims))
         else:
             for claim in section.claims:
                 document.add_paragraph(claim.text)
@@ -204,6 +211,13 @@ def _columns(document: DocumentObject, count: int) -> None:
     empty._p.getparent().remove(empty._p)
 
 
+def _skill_columns(document: DocumentObject, skills: list[Claim]) -> None:
+    _columns(document, 2)
+    for skill in skills:
+        document.add_paragraph(skill.text, style="List Bullet")
+    _columns(document, 1)
+
+
 def styled_resume_docx(
     resume: Resume, name: str | None, contact: str | None, accent: AccentColour
 ) -> bytes:
@@ -213,11 +227,14 @@ def styled_resume_docx(
     right_margin_tab = page.page_width - page.left_margin - page.right_margin  # type: ignore[operator]
     for section in resume.sections:
         _heading(document, section.heading, accent)
-        if section.kind == "skills":
-            _columns(document, 2)
-            for skill in section.claims:
-                document.add_paragraph(skill.text, style="List Bullet")
-            _columns(document, 1)
+        if section.kind == "summary":
+            document.add_paragraph(" ".join(sentence.text for sentence in section.claims))
+        elif section.kind == "skills":
+            if section.claims:
+                _skill_columns(document, section.claims)
+            for group in section.groups:
+                _run(document.add_paragraph(), group.heading.text, DARK, 10.5, bold=True)
+                _skill_columns(document, group.claims)
         else:
             for claim in section.claims:
                 document.add_paragraph(claim.text)

@@ -32,11 +32,12 @@ function application(
       resume: ready
         ? {
             sections: [
-              { kind: "skills", heading: "Skills", claims: [{ text: "Python", evidence: [python] }], roles: [] },
+              { kind: "skills", heading: "Skills", claims: [{ text: "Python", evidence: [python] }], groups: [], roles: [] },
               {
                 kind: "experience",
                 heading: "Experience",
                 claims: [],
+                groups: [],
                 roles: [{ heading: { text: python.text, evidence: [python] }, lines: [] }],
               },
             ],

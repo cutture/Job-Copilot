@@ -9,6 +9,7 @@ Documents are saved only after Verification, so an unverified Pack can't be show
 import json
 import logging
 import os
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple, TypedDict, cast
@@ -75,11 +76,17 @@ RESUME_PROMPT = (
     + UNTRUSTED
     + "You may only reorder and reword what the Evidence says: never add a skill, number, date, "
     "title, employer or achievement it doesn't state, and never make it sound bigger. Put first "
-    "what best answers the posting's Requirements. Reply with only a JSON object:\n"
-    '- "skills": a list of {"text": one skill, "evidence": [numbers]}\n'
+    "what best answers the posting's Requirements. Never write nationality, marital status, "
+    "birth date or religion. Reply with only a JSON object with a key for each section kind "
+    'listed in "sections", and no others:\n'
+    '- "summary": two or three sentences, each {"text": ..., "evidence": [numbers]}\n'
+    '- "skills": a list of {"text": one skill, "evidence": [numbers]}; for a "grouped" '
+    'section, a list of groups instead, each {"group": {"text": the group\'s name, "evidence": '
+    '[numbers]}, "skills": [...]}\n'
     '- "experience": jobs, newest first, each {"heading": {"text": "title, employer, dates", '
     '"evidence": [numbers]}, "bullets": [{"text": ..., "evidence": [numbers]}]}\n'
-    '- "education": a list of {"text": ..., "evidence": [numbers]}\n'
+    '- "education", "qualifications", "affiliations", "certifications": a list of {"text": '
+    '..., "evidence": [numbers]}\n'
     '"evidence" lists the numbers of the Evidence items the text comes from.'
 )
 COVER_LETTER_PROMPT = (
@@ -116,6 +123,32 @@ SectionKind = Literal[
     "custom",
 ]
 # The heading each standard section shows unless the person's own resume names it otherwise.
+# The order a resume follows when the person uploaded none.
+DEFAULT_ORDER: tuple[SectionKind, ...] = (
+    "summary",
+    "skills",
+    "experience",
+    "education",
+    "certifications",
+)
+# Sections every resume keeps, even when the person's own resume names none of them.
+CORE_KINDS: tuple[SectionKind, ...] = ("skills", "experience", "education")
+# Each section kind's Claim ID prefix, so IDs stay unique across a resume.
+PREFIXES: dict[SectionKind, str] = {
+    "summary": "m",
+    "skills": "s",
+    "experience": "e",
+    "education": "d",
+    "qualifications": "q",
+    "affiliations": "a",
+    "certifications": "t",
+    "custom": "u",
+}
+# Personal fields a resume never carries, whatever the Evidence says.
+PERSONAL_FIELDS = re.compile(
+    r"\b(nationality|marital status|married|unmarried|date of birth|born on|religion)\b",
+    re.IGNORECASE,
+)
 HEADINGS: dict[SectionKind, str] = {
     "summary": "Summary",
     "skills": "Skills",
@@ -143,12 +176,19 @@ class DraftRole(TypedDict):
     lines: list[DraftClaim]
 
 
+class DraftGroup(TypedDict):
+    heading: DraftClaim
+    claims: list[DraftClaim]
+
+
 class DraftSection(TypedDict):
-    """A resume section as the writer drafted it. Experience holds roles; the rest hold Claims."""
+    """A resume section as the writer drafted it. Experience holds roles; the rest hold Claims,
+    and Skills may also hold named groups of them."""
 
     kind: SectionKind
     heading: str
     claims: list[DraftClaim]
+    groups: list[DraftGroup]
     roles: list[DraftRole]
 
 
@@ -169,6 +209,8 @@ def _not_shown(detail: str, kind: RemovedKind) -> Removal:
 
 class PackState(TypedDict, total=False):
     user_id: UUID
+    # The resume's sections in order: each {kind, heading, grouped}.
+    sections: list[dict[str, Any]]
     # None when the Pack isn't for a saved Application, as in an Eval Run.
     application_id: UUID | None
     posting: str
@@ -201,12 +243,20 @@ class Role(BaseModel):
     lines: list[Claim]
 
 
+class Group(BaseModel):
+    """Skills under a heading of their own, such as "Attention to Detail"."""
+
+    heading: Claim
+    claims: list[Claim]
+
+
 class Section(BaseModel):
     kind: SectionKind
     # A custom section's heading is the one the person named.
     heading: str
-    # Experience holds roles; every other kind holds Claims.
+    # Experience holds roles; every other kind holds Claims, and Skills may also hold groups.
     claims: list[Claim] = []
+    groups: list[Group] = []
     roles: list[Role] = []
 
     @model_validator(mode="after")
@@ -215,15 +265,19 @@ class Section(BaseModel):
             raise ValueError("A resume section needs a heading")
         if self.roles and self.kind != "experience":
             raise ValueError("Only Experience holds roles")
+        if self.groups and self.kind != "skills":
+            raise ValueError("Only Skills holds groups")
+        self.groups = [group for group in self.groups if group.claims]
         return self
 
     def filled(self) -> bool:
-        return bool(self.claims or self.roles)
+        return bool(self.claims or self.groups or self.roles)
 
     def all_claims(self) -> list[Claim]:
         """Every Claim in the section, in the order it's shown."""
+        groups = [claim for group in self.groups for claim in (group.heading, *group.claims)]
         roles = [claim for role in self.roles for claim in (role.heading, *role.lines)]
-        return [*self.claims, *roles]
+        return [*self.claims, *groups, *roles]
 
 
 class Resume(BaseModel):
@@ -354,8 +408,14 @@ def _numbered(evidence: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _writing_task(state: PackState, task: str, kinds: set[str] | None = None) -> dict[str, Any]:
     requirements = [r for r in state["requirements"] if kinds is None or r["kind"] in kinds]
+    order = (
+        {"sections": [{"kind": s["kind"], "grouped": s["grouped"]} for s in state["sections"]]}
+        if task == "resume"
+        else {}
+    )
     return {
         "task": task,
+        **order,
         "posting": state["posting"],
         "requirements": [
             {"requirement": r["requirement"], "kind": r["kind"]} for r in requirements
@@ -379,7 +439,9 @@ def _draft(raw: Any, claim_id: str, evidence: dict[int, Any]) -> DraftClaim | No
     if not isinstance(raw, dict) or not isinstance(raw.get("text"), str):
         return None
     text = strip_controls(raw["text"])
-    return DraftClaim(id=claim_id, text=text, evidence=_cited(raw, evidence)) if text else None
+    if not text or PERSONAL_FIELDS.search(text):
+        return None
+    return DraftClaim(id=claim_id, text=text, evidence=_cited(raw, evidence))
 
 
 def _drafts(items: Any, prefix: str, evidence: dict[int, Any]) -> list[DraftClaim]:
@@ -407,20 +469,34 @@ def write_resume(state: PackState) -> PackState:
             roles.append(
                 DraftRole(heading=heading, lines=_drafts(raw.get("bullets"), f"e{n}b", evidence))
             )
-    skills = _drafts(answer.get("skills"), "s", evidence)
-    if not roles and not skills:
+    resume = []
+    for wanted in state["sections"]:
+        kind: SectionKind = wanted["kind"]
+        raw = answer.get(kind)
+        listed = raw[:MAX_ITEMS] if isinstance(raw, list) else []
+        groups: list[DraftGroup] = []
+        if kind == "skills":
+            for n, item in enumerate(listed):
+                item = item if isinstance(item, dict) else {}
+                heading = _draft(item.get("group"), f"g{n}", evidence)
+                if heading:
+                    groups.append(
+                        DraftGroup(
+                            heading=heading, claims=_drafts(item.get("skills"), f"g{n}s", evidence)
+                        )
+                    )
+            listed = [item for item in listed if not (isinstance(item, dict) and "group" in item)]
+        resume.append(
+            DraftSection(
+                kind=kind,
+                heading=wanted["heading"],
+                claims=_drafts(listed, PREFIXES[kind], evidence) if kind != "experience" else [],
+                groups=groups,
+                roles=roles if kind == "experience" else [],
+            )
+        )
+    if not roles and not any(s["claims"] or s["groups"] for s in resume if s["kind"] == "skills"):
         raise ValueError("The resume answer had no Skills or Experience")
-
-    def section(
-        kind: SectionKind, claims: list[DraftClaim], roles: list[DraftRole]
-    ) -> DraftSection:
-        return DraftSection(kind=kind, heading=HEADINGS[kind], claims=claims, roles=roles)
-
-    resume = [
-        section("skills", skills, []),
-        section("experience", [], roles),
-        section("education", _drafts(answer.get("education"), "d", evidence), []),
-    ]
     return {"resume": resume, "model": model}
 
 
@@ -453,6 +529,7 @@ def _resume_drafts(resume: list[DraftSection]) -> list[DraftClaim]:
         for section in resume
         for draft in (
             *section["claims"],
+            *(d for group in section["groups"] for d in (group["heading"], *group["claims"])),
             *(d for role in section["roles"] for d in (role["heading"], *role["lines"])),
         )
     ]
@@ -581,11 +658,20 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
                 # A line without its role's heading would read as part of another role.
                 for line in role["lines"]:
                     verified(line, WITH_HEADING)
+        claims, groups = all_verified(drafted["claims"]), []
+        for group in drafted["groups"]:
+            heading = verified(group["heading"])
+            if heading:
+                groups.append(Group(heading=heading, claims=all_verified(group["claims"])))
+            else:
+                # Skills stay true without their group's name, so they're kept ungrouped.
+                claims += all_verified(group["claims"])
         sections.append(
             Section(
                 kind=drafted["kind"],
                 heading=drafted["heading"],
-                claims=all_verified(drafted["claims"]),
+                claims=claims,
+                groups=groups,
                 roles=roles,
             )
         )
@@ -619,14 +705,27 @@ class WrittenPack(NamedTuple):
     model: str
 
 
+def resume_order(theirs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The resume's sections: the person's own order and headings, else the default order.
+
+    The core sections a person's resume names none of still come last, so nothing true is lost.
+    """
+    if not theirs:
+        return [{"kind": k, "heading": HEADINGS[k], "grouped": False} for k in DEFAULT_ORDER]
+    named = {section["kind"] for section in theirs}
+    missing = [k for k in CORE_KINDS if k not in named]
+    return [*theirs, *({"kind": k, "heading": HEADINGS[k], "grouped": False} for k in missing)]
+
+
 def write_pack(
     user_id: UUID,
     posting: str,
     requirements: list[dict[str, Any]],
     evidence: dict[int, dict[str, Any]],
     application_id: UUID | None = None,
+    sections: list[dict[str, Any]] | None = None,
 ) -> WrittenPack:
-    """Write and verify a Pack."""
+    """Write and verify a Pack, its resume in the person's own section order."""
     final = cast(
         PackState,
         WORKFLOW.invoke(
@@ -636,6 +735,7 @@ def write_pack(
                 posting=posting,
                 requirements=requirements,
                 evidence=evidence,
+                sections=resume_order(sections or []),
             )
         ),
     )
@@ -665,9 +765,18 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
     if row is None:
         return
     evidence = _evidence(user_id)
+    with connect() as conn:
+        order: Any = conn.execute(
+            "SELECT resume_sections FROM profiles WHERE user_id = %s", (user_id,)
+        ).fetchone()
     try:
         resume, letter, removed, model = write_pack(
-            user_id, row["text"], row["requirements"], evidence, row["id"]
+            user_id,
+            row["text"],
+            row["requirements"],
+            evidence,
+            row["id"],
+            order["resume_sections"] if order else [],
         )
     except gateway.GatewayError as error:
         # Includes the monthly cap: personal-data work waits rather than use another model.
@@ -1029,7 +1138,13 @@ def take_out_evidence(
                 roles.append(Role(heading=role.heading, lines=kept(role.lines)))
             else:
                 removed.extend(listed(line.text, WITH_HEADING) for line in role.lines)
-        section.claims, section.roles = kept(section.claims), roles
+        claims, groups = kept(section.claims), []
+        for group in section.groups:
+            if still_supported(group.heading):
+                groups.append(Group(heading=group.heading, claims=kept(group.claims)))
+            else:
+                claims += kept(group.claims)
+        section.claims, section.groups, section.roles = claims, groups, roles
     resume.sections = [section for section in resume.sections if section.filled()]
     letter.paragraphs = [p for p in map(kept, letter.paragraphs) if p]
     return changed, removed
