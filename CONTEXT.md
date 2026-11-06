@@ -112,6 +112,22 @@ _Avoid_: Submission, job application record
 The tailored resume, cover letter and form answers prepared for one Application. Each regeneration makes a new version.
 _Avoid_: Documents, package, bundle
 
+**Styled pair**:
+The resume and cover letter of an Application Pack in the default look: one column, a two-tone name, accent headings on a light band, right-aligned dates and Skills in two columns. It reads cleanly in an ATS.
+_Avoid_: Fancy resume, template, design
+
+**Plain pair**:
+The same resume and cover letter with no styling, for portals that choke on any.
+_Avoid_: Basic resume, text version
+
+**Accent colour**:
+The colour a person picks for their Styled pair's surname, headings and rules: navy, teal, burgundy or gold.
+_Avoid_: Theme, brand colour
+
+**ATS parsing check**:
+The check every downloaded file passes first: read the way an applicant tracking system reads it, it must have no tables, text boxes, header or footer text, and every Claim, the name and the contact line must come back intact and in order.
+_Avoid_: ATS score, resume score, keyword check
+
 **Resume section**:
 A titled part of an Application Pack's resume: Summary, Skills, Experience, Education, Qualifications, Affiliations, Certifications, or one the person names. Its order follows the person's own resume.
 _Avoid_: Block, part, area
