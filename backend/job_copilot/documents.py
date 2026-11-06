@@ -29,7 +29,14 @@ from docx.text.paragraph import Paragraph
 from fastapi import APIRouter, HTTPException, Response
 
 from job_copilot import ats
-from job_copilot.applications import Claim, CoverLetter, Resume, check_reviewed, latest_pack
+from job_copilot.applications import (
+    Claim,
+    CoverLetter,
+    Resume,
+    Section,
+    check_reviewed,
+    latest_pack,
+)
 from job_copilot.db import UserId, connect
 from job_copilot.profile import AccentColour
 
@@ -91,13 +98,18 @@ def _header(document: DocumentObject, name: str | None, contact: str | None) -> 
         document.add_paragraph(contact)
 
 
+def _summary(section: Section) -> str:
+    """The Summary's checked sentences, as one paragraph."""
+    return " ".join(sentence.text for sentence in section.claims)
+
+
 def resume_docx(resume: Resume, name: str | None, contact: str | None) -> bytes:
     document = _blank_document(name, "Resume")
     _header(document, name, contact)
     for section in resume.sections:
         document.add_heading(section.heading, level=2)
         if section.kind == "summary":
-            document.add_paragraph(" ".join(sentence.text for sentence in section.claims))
+            document.add_paragraph(_summary(section))
         elif section.kind == "skills":
             if section.claims:
                 document.add_paragraph(", ".join(skill.text for skill in section.claims))
@@ -228,7 +240,7 @@ def styled_resume_docx(
     for section in resume.sections:
         _heading(document, section.heading, accent)
         if section.kind == "summary":
-            document.add_paragraph(" ".join(sentence.text for sentence in section.claims))
+            document.add_paragraph(_summary(section))
         elif section.kind == "skills":
             if section.claims:
                 _skill_columns(document, section.claims)

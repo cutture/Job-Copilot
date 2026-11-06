@@ -161,19 +161,12 @@ function Resume({ resume, signature, pair, accent }: Props<{ resume: NonNullable
           ) : section.kind === "skills" ? (
             <>
               {section.claims.length > 0 && <Skills skills={section.claims} styled={styled} />}
-              {section.groups.map((group) =>
-                styled ? (
-                  <div key={group.heading.text}>
-                    <b>{group.heading.text}</b>
-                    <Skills skills={group.claims} styled />
-                  </div>
-                ) : (
-                  <div key={group.heading.text}>
-                    <b>{group.heading.text}: </b>
-                    {group.claims.map((skill) => skill.text).join(", ")}
-                  </div>
-                ),
-              )}
+              {section.groups.map((group) => (
+                <div key={group.heading.text}>
+                  <b>{styled ? group.heading.text : `${group.heading.text}: `}</b>
+                  {styled ? <Skills skills={group.claims} styled /> : group.claims.map((skill) => skill.text).join(", ")}
+                </div>
+              ))}
             </>
           ) : (
             section.claims.map((claim) => <div key={claim.text}>{claim.text}</div>)

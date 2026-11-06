@@ -2,10 +2,11 @@
 
 import io
 import json
+import re
 import unicodedata
 import zipfile
 from datetime import datetime
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Literal, TypedDict, get_args
 from uuid import UUID
 
 from docx import Document
@@ -38,7 +39,7 @@ EXTRACTION_PROMPT = (
     "person's name and contact details, such as phone numbers, email and street addresses."
 )
 # The kinds of resume section a heading can map to; "other" headings aren't kept yet.
-SECTION_KINDS = (
+ReadKind = Literal[
     "summary",
     "skills",
     "experience",
@@ -46,8 +47,28 @@ SECTION_KINDS = (
     "qualifications",
     "affiliations",
     "certifications",
-)
+]
+SECTION_KINDS: tuple[ReadKind, ...] = get_args(ReadKind)
 MAX_HEADING_LENGTH = 40
+# Personal fields a resume never carries, whatever the Evidence says.
+_FIELDS = (
+    r"nationality|citizenship|marital(?: status)?|date of birth|birth ?date|d\.?o\.?b\.?|religion"
+)
+# As a labelled line, so "BA in Religion" stays; and any heading that names one.
+PERSONAL_FIELDS = re.compile(
+    rf"\b(?:{_FIELDS})\s*[:\-–]|\bborn(?: on| in)?\s+\d|\b(?:un)?married\b", re.IGNORECASE
+)
+PERSONAL_HEADING = re.compile(rf"\b(?:{_FIELDS}|personal)(?!\w)", re.IGNORECASE)
+
+
+class SectionSpec(TypedDict):
+    """One of the person's resume sections: its kind, their heading, and whether it groups."""
+
+    kind: ReadKind
+    heading: str
+    grouped: bool
+
+
 # A long resume can need thousands of tokens of items, and a cut-off answer isn't valid JSON.
 EXTRACTION_MAX_OUTPUT_TOKENS = 8000
 NOT_READABLE = "We couldn't read this file. Upload a PDF or DOCX resume."
@@ -131,25 +152,31 @@ def _parse_reading(text: str) -> Any:
         return json.loads(text[: last_complete + 1] + ("]" if opening == "[" else "]}"))
 
 
-def _sections_from(raw: Any) -> list[dict[str, Any]]:
-    """The headings of the resume's own sections, mapped to known kinds, each kind once."""
-    sections: dict[str, dict[str, Any]] = {}
+def _sections_from(raw: Any) -> list[SectionSpec]:
+    """The headings of the resume's own sections, mapped to known kinds, each kind once.
+
+    A heading that names a personal field gives way to the standard one.
+    """
+    sections: dict[str, SectionSpec] = {}
     for section in raw if isinstance(raw, list) else []:
         if not isinstance(section, dict) or section.get("kind") not in SECTION_KINDS:
             continue
+        kind: ReadKind = section["kind"]
         heading = strip_controls(str(section.get("heading") or ""))[:MAX_HEADING_LENGTH]
+        if PERSONAL_HEADING.search(heading):
+            heading = ""
         sections.setdefault(
-            section["kind"],
-            {
-                "kind": section["kind"],
-                "heading": heading or section["kind"].title(),
-                "grouped": section.get("grouped") is True and section["kind"] == "skills",
-            },
+            kind,
+            SectionSpec(
+                kind=kind,
+                heading=heading or kind.title(),
+                grouped=section.get("grouped") is True and kind == "skills",
+            ),
         )
     return list(sections.values())
 
 
-def _reading_from(answer: str) -> tuple[list[str], list[dict[str, Any]]]:
+def _reading_from(answer: str) -> tuple[list[str], list[SectionSpec]]:
     """The Evidence items and the section headings in a reading of the resume."""
     parsed = _parse_reading(gateway.strip_fences(answer))
     items = parsed.get("items") if isinstance(parsed, dict) else parsed

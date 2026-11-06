@@ -4,7 +4,6 @@ The model reads only the posting text and reports facts about it. The person's p
 never leave the app: this code compares the facts with them.
 """
 
-import json
 import re
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -247,7 +246,7 @@ def read_facts(user_id: UUID, posting_text: str) -> PostingFacts:
         ],
         max_output_tokens=FILTER_MAX_OUTPUT_TOKENS,
     )
-    return PostingFacts.model_validate(json.loads(gateway.strip_fences(completion.text)))
+    return PostingFacts.model_validate(gateway.parse_json(completion.text))
 
 
 def preferences_for(user_id: UUID) -> dict[str, Any]:

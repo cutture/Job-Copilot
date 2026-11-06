@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple, TypedDict, cast
@@ -24,7 +25,14 @@ from pydantic import BaseModel, model_validator
 from job_copilot import claims, gateway
 from job_copilot.db import UserId, connect
 from job_copilot.gateway import DataClass
-from job_copilot.profile import confirmed_evidence, ensure_profile, strip_controls
+from job_copilot.profile import (
+    PERSONAL_FIELDS,
+    ReadKind,
+    SectionSpec,
+    confirmed_evidence,
+    ensure_profile,
+    strip_controls,
+)
 from job_copilot.rating import RATING_MODEL
 
 # Personal data must never reach LangSmith, whatever the environment says.
@@ -112,19 +120,9 @@ VERIFY_PROMPT = (
     '"evidence": [numbers of the Evidence items that support it]}.'
 )
 
-SectionKind = Literal[
-    "summary",
-    "skills",
-    "experience",
-    "education",
-    "qualifications",
-    "affiliations",
-    "certifications",
-    "custom",
-]
-# The heading each standard section shows unless the person's own resume names it otherwise.
+SectionKind = Literal[ReadKind, "custom"]
 # The order a resume follows when the person uploaded none.
-DEFAULT_ORDER: tuple[SectionKind, ...] = (
+DEFAULT_ORDER: tuple[ReadKind, ...] = (
     "summary",
     "skills",
     "experience",
@@ -132,7 +130,7 @@ DEFAULT_ORDER: tuple[SectionKind, ...] = (
     "certifications",
 )
 # Sections every resume keeps, even when the person's own resume names none of them.
-CORE_KINDS: tuple[SectionKind, ...] = ("skills", "experience", "education")
+CORE_KINDS: tuple[ReadKind, ...] = ("skills", "experience", "education")
 # Each section kind's Claim ID prefix, so IDs stay unique across a resume.
 PREFIXES: dict[SectionKind, str] = {
     "summary": "m",
@@ -142,13 +140,10 @@ PREFIXES: dict[SectionKind, str] = {
     "qualifications": "q",
     "affiliations": "a",
     "certifications": "t",
-    "custom": "u",
 }
-# Personal fields a resume never carries, whatever the Evidence says.
-PERSONAL_FIELDS = re.compile(
-    r"\b(nationality|marital status|married|unmarried|date of birth|born on|religion)\b",
-    re.IGNORECASE,
-)
+# Where a sentence ends inside a Summary Claim, so each sentence is checked on its own.
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+# The heading each standard section shows unless the person's own resume names it otherwise.
 HEADINGS: dict[SectionKind, str] = {
     "summary": "Summary",
     "skills": "Skills",
@@ -201,6 +196,7 @@ UNCHECKED = Removal("unchecked", "Verification couldn't check it.")
 WITH_HEADING = Removal("with_heading", "Its job heading was taken out.")
 EVIDENCE_DELETED = Removal("evidence_deleted", "Its Evidence was deleted from your Profile.")
 TOO_LONG = Removal("unchecked", "It's too long to check.")
+EMPTY_GROUP = Removal("unchecked", "None of the skills under it could be kept.")
 
 
 def _not_shown(detail: str, kind: RemovedKind) -> Removal:
@@ -209,8 +205,8 @@ def _not_shown(detail: str, kind: RemovedKind) -> Removal:
 
 class PackState(TypedDict, total=False):
     user_id: UUID
-    # The resume's sections in order: each {kind, heading, grouped}.
-    sections: list[dict[str, Any]]
+    # The resume's sections, in order.
+    sections: list[SectionSpec]
     # None when the Pack isn't for a saved Application, as in an Eval Run.
     application_id: UUID | None
     posting: str
@@ -399,7 +395,7 @@ def _ask(
         max_output_tokens=tokens,
         application_id=state["application_id"],
     )
-    return json.loads(gateway.strip_fences(completion.text)), completion.model
+    return gateway.parse_json(completion.text), completion.model
 
 
 def _numbered(evidence: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -408,14 +404,8 @@ def _numbered(evidence: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _writing_task(state: PackState, task: str, kinds: set[str] | None = None) -> dict[str, Any]:
     requirements = [r for r in state["requirements"] if kinds is None or r["kind"] in kinds]
-    order = (
-        {"sections": [{"kind": s["kind"], "grouped": s["grouped"]} for s in state["sections"]]}
-        if task == "resume"
-        else {}
-    )
     return {
         "task": task,
-        **order,
         "posting": state["posting"],
         "requirements": [
             {"requirement": r["requirement"], "kind": r["kind"]} for r in requirements
@@ -451,13 +441,9 @@ def _drafts(items: Any, prefix: str, evidence: dict[int, Any]) -> list[DraftClai
 
 
 def write_resume(state: PackState) -> PackState:
-    answer, model = _ask(
-        state,
-        "pack_resume",
-        RESUME_PROMPT,
-        _writing_task(state, "resume"),
-        WRITE_MAX_OUTPUT_TOKENS,
-    )
+    task = _writing_task(state, "resume")
+    task["sections"] = [{"kind": s["kind"], "grouped": s["grouped"]} for s in state["sections"]]
+    answer, model = _ask(state, "pack_resume", RESUME_PROMPT, task, WRITE_MAX_OUTPUT_TOKENS)
     answer = answer if isinstance(answer, dict) else {}
     evidence = state["evidence"]
     roles: list[DraftRole] = []
@@ -471,28 +457,37 @@ def write_resume(state: PackState) -> PackState:
             )
     resume = []
     for wanted in state["sections"]:
-        kind: SectionKind = wanted["kind"]
+        kind = wanted["kind"]
+        if kind == "experience":
+            resume.append(
+                DraftSection(
+                    kind=kind, heading=wanted["heading"], claims=[], groups=[], roles=roles
+                )
+            )
+            continue
         raw = answer.get(kind)
-        listed = raw[:MAX_ITEMS] if isinstance(raw, list) else []
+        items = raw[:MAX_ITEMS] if isinstance(raw, list) else []
+        if kind == "summary":
+            items = [
+                {**item, "text": sentence}
+                for item in items
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+                for sentence in SENTENCE_END.split(item["text"])
+            ]
+        grouped = [item for item in items if isinstance(item, dict) and "group" in item]
+        claims = _drafts([item for item in items if item not in grouped], PREFIXES[kind], evidence)
         groups: list[DraftGroup] = []
-        if kind == "skills":
-            for n, item in enumerate(listed):
-                item = item if isinstance(item, dict) else {}
-                heading = _draft(item.get("group"), f"g{n}", evidence)
-                if heading:
-                    groups.append(
-                        DraftGroup(
-                            heading=heading, claims=_drafts(item.get("skills"), f"g{n}s", evidence)
-                        )
-                    )
-            listed = [item for item in listed if not (isinstance(item, dict) and "group" in item)]
+        for n, item in enumerate(grouped if kind == "skills" else []):
+            skills = _drafts(item.get("skills"), f"g{n}s", evidence)
+            heading = _draft(item.get("group"), f"g{n}", evidence)
+            if heading:
+                groups.append(DraftGroup(heading=heading, claims=skills))
+            else:
+                # Skills stay true without their group's name, so they're kept ungrouped.
+                claims += skills
         resume.append(
             DraftSection(
-                kind=kind,
-                heading=wanted["heading"],
-                claims=_drafts(listed, PREFIXES[kind], evidence) if kind != "experience" else [],
-                groups=groups,
-                roles=roles if kind == "experience" else [],
+                kind=kind, heading=wanted["heading"], claims=claims, groups=groups, roles=[]
             )
         )
     if not roles and not any(s["claims"] or s["groups"] for s in resume if s["kind"] == "skills"):
@@ -625,6 +620,30 @@ WORKFLOW = _graph()
 # --- Saving ------------------------------------------------------------------------------
 
 
+def listed(text: str, removal: Removal) -> RemovedClaim:
+    return RemovedClaim(text=text, kind=removal.kind, reason=removal.reason, next_step=NEXT_STEP)
+
+
+def _regroup(
+    groups: list[tuple[Claim | None, list[Claim]]], drop: Callable[[Claim], None]
+) -> tuple[list[Group], list[Claim]]:
+    """Each group's kept name and skills, as groups, and the skills of any whose name went.
+
+    Skills stay true without their group's name, so they're kept ungrouped. A name left with
+    no skills under it goes too, through drop.
+    """
+    kept: list[Group] = []
+    loose: list[Claim] = []
+    for heading, skills in groups:
+        if heading is None:
+            loose += skills
+        elif skills:
+            kept.append(Group(heading=heading, claims=skills))
+        else:
+            drop(heading)
+    return kept, loose
+
+
 def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim]]:
     """Only verified Claims reach the documents; every other one is listed as removed."""
     evidence, supported, removed = state["evidence"], state["supported"], state["removed"]
@@ -634,12 +653,9 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
         """The Claim with its Evidence, or None after listing it as removed."""
         removal = removal or removed.get(draft["id"])
         if removal or draft["id"] not in supported:
-            kind, reason = removal or UNCHECKED
             text = draft["text"]
             shown = text if len(text) <= MAX_CLAIM_LENGTH else text[:MAX_CLAIM_LENGTH] + "…"
-            taken_out.append(
-                RemovedClaim(text=shown, kind=kind, reason=reason, next_step=NEXT_STEP)
-            )
+            taken_out.append(listed(shown, removal or UNCHECKED))
             return None
         refs = [EvidenceRef.model_validate(evidence[n]) for n in supported[draft["id"]]]
         return Claim(text=draft["text"], evidence=refs)
@@ -658,14 +674,11 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
                 # A line without its role's heading would read as part of another role.
                 for line in role["lines"]:
                     verified(line, WITH_HEADING)
-        claims, groups = all_verified(drafted["claims"]), []
-        for group in drafted["groups"]:
-            heading = verified(group["heading"])
-            if heading:
-                groups.append(Group(heading=heading, claims=all_verified(group["claims"])))
-            else:
-                # Skills stay true without their group's name, so they're kept ungrouped.
-                claims += all_verified(group["claims"])
+        groups, loose = _regroup(
+            [(verified(g["heading"]), all_verified(g["claims"])) for g in drafted["groups"]],
+            lambda heading: taken_out.append(listed(heading.text, EMPTY_GROUP)),
+        )
+        claims = [*all_verified(drafted["claims"]), *loose]
         sections.append(
             Section(
                 kind=drafted["kind"],
@@ -705,16 +718,19 @@ class WrittenPack(NamedTuple):
     model: str
 
 
-def resume_order(theirs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def resume_sections(theirs: list[SectionSpec]) -> list[SectionSpec]:
     """The resume's sections: the person's own order and headings, else the default order.
 
     The core sections a person's resume names none of still come last, so nothing true is lost.
     """
+
+    def standard(kind: ReadKind) -> SectionSpec:
+        return SectionSpec(kind=kind, heading=HEADINGS[kind], grouped=False)
+
     if not theirs:
-        return [{"kind": k, "heading": HEADINGS[k], "grouped": False} for k in DEFAULT_ORDER]
+        return [standard(k) for k in DEFAULT_ORDER]
     named = {section["kind"] for section in theirs}
-    missing = [k for k in CORE_KINDS if k not in named]
-    return [*theirs, *({"kind": k, "heading": HEADINGS[k], "grouped": False} for k in missing)]
+    return [*theirs, *(standard(k) for k in CORE_KINDS if k not in named)]
 
 
 def write_pack(
@@ -723,7 +739,7 @@ def write_pack(
     requirements: list[dict[str, Any]],
     evidence: dict[int, dict[str, Any]],
     application_id: UUID | None = None,
-    sections: list[dict[str, Any]] | None = None,
+    sections: list[SectionSpec] | None = None,
 ) -> WrittenPack:
     """Write and verify a Pack, its resume in the person's own section order."""
     final = cast(
@@ -735,7 +751,7 @@ def write_pack(
                 posting=posting,
                 requirements=requirements,
                 evidence=evidence,
-                sections=resume_order(sections or []),
+                sections=resume_sections(sections or []),
             )
         ),
     )
@@ -766,7 +782,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
         return
     evidence = _evidence(user_id)
     with connect() as conn:
-        order: Any = conn.execute(
+        profile: Any = conn.execute(
             "SELECT resume_sections FROM profiles WHERE user_id = %s", (user_id,)
         ).fetchone()
     try:
@@ -776,7 +792,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
             row["requirements"],
             evidence,
             row["id"],
-            order["resume_sections"] if order else [],
+            profile["resume_sections"] if profile else [],
         )
     except gateway.GatewayError as error:
         # Includes the monthly cap: personal-data work waits rather than use another model.
@@ -784,7 +800,9 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
         _wait(user_id, pack_id, "model_unavailable")
         return
     except (ValueError, KeyError, TypeError) as error:
-        log.warning("Application Pack answer unusable: %s", type(error).__name__)
+        # Where an answer stopped being JSON, never its text.
+        where = f" at character {error.pos}" if isinstance(error, json.JSONDecodeError) else ""
+        log.warning("Application Pack answer unusable: %s%s", type(error).__name__, where)
         _wait(user_id, pack_id, "unusable_answer")
         return
     with connect() as conn:
@@ -1107,11 +1125,6 @@ def take_out_evidence(
         # Packs made before IDs were kept are matched by the Evidence text.
         return ref.id == evidence_id if ref.id is not None else ref.text == text
 
-    def listed(text: str, removal: Removal) -> RemovedClaim:
-        return RemovedClaim(
-            text=text, kind=removal.kind, reason=removal.reason, next_step=NEXT_STEP
-        )
-
     def still_supported(claim: Claim) -> bool:
         nonlocal changed
         gone = [ref for ref in claim.evidence if cites(ref)]
@@ -1138,13 +1151,18 @@ def take_out_evidence(
                 roles.append(Role(heading=role.heading, lines=kept(role.lines)))
             else:
                 removed.extend(listed(line.text, WITH_HEADING) for line in role.lines)
-        claims, groups = kept(section.claims), []
-        for group in section.groups:
-            if still_supported(group.heading):
-                groups.append(Group(heading=group.heading, claims=kept(group.claims)))
-            else:
-                claims += kept(group.claims)
-        section.claims, section.groups, section.roles = claims, groups, roles
+        groups, loose = _regroup(
+            [
+                (g.heading if still_supported(g.heading) else None, kept(g.claims))
+                for g in section.groups
+            ],
+            lambda heading: removed.append(listed(heading.text, EMPTY_GROUP)),
+        )
+        section.claims, section.groups, section.roles = (
+            [*kept(section.claims), *loose],
+            groups,
+            roles,
+        )
     resume.sections = [section for section in resume.sections if section.filled()]
     letter.paragraphs = [p for p in map(kept, letter.paragraphs) if p]
     return changed, removed

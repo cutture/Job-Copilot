@@ -267,7 +267,7 @@ def rate_posting(
         ],
         max_output_tokens=RATING_MAX_OUTPUT_TOKENS,
     )
-    return judge(json.loads(gateway.strip_fences(completion.text)), posting, evidence, facts)
+    return judge(gateway.parse_json(completion.text), posting, evidence, facts)
 
 
 def rate_match(user_id: UUID, payload: dict[str, Any]) -> None:

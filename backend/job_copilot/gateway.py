@@ -80,6 +80,18 @@ def strip_fences(answer: str) -> str:
     return answer.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
 
 
+def parse_json(answer: str) -> Any:
+    """The JSON value in a model's answer, ignoring a code fence or stray text around it."""
+    text = strip_fences(answer)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        starts = [i for i in (text.find("{"), text.find("[")) if i >= 0]
+        if not starts:
+            raise
+        return json.JSONDecoder().raw_decode(text, min(starts))[0]
+
+
 @dataclass(frozen=True)
 class TraceSettings:
     public_key: str
