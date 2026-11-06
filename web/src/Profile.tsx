@@ -3,6 +3,8 @@ import type { ChangeEvent, CSSProperties } from "react";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { DeleteEverything, DeletionReportView } from "./DeleteEverything";
 import type { DeletionReport } from "./DeleteEverything";
+import { ACCENTS } from "./labels";
+import type { AccentColour } from "./labels";
 
 type Evidence = {
   id: number;
@@ -28,6 +30,7 @@ type ProfileData = {
   location_arrangements: string[];
   location_places: string[];
   search_window_days: number;
+  accent_colour: AccentColour;
   evidence: Evidence[];
 };
 
@@ -45,6 +48,7 @@ type Form = {
   location_arrangements: string[];
   location_places: string;
   search_window_days: string;
+  accent_colour: AccentColour;
 };
 
 type PayRow = { currency: string; yearly: string; hourly: string };
@@ -78,6 +82,7 @@ function toForm(profile: ProfileData): Form {
     location_arrangements: profile.location_arrangements,
     location_places: profile.location_places.join(", "),
     search_window_days: String(profile.search_window_days),
+    accent_colour: profile.accent_colour,
   };
 }
 
@@ -275,6 +280,7 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
         location_arrangements: form.location_arrangements,
         location_places: list(form.location_places),
         search_window_days: Number(form.search_window_days) || 15,
+        accent_colour: form.accent_colour,
       }),
     });
     if (response.ok) {
@@ -407,6 +413,14 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                 Your name and contact line appear only in your downloaded documents. They're never sent to an AI
                 model.
               </p>
+              <label htmlFor="accent-colour">Accent colour of your styled resume and cover letter</label>
+              <select id="accent-colour" style={field} value={form.accent_colour} onChange={set("accent_colour")}>
+                {(Object.keys(ACCENTS) as AccentColour[]).map((colour) => (
+                  <option key={colour} value={colour}>
+                    {colour[0].toUpperCase() + colour.slice(1)}
+                  </option>
+                ))}
+              </select>
               <label htmlFor="work-authorization">Work authorization</label>
               <input id="work-authorization" style={field} value={form.work_authorization} onChange={set("work_authorization")} />
               <label htmlFor="lives-in">Where you live</label>

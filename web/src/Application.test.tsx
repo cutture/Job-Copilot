@@ -22,6 +22,7 @@ function application(
     cost_usd: "0.0061",
     name: "Sam Rivera",
     contact: "sam@example.com",
+    accent_colour: "teal",
     ...changes,
     pack: {
       version: 1,
@@ -66,7 +67,9 @@ function serve(routes: Record<string, () => unknown>) {
       const key = `${init?.method ?? "GET"} ${url}`;
       calls.push(key);
       const body = routes[key];
-      return body ? new Response(JSON.stringify(body())) : new Response("{}", { status: 404 });
+      if (body === undefined) return new Response("{}", { status: 404 });
+      const value = body();
+      return value instanceof Response ? value : new Response(JSON.stringify(value));
     }),
   );
   return calls;
@@ -129,9 +132,10 @@ describe("Application", () => {
 
     fireEvent.click(screen.getByLabelText(/I've reviewed this Application Pack/));
 
-    const resume = await screen.findByRole("link", { name: "Resume DOCX" });
-    expect(resume.getAttribute("href")).toBe("/api/applications/a/resume.docx");
-    expect(screen.getByRole("link", { name: "Cover letter DOCX" })).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Resume DOCX" }).hasAttribute("disabled")).toBe(false),
+    );
+    expect(screen.getByRole("button", { name: "Cover letter DOCX" }).hasAttribute("disabled")).toBe(false);
     expect(screen.getByRole("link", { name: "Open employer's application page" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "I submitted it on their site" }).hasAttribute("disabled")).toBe(false);
     expect(calls).toContain("PUT /api/applications/a/review");
@@ -196,6 +200,50 @@ describe("Application", () => {
     expect(buttons).toHaveLength(2);
     fireEvent.click(buttons[1]);
     expect(onBack).toHaveBeenCalled();
+  });
+
+  it("previews the styled pair by default and switches to the plain pair, downloading the one shown", async () => {
+    vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:file", revokeObjectURL: () => {} });
+    const saved = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const file = () =>
+      new Response("docx", {
+        headers: { "content-disposition": "attachment; filename*=UTF-8''Sam-Rivera-Resume-plain.docx" },
+      });
+    const calls = serve({
+      "GET /api/applications/a": () => application("ready", { reviewed: true }),
+      "GET /api/applications/a/resume.docx?style=plain": file,
+    });
+    render(<Application id="a" onBack={() => {}} />);
+
+    // Styled: the surname in the accent colour, and the role's dates set apart at the right.
+    const resume = await screen.findByLabelText("Resume");
+    expect(screen.getAllByText("Rivera")[0].style.color).toBe("rgb(15, 94, 94)");
+    expect(screen.getByText("Jan 2021 to present")).toBeTruthy();
+    expect(screen.getByText("Python Developer, Example Co")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Plain pair" }));
+
+    expect(screen.queryByText("Jan 2021 to present")).toBeNull();
+    expect(resume.textContent).toContain(python.text);
+    fireEvent.click(screen.getByRole("button", { name: "Resume DOCX (plain)" }));
+    await vi.waitFor(() => expect(saved).toHaveBeenCalled());
+    expect(calls).toContain("GET /api/applications/a/resume.docx?style=plain");
+    saved.mockRestore();
+  });
+
+  it("explains a file the ATS check refused instead of downloading it", async () => {
+    serve({
+      "GET /api/applications/a": () => application("ready", { reviewed: true }),
+      "GET /api/applications/a/resume.docx?style=styled": () =>
+        new Response(JSON.stringify({ detail: "This file didn't pass the ATS check, so it can't be downloaded: x" }), {
+          status: 409,
+        }),
+    });
+    render(<Application id="a" onBack={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Resume DOCX" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("didn't pass the ATS check");
   });
 
   it("asks for a name when the Profile has none", async () => {

@@ -298,6 +298,7 @@ class ApplicationView(BaseModel):
     # From the Profile, for the top of both files and the letter's signature.
     name: str | None
     contact: str | None
+    accent_colour: str
     # None once the person has deleted it.
     pack: PackView | None
 
@@ -732,6 +733,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        a.rubric_version, a.created_at, p.apply_url,
                        pack.reviewed_at IS NOT NULL AS reviewed, a.submitted_at, a.outcome,
                        {COST} AS cost_usd, pr.name, pr.contact,
+                       COALESCE(pr.accent_colour, 'navy') AS accent_colour,
                        pack.version, pack.status, pack.failure, pack.model, pack.resume,
                        pack.cover_letter, pack.removed_claims
                 FROM applications a
@@ -856,7 +858,8 @@ def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
     are None when the Application has no Pack; there's a 404 when there is no Application.
     """
     pack = conn.execute(
-        f"""SELECT pack.*, a.submitted_at, p.title, p.employer, pr.name, pr.contact
+        f"""SELECT pack.*, a.submitted_at, p.title, p.employer, pr.name, pr.contact,
+                   COALESCE(pr.accent_colour, 'navy') AS accent_colour
             FROM applications a
             LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
             JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id

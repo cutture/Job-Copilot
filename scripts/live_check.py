@@ -107,10 +107,12 @@ def check(posting_id: str) -> None:
     removed = [r["text"] for r in pack["removed_claims"]]
     print("removed claims:", dict(Counter(r["kind"] for r in pack["removed_claims"])))
     call("PUT", f"{base}/review", {"reviewed": True})
-    for name in ("resume.docx", "cover-letter.docx"):
-        text = docx_text(get_bytes(f"{base}/{name}"))
-        leaked = sum(claim in text for claim in removed + APP_LABELS)
-        print(f"{name}: {len(text.split())} words, removed claims or app labels found: {leaked}")
+    # Both pairs; each download has already passed the app's own ATS check.
+    for style in ("styled", "plain"):
+        for name in ("resume.docx", "cover-letter.docx"):
+            text = docx_text(get_bytes(f"{base}/{name}?style={style}"))
+            leaked = sum(claim in text for claim in removed + APP_LABELS)
+            print(f"{style} {name}: {len(text.split())} words, removed or labels found: {leaked}")
     print("cost:", call("GET", base)["cost_usd"])
 
 

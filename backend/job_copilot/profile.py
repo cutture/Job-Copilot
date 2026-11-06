@@ -192,6 +192,7 @@ FILTER_FIELDS = {
 PREFERENCE_FIELDS = (
     "name",
     "contact",
+    "accent_colour",
     "work_authorization",
     "lives_in",
     "education",
@@ -225,6 +226,8 @@ class Preferences(BaseModel):
     # For the person's downloaded documents only; never sent to a model.
     name: ShortText | None = None
     contact: ShortText | None = None
+    # The colour of the styled resume and cover letter's name and headings.
+    accent_colour: Literal["navy", "teal", "burgundy", "gold"] = "navy"
     work_authorization: ShortText | None = None
     lives_in: ShortText | None = None
     education: ShortText | None = None
