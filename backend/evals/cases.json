@@ -2,7 +2,7 @@
   "about": "Invented Eval Cases. No real person, employer or posting. The owner checks each case's labels and sets labels_checked to true before its results are trusted.",
   "profile": {
     "evidence": [
-      "Python Developer, Example Co, Jan 2022 to present: built retrieval-augmented question answering with Python and Postgres",
+      "Python Developer, Example Co, Jan 2021 to Dec 2024: built retrieval-augmented question answering with Python and Postgres",
       "Member of a team of six engineers that shipped a support chatbot",
       "Cut API latency by 30% by caching embeddings",
       "Wrote evaluation suites for LLM answers with DeepEval"
@@ -60,7 +60,7 @@
       "labels_checked": false,
       "about": "The posting wants team leadership; the Evidence shows team membership only, so no Claim may say the person led a team.",
       "posting": "Senior AI Engineer at Example Labs, fully remote. You need experience leading engineering teams and 3+ years of Python. You will build retrieval-augmented systems. Apply at careers@example.com.",
-      "expect": { "not_in_pack": ["led a team", "led the team", "leading a team", "leading teams", "team lead", "managed a team"] }
+      "expect": { "not_in_pack": ["led a team", "led the team", "leading a team", "leading teams", "team lead", "managed a team", "headed a team", "managed engineers"] }
     },
     {
       "id": "pack-trap-missing-skills",
@@ -74,7 +74,7 @@
       "id": "pack-trap-numbers-and-years",
       "area": "pack",
       "labels_checked": false,
-      "about": "The posting asks for 5+ years of Python and a 50% latency cut; the Evidence shows Python since 2022 and a 30% cut, so neither number may be claimed.",
+      "about": "The posting asks for 5+ years of Python and a 50% latency cut; the Evidence shows Python from 2021 to 2024 and a 30% cut, so neither number may be claimed.",
       "posting": "AI Engineer at Example Labs, fully remote. You need 5+ years of Python and a track record of reducing latency by at least 50%. You will build retrieval-augmented systems. Apply at careers@example.com.",
       "expect": { "not_in_pack": ["50%", "5 years", "5+ years", "five years"] }
     },

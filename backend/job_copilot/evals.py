@@ -7,15 +7,17 @@ The owner runs them by hand from the worker container:
 
 Cases run as an invented person whose $3 monthly cap stops evals before anything else. A
 DeepEval metric judges each outcome against the case's labels; DeepEval sends nothing anywhere.
+A wrong code-calculated Band is caught by the Band rule tests, which run with every change.
 """
 
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 # DeepEval must never phone home: no telemetry, no Confident AI, no .env loading, no update
@@ -34,20 +36,28 @@ from job_copilot.db import connect, current_user_id  # noqa: E402
 
 EVAL_USER = UUID("00000000-0000-0000-0000-00000000e7a1")
 CASES_FILE = Path(__file__).parent.parent / "evals" / "cases.json"
+# Provider trouble that means a case didn't run, as opposed to an answer that failed it.
+DID_NOT_RUN = ("Timeout", "RateLimit")
+Status = Literal["passed", "failed", "did_not_run"]
 
 
 @dataclass
 class Outcome:
-    """What the real steps did with one case. Fields stay None for steps the case skips."""
+    """What the real steps did with one case. Fields stay empty for steps the case skips."""
 
     passes: bool | None = None
     filter_reason: str | None = None
-    band: str | None = None
-    # The Band the rules give the Requirement Results, to catch a wrong code-calculated Band.
-    rules_band: str | None = None
-    unmet_hard_blockers: list[str] = field(default_factory=list)
-    resume: str | None = None
-    letter: str | None = None
+    band: bands.Band | None = None
+    # The rating's own reasons and gaps, so a wrong Band can be traced.
+    band_reasons: list[str] = field(default_factory=list)
+    missing_hard_blockers: list[str] = field(default_factory=list)
+    resume: str = ""
+    letter: str = ""
+
+
+def _mentions(text: str, phrase: str) -> bool:
+    """A whole-word match, so "Rust" doesn't match "trust"."""
+    return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text, re.IGNORECASE) is not None
 
 
 def judge(expect: dict[str, Any], outcome: Outcome) -> tuple[list[str], bool]:
@@ -61,20 +71,21 @@ def judge(expect: dict[str, Any], outcome: Outcome) -> tuple[list[str], bool]:
             else "Filter let it through"
         )
     if "band" in expect and outcome.band != expect["band"]:
-        failures.append(f"Band was {outcome.band}, labelled {expect['band']}")
-        hard |= {outcome.band, expect["band"]} == {"High", "Low"}
-    if outcome.band != outcome.rules_band:
         failures.append(
-            f"Code-calculated Band {outcome.band} differs from the rules' {outcome.rules_band}"
+            f"Band was {outcome.band}, labelled {expect['band']} "
+            f"({'; '.join(outcome.band_reasons)})"
         )
-        hard = True
-    if expect.get("hard_blocker") and not outcome.unmet_hard_blockers:
+        hard |= {outcome.band, expect["band"]} == {"High", "Low"}
+    if expect.get("hard_blocker") and not outcome.missing_hard_blockers:
         failures.append("Missed the Hard Blocker")
         hard = True
-    for key, text in (("not_in_resume", outcome.resume), ("not_in_pack", None)):
-        documents = text if key == "not_in_resume" else f"{outcome.resume}\n{outcome.letter}"
+    checked = (
+        ("not_in_resume", outcome.resume),
+        ("not_in_pack", f"{outcome.resume}\n{outcome.letter}"),
+    )
+    for key, documents in checked:
         for trap in expect.get(key, []):
-            if trap.casefold() in (documents or "").casefold():
+            if _mentions(documents, trap):
                 failures.append(f"An Invented Claim reached the final Pack: “{trap}”")
                 hard = True
     return failures, hard
@@ -108,12 +119,12 @@ class LabelsMetric(BaseMetric):  # type: ignore[no-untyped-call]
         return "Eval Case labels"
 
 
-def _documents_text(
-    resume: applications.Resume, letter: applications.CoverLetter
-) -> tuple[str, str]:
+def _documents_text(pack: applications.WrittenPack) -> tuple[str, str]:
+    resume = pack.resume
     lines = [c.text for c in resume.skills + resume.education]
     lines += [c.text for role in resume.experience for c in (role.heading, *role.lines)]
-    return "\n".join(lines), "\n".join(s.text for p in letter.paragraphs for s in p)
+    letter = [s.text for p in pack.cover_letter.paragraphs for s in p]
+    return "\n".join(lines), "\n".join(letter)
 
 
 def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
@@ -125,17 +136,13 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
         outcome.passes, outcome.filter_reason = decision.passed, decision.reason
         return outcome
     evidence = dict(enumerate(profile["evidence"], start=1))
-    match = rating.rate(EVAL_USER, posting, evidence, profile["facts"])
-    outcome.band = match.band
-    counted = [r for r in match.requirements if r.quote or r.result != "met"]
-    outcome.rules_band = bands.rate(
-        [bands.JudgedRequirement(r.requirement, r.kind, r.result) for r in counted],
-        match.seniority,
-    ).band
-    outcome.unmet_hard_blockers = [
+    match = rating.rate_posting(EVAL_USER, posting, evidence, profile["facts"])
+    outcome.band, outcome.band_reasons = match.band, match.reasons + match.gaps
+    # An unknown Hard Blocker only holds a Band back, so it doesn't count as caught.
+    outcome.missing_hard_blockers = [
         r.requirement
         for r in match.requirements
-        if r.kind == "hard_blocker" and r.result in ("missing", "unknown")
+        if r.kind == "hard_blocker" and r.result == "missing"
     ]
     if case["area"] in ("pack", "injection"):
         pack_evidence: dict[int, dict[str, Any]] = {
@@ -147,11 +154,32 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
             "id": None,
         }
         requirements = [r.model_dump() for r in match.requirements]
-        resume, letter, _, _ = applications.write_pack(
-            EVAL_USER, posting, requirements, pack_evidence
-        )
-        outcome.resume, outcome.letter = _documents_text(resume, letter)
+        pack = applications.write_pack(EVAL_USER, posting, requirements, pack_evidence)
+        outcome.resume, outcome.letter = _documents_text(pack)
     return outcome
+
+
+def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool, str]:
+    """Run and judge one case: its status, whether it's a Hard Failure, and why."""
+    try:
+        outcome = run_case(case, profile)
+    except gateway.CapReached:
+        return "did_not_run", False, "Did not run: the eval budget is used up"
+    except gateway.ModelUnavailable as error:
+        if any(kind in str(error) for kind in DID_NOT_RUN):
+            return "did_not_run", False, f"Did not run: {error}"
+        return "failed", False, f"The model call failed: {error}"
+    except ValueError as error:
+        return "failed", False, f"The model's answer couldn't be used ({type(error).__name__})"
+    metric = LabelsMetric()
+    metric.measure(
+        LLMTestCase(
+            input=case["posting"],
+            expected_output=json.dumps(case["expect"]),
+            metadata={"outcome": outcome},
+        )
+    )
+    return ("passed" if metric.success else "failed"), metric.hard_failure, str(metric.reason)
 
 
 def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
@@ -164,27 +192,7 @@ def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
             (owner, version("deepeval")),
         ).fetchone()
     for case in loaded["cases"]:
-        metric = LabelsMetric()
-        try:
-            outcome = run_case(case, loaded["profile"])
-            metric.measure(
-                LLMTestCase(
-                    input=case["posting"],
-                    actual_output=json.dumps(outcome.__dict__),
-                    expected_output=json.dumps(case["expect"]),
-                    metadata={"outcome": outcome},
-                )
-            )
-            status = "passed" if metric.success else "failed"
-            reason = str(metric.reason)
-        except gateway.GatewayError as error:
-            # A timeout, rate limit or the eval budget is provider trouble, not a failure.
-            status, reason = "did_not_run", f"Did not run: {error}"
-        except (ValueError, KeyError, TypeError) as error:
-            status, reason = (
-                "failed",
-                f"The model's answer couldn't be used ({type(error).__name__})",
-            )
+        status, hard, reason = _result(case, loaded["profile"])
         with connect() as conn:
             conn.execute(
                 """INSERT INTO eval_results (user_id, run_id, case_id, area, status, hard_failure,
@@ -196,13 +204,15 @@ def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
                     case["id"],
                     case["area"],
                     status,
-                    metric.hard_failure and status == "failed",
+                    hard,
                     case["labels_checked"],
                     reason,
                 ),
             )
     with connect() as conn:
         conn.execute(
+            # ponytail: a run's cost is all eval spending since it started, so two runs at once
+            # would count each other's; tag model calls with their run if runs ever overlap.
             """UPDATE eval_runs SET finished_at = now(),
                    cost_usd = (SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
                                WHERE user_id = %s AND created_at >= %s)

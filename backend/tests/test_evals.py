@@ -119,6 +119,41 @@ def test_a_timeout_or_rate_limit_is_did_not_run_not_a_failure(
     assert result["reason"].startswith("Did not run:")
 
 
+def test_any_other_provider_error_fails_the_case_and_names_the_error(
+    client: TestClient, provider: FakeProvider, tmp_path: Path
+) -> None:
+    provider.error = PermissionError("bad key")
+
+    evals.run(OWNER, cases_file(tmp_path, "scoring-strong-match"))
+
+    [result] = results()
+    assert result["status"] == "failed"
+    assert (
+        result["reason"].startswith("The model call failed:")
+        and "PermissionError" in result["reason"]
+    )
+
+
+def test_traps_match_whole_words_and_wrong_bands_show_the_ratings_reasons() -> None:
+    honest = evals.Outcome(resume="Built trust with support teams", letter="I'm a team leader")
+
+    assert evals.judge({"not_in_resume": ["Rust"], "not_in_pack": ["team lead"]}, honest) == (
+        [],
+        False,
+    )
+    planted = evals.Outcome(resume="Rust, Python")
+    assert evals.judge({"not_in_resume": ["Rust"]}, planted) == (
+        ["An Invented Claim reached the final Pack: “Rust”"],
+        True,
+    )
+    medium = evals.Outcome(band="Medium", band_reasons=["Held back by one must-have: Python"])
+    assert evals.judge({"band": "High"}, medium) == (
+        ["Band was Medium, labelled High (Held back by one must-have: Python)"],
+        False,
+    )
+    assert evals.judge({"band": "High"}, evals.Outcome(band="Low"))[1] is True
+
+
 def test_evals_stop_at_their_own_3_dollar_cap_and_leave_the_owners_ledger_alone(
     client: TestClient, provider: FakeProvider, tmp_path: Path
 ) -> None:

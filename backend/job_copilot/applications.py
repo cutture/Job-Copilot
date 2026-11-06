@@ -511,14 +511,22 @@ def _evidence(user_id: UUID) -> dict[int, dict[str, Any]]:
     return items
 
 
+class WrittenPack(NamedTuple):
+    resume: Resume
+    cover_letter: CoverLetter
+    removed: list[RemovedClaim]
+    # The model that wrote it.
+    model: str
+
+
 def write_pack(
     user_id: UUID,
     posting: str,
     requirements: list[dict[str, Any]],
     evidence: dict[int, dict[str, Any]],
     application_id: UUID | None = None,
-) -> tuple[Resume, CoverLetter, list[RemovedClaim], str]:
-    """Write and verify a Pack: its documents, its Removed Claims and the model that wrote it."""
+) -> WrittenPack:
+    """Write and verify a Pack."""
     final = cast(
         PackState,
         WORKFLOW.invoke(
@@ -531,7 +539,7 @@ def write_pack(
             )
         ),
     )
-    return (*_documents(final), final["model"])
+    return WrittenPack(*_documents(final), final["model"])
 
 
 def _wait(user_id: UUID, pack_id: int, failure: Failure | None) -> None:

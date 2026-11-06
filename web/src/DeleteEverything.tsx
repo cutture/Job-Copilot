@@ -43,7 +43,7 @@ export function DeleteEverything({ onDeleted }: { onDeleted: (report: DeletionRe
             checked={includeEvalRuns}
             onChange={(event) => setIncludeEvalRuns(event.target.checked)}
           />{" "}
-          Also delete Eval Runs. They hold only invented test data, so they stay unless you tick this.
+          Also delete Eval Runs. They hold only invented Eval Case data, so they stay unless you tick this.
         </label>
       </p>
       <label htmlFor="confirm-delete">Type DELETE to confirm</label>{" "}
