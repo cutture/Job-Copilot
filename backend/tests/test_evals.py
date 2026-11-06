@@ -21,9 +21,14 @@ LOADED = json.loads(evals.CASES_FILE.read_text(encoding="utf-8"))
 CASES = {case["id"]: case for case in LOADED["cases"]}
 
 
-def cases_file(tmp_path: Path, *ids: str) -> Path:
+def cases_file(tmp_path: Path, *ids: str, unchecked: tuple[str, ...] = ()) -> Path:
+    """A cases file with these cases; any named in `unchecked` have labels not yet checked."""
+    cases = [
+        {**CASES[i], "labels_checked": CASES[i]["labels_checked"] and i not in unchecked}
+        for i in ids
+    ]
     path = tmp_path / "cases.json"
-    path.write_text(json.dumps({**LOADED, "cases": [CASES[i] for i in ids]}), encoding="utf-8")
+    path.write_text(json.dumps({**LOADED, "cases": cases}), encoding="utf-8")
     return path
 
 
@@ -89,7 +94,11 @@ def test_a_run_reports_results_and_hard_failures(
     run_id = evals.run(
         OWNER,
         cases_file(
-            tmp_path, "filter-on-site-elsewhere", "scoring-hard-blocker", "pack-trap-missing-skills"
+            tmp_path,
+            "filter-on-site-elsewhere",
+            "scoring-hard-blocker",
+            "pack-trap-missing-skills",
+            unchecked=("pack-trap-missing-skills",),
         ),
     )
 
@@ -101,7 +110,12 @@ def test_a_run_reports_results_and_hard_failures(
     trap = by_case["pack-trap-missing-skills"]
     assert (trap["status"], trap["hard_failure"]) == ("failed", True)
     assert trap["reason"] == "An Invented Claim reached the final Pack: “Kubernetes”"
-    assert all(r["labels_checked"] is False for r in by_case.values())
+    # Each result keeps whether its case's labels were checked when it ran.
+    assert {case: r["labels_checked"] for case, r in by_case.items()} == {
+        "filter-on-site-elsewhere": True,
+        "scoring-hard-blocker": True,
+        "pack-trap-missing-skills": False,
+    }
 
     shown = evals.table(OWNER, run_id)
     assert "HARD FAIL" in shown and "unchecked" in shown and "Hard Failures: 2." in shown
