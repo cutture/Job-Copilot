@@ -206,6 +206,7 @@ PREFERENCE_FIELDS = (
     "search_window_days",
 )
 ShortText = Annotated[str, Field(min_length=1, max_length=200)]
+AccentColour = Literal["navy", "teal", "burgundy", "gold"]
 Seniority = Literal["Junior", "Mid", "Senior", "Staff"]
 SENIORITY_LEVELS: tuple[str, ...] = get_args(Seniority)
 
@@ -227,7 +228,7 @@ class Preferences(BaseModel):
     name: ShortText | None = None
     contact: ShortText | None = None
     # The colour of the styled resume and cover letter's name and headings.
-    accent_colour: Literal["navy", "teal", "burgundy", "gold"] = "navy"
+    accent_colour: AccentColour = "navy"
     work_authorization: ShortText | None = None
     lives_in: ShortText | None = None
     education: ShortText | None = None

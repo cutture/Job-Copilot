@@ -31,15 +31,16 @@ from fastapi import APIRouter, HTTPException, Response
 from job_copilot import ats
 from job_copilot.applications import CoverLetter, Resume, check_reviewed, latest_pack
 from job_copilot.db import UserId, connect
+from job_copilot.profile import AccentColour
 
 router = APIRouter()
 
 MAX_FILENAME_PART = 60
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-Style = Literal["styled", "plain"]
+Pair = Literal["styled", "plain"]
 # Each accent colour: its text colour, and the light band behind headings. Text stays dark on
 # light, so every pairing keeps its contrast.
-ACCENTS = {
+ACCENTS: dict[AccentColour, tuple[str, str]] = {
     "navy": ("1F3A5F", "EAF0F6"),
     "teal": ("0F5E5E", "E5F1F1"),
     "burgundy": ("7A1F3D", "F6EAEE"),
@@ -132,7 +133,7 @@ def _styled_document(name: str | None, title: str) -> DocumentObject:
     return document
 
 
-def _border(paragraph: Paragraph, colour: str, fill: str | None = None) -> None:
+def _rule_and_band(paragraph: Paragraph, colour: str, fill: str | None = None) -> None:
     """A thin rule under the paragraph, and a light band behind it when `fill` is given."""
     properties = paragraph._p.get_or_add_pPr()
     borders = OxmlElement("w:pBdr")
@@ -158,7 +159,7 @@ def _run(
 
 
 def _styled_header(
-    document: DocumentObject, name: str | None, contact: str | None, accent: str
+    document: DocumentObject, name: str | None, contact: str | None, accent: AccentColour
 ) -> None:
     colour = RGBColor.from_string(ACCENTS[accent][0])
     if name:
@@ -171,15 +172,15 @@ def _styled_header(
         line.paragraph_format.space_after = Pt(2)
     if contact:
         line = document.add_paragraph()
-        _border(line, ACCENTS[accent][0])
+        _rule_and_band(line, ACCENTS[accent][0])
         _run(line, contact, DARK, 10)
         line.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 
-def _heading(document: DocumentObject, text: str, accent: str) -> None:
+def _heading(document: DocumentObject, text: str, accent: AccentColour) -> None:
     colour, fill = ACCENTS[accent]
     line = document.add_paragraph()
-    _border(line, colour, fill)
+    _rule_and_band(line, colour, fill)
     _run(line, text, RGBColor.from_string(colour), 11, bold=True)
     line.runs[0].font.all_caps = True
     line.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -195,9 +196,17 @@ def _columns(document: DocumentObject, count: int) -> None:
         document.sections[-1]._sectPr.append(columns)
     columns.set(qn("w:num"), str(count))
     columns.set(qn("w:space"), "360")
+    # python-docx ends the earlier run with an empty paragraph, which would show as a blank line;
+    # the run's end moves into the paragraph before it instead.
+    *_, before, empty = document.paragraphs
+    break_ = empty._p.pPr.find(qn("w:sectPr"))  # type: ignore[union-attr]
+    before._p.get_or_add_pPr().append(break_)
+    empty._p.getparent().remove(empty._p)
 
 
-def styled_resume_docx(resume: Resume, name: str | None, contact: str | None, accent: str) -> bytes:
+def styled_resume_docx(
+    resume: Resume, name: str | None, contact: str | None, accent: AccentColour
+) -> bytes:
     document = _styled_document(name, "Resume")
     _styled_header(document, name, contact, accent)
     page = document.sections[0]
@@ -226,7 +235,7 @@ def styled_resume_docx(resume: Resume, name: str | None, contact: str | None, ac
 
 
 def styled_cover_letter_docx(
-    letter: CoverLetter, name: str | None, contact: str | None, accent: str
+    letter: CoverLetter, name: str | None, contact: str | None, accent: AccentColour
 ) -> bytes:
     document = _styled_document(name, "Cover letter")
     _styled_header(document, name, contact, accent)
@@ -251,8 +260,8 @@ def filename(name: str | None, role: str, employer: str | None, document: str) -
     return "-".join(part for part in safe if part) + ".docx"
 
 
-def _file(
-    pack: Any, which: Literal["Resume", "Cover letter"], style: Style
+def _rendered(
+    pack: Any, which: Literal["Resume", "Cover letter"], pair: Pair
 ) -> tuple[bytes, list[str]]:
     """The file, and the lines an ATS must read back from it in order."""
     name, contact, accent = pack["name"], pack["contact"], pack["accent_colour"]
@@ -261,33 +270,41 @@ def _file(
         resume = Resume(**pack["resume"])
         content = (
             styled_resume_docx(resume, name, contact, accent)
-            if style == "styled"
+            if pair == "styled"
             else resume_docx(resume, name, contact)
         )
         return content, [*signature, *(claim.text for claim in resume.all_claims())]
     letter = CoverLetter(**pack["cover_letter"])
     content = (
         styled_cover_letter_docx(letter, name, contact, accent)
-        if style == "styled"
+        if pair == "styled"
         else cover_letter_docx(letter, name, contact)
     )
     return content, [*signature, *(s.text for paragraph in letter.paragraphs for s in paragraph)]
 
 
+# What to do when a file fails the ATS check.
+NEXT_STEP = {
+    "styled": "Download the plain pair instead.",
+    "plain": "Copy the text from the preview, and report this so the layout can be fixed.",
+}
+
+
 def _download(
-    user_id: UUID, application_id: UUID, which: Literal["Resume", "Cover letter"], style: Style
+    user_id: UUID, application_id: UUID, which: Literal["Resume", "Cover letter"], pair: Pair
 ) -> Response:
     with connect() as conn:
         pack = latest_pack(conn, user_id, application_id)
     check_reviewed(pack)
-    content, lines = _file(pack, which, style)
+    content, lines = _rendered(pack, which, pair)
     found = ats.problems(content, lines)
     if found:
         raise HTTPException(
             409,
-            "This file didn't pass the ATS check, so it can't be downloaded: " + "; ".join(found),
+            f"This file didn't pass the ATS check, so it can't be downloaded: {'; '.join(found)}. "
+            + NEXT_STEP[pair],
         )
-    document = which if style == "styled" else f"{which} plain"
+    document = which if pair == "styled" else f"{which} plain"
     name = filename(pack["name"], pack["title"], pack["employer"], document)
     return Response(
         content,
@@ -297,12 +314,10 @@ def _download(
 
 
 @router.get("/api/applications/{application_id}/resume.docx")
-def download_resume(application_id: UUID, user_id: UserId, style: Style = "styled") -> Response:
-    return _download(user_id, application_id, "Resume", style)
+def download_resume(application_id: UUID, user_id: UserId, pair: Pair = "styled") -> Response:
+    return _download(user_id, application_id, "Resume", pair)
 
 
 @router.get("/api/applications/{application_id}/cover-letter.docx")
-def download_cover_letter(
-    application_id: UUID, user_id: UserId, style: Style = "styled"
-) -> Response:
-    return _download(user_id, application_id, "Cover letter", style)
+def download_cover_letter(application_id: UUID, user_id: UserId, pair: Pair = "styled") -> Response:
+    return _download(user_id, application_id, "Cover letter", pair)

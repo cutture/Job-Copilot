@@ -56,8 +56,13 @@ export type ApplicationData = {
   pack: Pack | null;
 };
 type Signature = Pick<ApplicationData, "name" | "contact">;
-export type Look = "styled" | "plain";
-type Props<T> = { signature: Signature; look: Look; accent: AccentColour } & T;
+export type Pair = "styled" | "plain";
+type Props<T> = { signature: Signature; pair: Pair; accent: AccentColour } & T;
+
+// The styled pair's page uses the files' sans-serif font; the plain pair keeps the page's own.
+function pageFor(pair: Pair): CSSProperties {
+  return pair === "styled" ? { ...page, fontFamily: "Calibri, sans-serif" } : page;
+}
 
 const REFRESH_MS = 2000;
 const card: CSSProperties = { border: "1px solid #ccc", borderRadius: 8, padding: 12, marginBottom: 10 };
@@ -86,9 +91,9 @@ async function getApplication(id: string): Promise<ApplicationData> {
 
 // The top of both files, as they download: the styled pair's name is two-tone, its surname and
 // a thin rule in the accent colour.
-function Header({ signature: { name, contact }, look, accent }: Props<object>) {
+function Header({ signature: { name, contact }, pair, accent }: Props<object>) {
   const colour = ACCENTS[accent].text;
-  if (look === "plain") {
+  if (pair === "plain") {
     return (
       <>
         {name && <b style={{ display: "block" }}>{name}</b>}
@@ -110,8 +115,8 @@ function Header({ signature: { name, contact }, look, accent }: Props<object>) {
   );
 }
 
-function Heading({ text, look, accent }: { text: string; look: Look; accent: AccentColour }) {
-  if (look === "plain") return <h4 style={sectionHeading}>{text}</h4>;
+function Heading({ text, pair, accent }: { text: string; pair: Pair; accent: AccentColour }) {
+  if (pair === "plain") return <h4 style={sectionHeading}>{text}</h4>;
   const { text: colour, band } = ACCENTS[accent];
   return (
     <h4
@@ -129,14 +134,14 @@ function Heading({ text, look, accent }: { text: string; look: Look; accent: Acc
   );
 }
 
-function Resume({ resume, signature, look, accent }: Props<{ resume: NonNullable<Pack["resume"]> }>) {
-  const styled = look === "styled";
+function Resume({ resume, signature, pair, accent }: Props<{ resume: NonNullable<Pack["resume"]> }>) {
+  const styled = pair === "styled";
   return (
-    <div style={{ ...page, fontFamily: styled ? "Calibri, sans-serif" : page.fontFamily }} aria-label="Resume">
-      <Header signature={signature} look={look} accent={accent} />
+    <div style={pageFor(pair)} aria-label="Resume">
+      <Header signature={signature} pair={pair} accent={accent} />
       {resume.sections.map((section, position) => (
         <div key={`${section.kind}-${position}`}>
-          <Heading text={section.heading} look={look} accent={accent} />
+          <Heading text={section.heading} pair={pair} accent={accent} />
           {section.kind === "skills" ? (
             styled ? (
               <ul style={{ columns: 2, margin: "4px 0", paddingLeft: 20 }}>
@@ -172,13 +177,13 @@ function Resume({ resume, signature, look, accent }: Props<{ resume: NonNullable
   );
 }
 
-function CoverLetter({ letter, signature, look, accent }: Props<{ letter: NonNullable<Pack["cover_letter"]> }>) {
+function CoverLetter({ letter, signature, pair, accent }: Props<{ letter: NonNullable<Pack["cover_letter"]> }>) {
   return (
     <div
-      style={{ ...page, fontFamily: look === "styled" ? "Calibri, sans-serif" : page.fontFamily }}
+      style={pageFor(pair)}
       aria-label="Cover letter"
     >
-      <Header signature={signature} look={look} accent={accent} />
+      <Header signature={signature} pair={pair} accent={accent} />
       {letter.paragraphs.map((paragraph) => (
         <p key={paragraph.map((sentence) => sentence.text).join(" ")}>
           {paragraph.map((sentence) => sentence.text).join(" ")}
@@ -201,21 +206,23 @@ function allClaims(pack: Pack): Claim[] {
 
 type FinishProps = {
   application: ApplicationData;
-  look: Look;
+  pair: Pair;
   onReview: (reviewed: boolean) => void;
   onSubmitted: () => void;
   onOutcome: (outcome: Outcome) => void;
   onDownload: (path: string) => void;
+  // Why the last download was refused, shown beside the buttons.
+  downloadError: string;
 };
 
-function Finish({ application, look, onReview, onSubmitted, onOutcome, onDownload }: FinishProps) {
+function Finish({ application, pair, onReview, onSubmitted, onOutcome, onDownload, downloadError }: FinishProps) {
   const { reviewed, submitted_at } = application;
   const download = (path: string, label: string) => (
-    <button disabled={!reviewed} onClick={() => onDownload(`${path}?style=${look}`)}>
+    <button disabled={!reviewed} onClick={() => onDownload(`${path}?pair=${pair}`)}>
       {label}
     </button>
   );
-  const pair = look === "styled" ? "" : " (plain)";
+  const suffix = pair === "styled" ? "" : " (plain)";
   return (
     <div style={{ ...card, marginTop: 12 }}>
       {!application.name && (
@@ -234,8 +241,10 @@ function Finish({ application, look, onReview, onSubmitted, onOutcome, onDownloa
         this Application Pack
       </label>
       <div style={{ margin: "6px 0" }}>
-        {download("resume.docx", `Resume DOCX${pair}`)} {download("cover-letter.docx", `Cover letter DOCX${pair}`)}
+        {download("resume.docx", `Resume DOCX${suffix}`)}{" "}
+        {download("cover-letter.docx", `Cover letter DOCX${suffix}`)}
       </div>
+      {downloadError && <p role="alert">{downloadError}</p>}
       <div>
         {application.apply_url &&
           (reviewed ? (
@@ -269,7 +278,8 @@ function Finish({ application, look, onReview, onSubmitted, onOutcome, onDownloa
 export function Application({ id, onBack }: { id: string; onBack: () => void }) {
   const [application, setApplication] = useState<ApplicationData | null>(null);
   const [error, setError] = useState("");
-  const [look, setLook] = useState<Look>("styled");
+  const [downloadError, setDownloadError] = useState("");
+  const [pair, setPair] = useState<Pair>("styled");
 
   useEffect(() => {
     getApplication(id)
@@ -314,11 +324,11 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
 
   // Fetched first, so a file the ATS check refuses shows why instead of saving an error page.
   async function downloadFile(path: string) {
-    setError("");
+    setDownloadError("");
     const response = await fetch(`/api/applications/${id}/${path}`).catch(() => null);
     if (!response?.ok) {
       const detail = await response?.json().then((body) => body.detail).catch(() => null);
-      setError(typeof detail === "string" ? detail : "We couldn't download the file. Try again.");
+      setDownloadError(typeof detail === "string" ? detail : "We couldn't download the file. Try again.");
       return;
     }
     const name = /filename\*=UTF-8''([^;]+)/.exec(response.headers.get("content-disposition") ?? "");
@@ -388,20 +398,20 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
           )}
           <div role="group" aria-label="Which pair" style={{ marginBottom: 8 }}>
             Preview and download:{" "}
-            <button aria-pressed={look === "styled"} onClick={() => setLook("styled")}>
+            <button aria-pressed={pair === "styled"} onClick={() => setPair("styled")}>
               Styled pair
             </button>{" "}
-            <button aria-pressed={look === "plain"} onClick={() => setLook("plain")}>
+            <button aria-pressed={pair === "plain"} onClick={() => setPair("plain")}>
               Plain pair
             </button>{" "}
             <span style={{ fontSize: 13 }}>Both read cleanly in an ATS. Use the plain pair for strict portals.</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-            <Resume resume={pack.resume!} signature={application!} look={look} accent={application!.accent_colour} />
+            <Resume resume={pack.resume!} signature={application!} pair={pair} accent={application!.accent_colour} />
             <CoverLetter
               letter={pack.cover_letter!}
               signature={application!}
-              look={look}
+              pair={pair}
               accent={application!.accent_colour}
             />
           </div>
@@ -424,11 +434,12 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
           {application && (
             <Finish
               application={application}
-              look={look}
+              pair={pair}
               onReview={review}
               onSubmitted={submitted}
               onOutcome={report}
               onDownload={downloadFile}
+              downloadError={downloadError}
             />
           )}
         </>

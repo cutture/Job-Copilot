@@ -41,3 +41,4 @@ The reviewer applies every rule below to each diff. Tooling already enforces for
 
 - Tests sit at the agreed seams: API and worker journeys that fake only model providers and Source responses, and pure rules tested directly.
 - Tests check what a person or caller can observe (responses, rows, opened files), never prompt wording or how many internal calls were made.
+- A broken input may be swapped in only to reach a guard no honest input can reach, such as the ATS check refusing a file, with a comment saying so.

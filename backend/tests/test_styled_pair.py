@@ -15,6 +15,7 @@ from job_copilot.documents import split_dates, styled_cover_letter_docx, styled_
 from tests.conftest import FakeProvider
 from tests.test_application_pack import EDUCATION, apply, rated_match, run_worker, write
 from tests.test_rating import set_profile
+from tests.test_review_and_record import APP_LABELS, REMOVED
 
 SOURCE = [EvidenceRef(text="Resume line the Claim came from", origin="self_reported")]
 ROLE = "Python Developer, Example Co, Jan 2021 to present"
@@ -78,7 +79,8 @@ def test_the_styled_resume_has_the_agreed_layout_and_reads_cleanly() -> None:
     role = next(p for p in paragraphs if p.text.startswith("Python Developer"))
     assert role.text == "Python Developer, Example Co\tJan 2021 to present"
     assert role.paragraph_format.tab_stops[0].alignment == WD_TAB_ALIGNMENT.RIGHT
-    # Nothing an ATS would skip, and every line reads back in order.
+    # No blank lines, nothing an ATS would skip, and every line reads back in order.
+    assert all(p.text.strip() for p in paragraphs)
     assert not document.tables and not document.inline_shapes
     assert ats.problems(content, LINES) == []
     assert "Resume line the Claim came from" not in "\n".join(p.text for p in paragraphs)
@@ -150,22 +152,40 @@ def test_both_pairs_download_in_the_saved_accent_colour_and_named_apart(
 ) -> None:
     base = f"/api/applications/{ready(client, provider, 'gold')}"
 
-    styled = client.get(f"{base}/resume.docx")
-    plain = client.get(f"{base}/resume.docx", params={"style": "plain"})
-    plain_letter = client.get(f"{base}/cover-letter.docx", params={"style": "plain"})
+    files = {
+        (pair, which): client.get(f"{base}/{which}", params={"pair": pair})
+        for pair in ("styled", "plain")
+        for which in ("resume.docx", "cover-letter.docx")
+    }
 
-    assert styled.headers["content-disposition"].endswith("-Resume.docx")
-    assert plain.headers["content-disposition"].endswith("-Resume-plain.docx")
-    assert plain_letter.headers["content-disposition"].endswith("-Cover-letter-plain.docx")
-    name = Document(BytesIO(styled.content)).paragraphs[0]
-    assert colours(name)[-1] == documents.ACCENTS["gold"][0]
-    assert all(c is None for c in colours(Document(BytesIO(plain.content)).paragraphs[0]))
-    for response in (styled, plain, plain_letter):
+    assert {
+        key: r.headers["content-disposition"].rsplit("Northwind-Labs-", 1)[1]
+        for key, r in files.items()
+    } == {
+        ("styled", "resume.docx"): "Resume.docx",
+        ("styled", "cover-letter.docx"): "Cover-letter.docx",
+        ("plain", "resume.docx"): "Resume-plain.docx",
+        ("plain", "cover-letter.docx"): "Cover-letter-plain.docx",
+    }
+    gold, band = documents.ACCENTS["gold"]
+    for (pair, _), response in files.items():
         document = Document(BytesIO(response.content))
-        text = "\n".join(p.text for p in document.paragraphs)
-        assert not document.tables
-        for removed in ("Kubernetes", "Led a team of six engineers", "Evidence", "Removed"):
-            assert removed not in text
+        paragraphs = document.paragraphs
+        text = "\n".join(p.text for p in paragraphs)
+        assert not document.tables and all(p.text.strip() for p in paragraphs)
+        assert not [label for label in REMOVED + APP_LABELS if label in text]
+        surname = colours(paragraphs[0])[-1]
+        assert surname == (gold if pair == "styled" else None)
+    styled = Document(BytesIO(files["styled", "resume.docx"].content))
+    headings = [p for p in styled.paragraphs if p.text in ("Skills", "Experience", "Education")]
+    assert [border_and_fill(h) for h in headings] == [(gold, band)] * 3
+    role = next(p for p in styled.paragraphs if p.text.startswith("Python Developer"))
+    assert role.paragraph_format.tab_stops[0].alignment == WD_TAB_ALIGNMENT.RIGHT
+    assert [s._sectPr.find(qn("w:cols")).get(qn("w:num"), "1") for s in styled.sections] == [
+        "1",
+        "2",
+        "1",
+    ]
 
 
 def test_a_file_that_fails_the_ats_check_is_refused_with_the_reason(
@@ -173,6 +193,8 @@ def test_a_file_that_fails_the_ats_check_is_refused_with_the_reason(
 ) -> None:
     base = f"/api/applications/{ready(client, provider, 'navy')}"
 
+    # A deliberate exception to faking only providers and Sources: the renderer never writes a
+    # file the check refuses, so a broken one is put in its place to reach the guard.
     def boxed_in(resume: Resume, *_: Any) -> bytes:
         document = Document()
         document.add_table(rows=1, cols=1).cell(0, 0).text = "Python"
@@ -187,7 +209,8 @@ def test_a_file_that_fails_the_ats_check_is_refused_with_the_reason(
     assert refused.status_code == 409
     assert refused.json()["detail"].startswith("This file didn't pass the ATS check")
     assert "It has a table" in refused.json()["detail"]
-    assert client.get(f"{base}/resume.docx", params={"style": "plain"}).status_code == 200
+    assert refused.json()["detail"].endswith("Download the plain pair instead.")
+    assert client.get(f"{base}/resume.docx", params={"pair": "plain"}).status_code == 200
 
 
 def test_the_accent_colour_is_one_of_four(client: TestClient) -> None:

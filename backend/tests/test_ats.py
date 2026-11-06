@@ -72,3 +72,24 @@ def test_a_text_box_is_refused() -> None:
             changed.writestr(item, data)
 
     assert "It has a text box, which an ATS may skip" in problems(out.getvalue(), ["Sam Rivera"])
+
+
+def test_line_breaks_and_escaped_characters_read_like_the_words_around_them() -> None:
+    content = docx("R&D lead\nat O'Brien & Co")
+
+    assert problems(content, ["R&D lead at O'Brien & Co"]) == []
+
+
+def test_a_line_split_across_two_paragraphs_doesnt_read_back() -> None:
+    content = docx("Python Developer,", "Example Co")
+
+    assert problems(content, ["Python Developer, Example Co"]) == [
+        "“Python Developer, Example Co” doesn't read back"
+    ]
+
+
+def test_several_lines_can_share_one_paragraph() -> None:
+    # The plain resume lists skills on one line.
+    content = docx("Python, FastAPI, Postgres")
+
+    assert problems(content, ["Python", "FastAPI", "Postgres"]) == []

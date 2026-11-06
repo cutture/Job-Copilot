@@ -211,7 +211,7 @@ describe("Application", () => {
       });
     const calls = serve({
       "GET /api/applications/a": () => application("ready", { reviewed: true }),
-      "GET /api/applications/a/resume.docx?style=plain": file,
+      "GET /api/applications/a/resume.docx?pair=plain": file,
     });
     render(<Application id="a" onBack={() => {}} />);
 
@@ -227,14 +227,14 @@ describe("Application", () => {
     expect(resume.textContent).toContain(python.text);
     fireEvent.click(screen.getByRole("button", { name: "Resume DOCX (plain)" }));
     await vi.waitFor(() => expect(saved).toHaveBeenCalled());
-    expect(calls).toContain("GET /api/applications/a/resume.docx?style=plain");
+    expect(calls).toContain("GET /api/applications/a/resume.docx?pair=plain");
     saved.mockRestore();
   });
 
   it("explains a file the ATS check refused instead of downloading it", async () => {
     serve({
       "GET /api/applications/a": () => application("ready", { reviewed: true }),
-      "GET /api/applications/a/resume.docx?style=styled": () =>
+      "GET /api/applications/a/resume.docx?pair=styled": () =>
         new Response(JSON.stringify({ detail: "This file didn't pass the ATS check, so it can't be downloaded: x" }), {
           status: 409,
         }),
