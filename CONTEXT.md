@@ -72,7 +72,7 @@ _Avoid_: Result, recommendation, job
 
 **Requirement**:
 Something a Job Posting asks for, classed as a Hard Blocker, must-have or nice-to-have and backed by a quote from the posting.
-_Avoid_: Criterion, qualification
+_Avoid_: Criterion, qualification ("Qualifications" is still a resume section heading)
 
 **Hard Blocker**:
 A Requirement that can rule someone out regardless of skills, such as location, work authorization, a required language or clearance.
@@ -111,6 +111,10 @@ _Avoid_: Submission, job application record
 **Application Pack**:
 The tailored resume, cover letter and form answers prepared for one Application. Each regeneration makes a new version.
 _Avoid_: Documents, package, bundle
+
+**Resume section**:
+A titled part of an Application Pack's resume: Summary, Skills, Experience, Education, Qualifications, Affiliations, Certifications, or one the person names. Its order follows the person's own resume.
+_Avoid_: Block, part, area
 
 **Proposal**:
 A freelance pitch and bid, which v1 does not generate.
