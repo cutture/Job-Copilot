@@ -5,4 +5,5 @@
 - **Setup on a new clone:** run `git config core.hooksPath .githooks` so the personal-data checks run on commit and push. List private terms, such as your target city, in the gitignored `.private-terms`.
 - **Triage labels and domain docs:** `docs/agents/triage-labels.md` and `docs/agents/domain.md`.
 - **Prototypes:** run `python scripts/smoke_prototypes.py <screenshot-dir>` after changing one, and look at the screenshots. Every variant shows each decided requirement for its screen.
+- **Live checks against the real models:** run `python scripts/live_check.py` with the app up. It uses an invented posting, prints counts only and deletes its own rows; extend it rather than writing a one-off.
 - **Personal data:** real resumes live outside this repo, in the parent folder. Fixtures and prototypes use invented data with `example.com` addresses.

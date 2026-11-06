@@ -14,6 +14,7 @@ jobs:
       - run: python scripts/check_private_files.py
       - run: python scripts/wayfinder_resolve.py --self-test
       - run: python scripts/map-edit.py --self-check
+      - run: python scripts/live_check.py --self-test
       - run: pip install playwright && playwright install --with-deps chromium
       - run: python scripts/smoke_prototypes.py
 
