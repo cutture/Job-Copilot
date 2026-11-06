@@ -234,3 +234,6 @@ __marimo__/
 # Web app
 node_modules/
 *.tsbuildinfo
+
+# DeepEval writes run caches here when it runs.
+.deepeval/
