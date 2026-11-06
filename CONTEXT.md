@@ -129,8 +129,12 @@ The check every downloaded file passes first: read the way an applicant tracking
 _Avoid_: ATS score, resume score, keyword check
 
 **Resume section**:
-A titled part of an Application Pack's resume: Summary, Skills, Experience, Education, Qualifications, Affiliations, Certifications, or one the person names. Its order follows the person's own resume.
+A titled part of an Application Pack's resume: Summary, Skills, Experience, Education, Qualifications, Affiliations, Certifications, or one the person names. Its order and headings come from the resume the person uploaded; with none, it's Summary, Skills, Experience, Education, Certifications.
 _Avoid_: Block, part, area
+
+**Skill group**:
+Skills in a Resume section under a name of their own, such as "Attention to Detail", when the person's resume groups them. The name is a Claim too: if it can't be kept, its skills stay ungrouped.
+_Avoid_: Category, cluster, sub-section
 
 **Proposal**:
 A freelance pitch and bid, which v1 does not generate.
