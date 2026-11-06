@@ -146,7 +146,7 @@ class DraftRole(TypedDict):
 class DraftSection(TypedDict):
     """A resume section as the writer drafted it. Experience holds roles; the rest hold Claims."""
 
-    kind: "SectionKind"
+    kind: SectionKind
     heading: str
     claims: list[DraftClaim]
     roles: list[DraftRole]
@@ -203,13 +203,27 @@ class Role(BaseModel):
 
 class Section(BaseModel):
     kind: SectionKind
+    # A custom section's heading is the one the person named.
     heading: str
     # Experience holds roles; every other kind holds Claims.
     claims: list[Claim] = []
     roles: list[Role] = []
 
+    @model_validator(mode="after")
+    def _well_formed(self) -> "Section":
+        if not self.heading.strip():
+            raise ValueError("A resume section needs a heading")
+        if self.roles and self.kind != "experience":
+            raise ValueError("Only Experience holds roles")
+        return self
+
     def filled(self) -> bool:
         return bool(self.claims or self.roles)
+
+    def all_claims(self) -> list[Claim]:
+        """Every Claim in the section, in the order it's shown."""
+        roles = [claim for role in self.roles for claim in (role.heading, *role.lines)]
+        return [*self.claims, *roles]
 
 
 class Resume(BaseModel):
@@ -232,7 +246,16 @@ class Resume(BaseModel):
                 kind="education", heading=HEADINGS["education"], claims=data.get("education", [])
             ),
         ]
-        return {"sections": [section for section in fixed if section.filled()]}
+        return {"sections": fixed}
+
+    @model_validator(mode="after")
+    def _without_empty_sections(self) -> "Resume":
+        self.sections = [section for section in self.sections if section.filled()]
+        return self
+
+    def all_claims(self) -> list[Claim]:
+        """Every Claim in the resume, in the order it's shown."""
+        return [claim for section in self.sections for claim in section.all_claims()]
 
 
 class CoverLetter(BaseModel):
@@ -557,14 +580,14 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
                 # A line without its role's heading would read as part of another role.
                 for line in role["lines"]:
                     verified(line, WITH_HEADING)
-        section = Section(
-            kind=drafted["kind"],
-            heading=drafted["heading"],
-            claims=all_verified(drafted["claims"]),
-            roles=roles,
+        sections.append(
+            Section(
+                kind=drafted["kind"],
+                heading=drafted["heading"],
+                claims=all_verified(drafted["claims"]),
+                roles=roles,
+            )
         )
-        if section.filled():
-            sections.append(section)
     letter = CoverLetter(paragraphs=[p for p in map(all_verified, state["cover_letter"]) if p])
     return Resume(sections=sections), letter, taken_out
 

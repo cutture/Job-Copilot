@@ -210,6 +210,18 @@ def test_verification_removes_stretched_and_invented_claims_and_lists_them(
 
     by_text = {r["text"]: r for r in removed}
     too_long = next(text for text in by_text if text.startswith("Built very"))
+    # Listed in the order they'd have appeared: the resume's sections, then the cover letter.
+    assert [r["text"] for r in removed] == [
+        "Kubernetes",
+        "FastAPI",
+        "Rust",
+        too_long,
+        "Led a team of six engineers",
+        "Cut support costs by 40%",
+        "Staff Engineer, Example Corp, 2010 to 2012",
+        "Worked in a team of six engineers",
+        "I bring 10 years of leadership.",
+    ]
     assert {text: r["kind"] for text, r in by_text.items()} == {
         # A resume line always states something about the person.
         "Kubernetes": "invented",

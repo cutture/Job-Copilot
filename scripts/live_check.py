@@ -98,7 +98,10 @@ def check(posting_id: str) -> None:
         return
     print(
         "resume claims by section:",
-        {s["kind"]: len(s["claims"]) + len(s["roles"]) for s in pack["resume"]["sections"]},
+        {
+            s["kind"]: len(s["claims"]) + sum(1 + len(r["lines"]) for r in s["roles"])
+            for s in pack["resume"]["sections"]
+        },
     )
     print("cover letter sentences:", [len(p) for p in pack["cover_letter"]["paragraphs"]])
     removed = [r["text"] for r in pack["removed_claims"]]

@@ -19,7 +19,16 @@ type RemovedClaim = {
 };
 type Role = { heading: Claim; lines: Claim[] };
 // Experience holds roles; every other kind holds Claims.
-type Section = { kind: string; heading: string; claims: Claim[]; roles: Role[] };
+type SectionKind =
+  | "summary"
+  | "skills"
+  | "experience"
+  | "education"
+  | "qualifications"
+  | "affiliations"
+  | "certifications"
+  | "custom";
+type Section = { kind: SectionKind; heading: string; claims: Claim[]; roles: Role[] };
 type Pack = {
   version: number;
   status: "generating" | "waiting" | "ready";
@@ -86,8 +95,8 @@ function Resume({ resume, signature }: { resume: NonNullable<Pack["resume"]>; si
   return (
     <div style={page} aria-label="Resume">
       <Header {...signature} />
-      {resume.sections.map((section) => (
-        <div key={section.heading}>
+      {resume.sections.map((section, position) => (
+        <div key={`${section.kind}-${position}`}>
           <h4 style={sectionHeading}>{section.heading}</h4>
           {section.kind === "skills"
             ? section.claims.map((skill) => skill.text).join(", ")

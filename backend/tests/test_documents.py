@@ -2,7 +2,9 @@
 
 from io import BytesIO
 
+import pytest
 from docx import Document
+from pydantic import ValidationError
 
 from job_copilot.applications import Claim, CoverLetter, EvidenceRef, Resume, Role, Section
 from job_copilot.documents import cover_letter_docx, filename, resume_docx
@@ -81,6 +83,18 @@ def test_a_resume_saved_before_sections_reads_as_sections_and_drops_empty_ones()
 
     assert [(s.kind, s.heading) for s in resume.sections] == [("skills", "Skills")]
     assert resume.sections[0].claims[0].text == "Python"
+
+
+def test_a_section_needs_a_heading_and_only_experience_holds_roles() -> None:
+    role = Role(heading=claim("Python Developer, Example Co"), lines=[])
+
+    with pytest.raises(ValidationError, match="Only Experience holds roles"):
+        Section(kind="skills", heading="Skills", roles=[role])
+    with pytest.raises(ValidationError, match="needs a heading"):
+        Section(kind="custom", heading=" ", claims=[claim("Volunteered weekly")])
+    # Empty sections never reach a resume, however it was made.
+    resume = Resume(sections=[Section(kind="summary", heading="Summary")])
+    assert resume.sections == []
 
 
 def test_the_cover_letter_is_its_paragraphs_signed_with_the_name() -> None:
