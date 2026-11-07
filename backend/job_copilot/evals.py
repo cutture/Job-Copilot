@@ -173,7 +173,8 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
     """Send one case through the real steps, as the invented eval person."""
     outcome = Outcome()
     posting = case["posting"]
-    if case["area"] == "filter":
+    # A case labelled with a Filter result, an injection case included, stops at Filter.
+    if "passes" in case["expect"]:
         decision = filter.decide(filter.read_facts(EVAL_USER, posting), profile["preferences"])
         outcome.passes, outcome.filter_reason = decision.passed, decision.reason
         return outcome

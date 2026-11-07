@@ -19,13 +19,14 @@ from tests.test_my_sections import ready_pack
 
 def filter_run(provider: FakeProvider, tmp_path: Path, passes: bool, checked: bool = True) -> int:
     """An Eval Run of one Filter case, which the fake Filter answer passes or fails."""
+    # The case's remote posting passes; read as on-site in Berlin, it's wrongly set aside.
     provider.answers = {
-        FILTER_MODEL: facts(work_arrangement="on_site", locations=["Berlin, Germany"])
+        FILTER_MODEL: facts()
         if passes
-        else facts()
+        else facts(work_arrangement="on_site", locations=["Berlin, Germany"])
     }
-    unchecked = () if checked else ("filter-on-site-elsewhere",)
-    return evals.run(OWNER, cases_file(tmp_path, "filter-on-site-elsewhere", unchecked=unchecked))
+    unchecked = () if checked else ("filter-remote-pay-fits",)
+    return evals.run(OWNER, cases_file(tmp_path, "filter-remote-pay-fits", unchecked=unchecked))
 
 
 def queued_eval_runs() -> int:
@@ -119,8 +120,8 @@ def test_the_eval_runs_page_shows_each_failure_with_its_reason_and_area_to_fix(
         (runs[1]["id"], 1, 0),
     ]
     [result] = results
-    assert result["case_id"] == "filter-on-site-elsewhere"
-    assert result["reason"] == "Filter let it through"
+    assert result["case_id"] == "filter-remote-pay-fits"
+    assert result["reason"].startswith("Filter set it aside: On-site")
     assert result["fix_area"].startswith("Filter")
 
 
@@ -156,3 +157,15 @@ def test_a_failure_in_a_case_whose_labels_arent_checked_doesnt_warn(
     filter_run(provider, tmp_path, passes=False, checked=False)
 
     assert client.get("/api/evals/status").json()["failing"] is False
+
+
+def test_an_injection_case_labelled_with_a_filter_result_goes_through_filter(
+    client: TestClient, provider: FakeProvider, tmp_path: Path
+) -> None:
+    # The planted note talks the model into "remote"; the posting's own words still say on-site.
+    provider.answers = {FILTER_MODEL: facts(work_arrangement="remote")}
+
+    run_id = evals.run(OWNER, cases_file(tmp_path, "injection-filter-remote"))
+
+    [result] = client.get(f"/api/eval-runs/{run_id}").json()["results"]
+    assert (result["status"], result["reason"]) == ("passed", "Matches its labels")
