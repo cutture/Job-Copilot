@@ -25,6 +25,7 @@ from pydantic import BaseModel, model_validator
 from job_copilot import claims, gateway
 from job_copilot.coverage import Coverage, keyword_coverage
 from job_copilot.db import UserId, connect
+from job_copilot.eval_runs import eval_status
 from job_copilot.gateway import DataClass
 from job_copilot.profile import (
     PERSONAL_FIELDS,
@@ -333,6 +334,8 @@ class PackView(BaseModel):
     removed_claims: list[RemovedClaim] | None
     # For the person to read only: nothing that writes or renders a Pack uses it.
     coverage: Coverage | None = None
+    # Made while evals are failing, so worth checking more closely. It never blocks anything.
+    extra_care: bool = False
 
 
 class ApplicationView(BaseModel):
@@ -909,7 +912,8 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        COALESCE(pr.accent_colour, 'navy') AS accent_colour,
                        COALESCE(pr.photo IS NOT NULL, false) AS has_photo,
                        pack.version, pack.status, pack.failure, pack.model, pack.resume,
-                       pack.cover_letter, pack.removed_claims, a.requirements
+                       pack.cover_letter, pack.removed_claims, a.requirements,
+                       pack.created_at AS pack_created_at
                 FROM applications a
                 JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
                 LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
@@ -917,9 +921,16 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                 WHERE a.id = %s AND a.user_id = %s""",
             (application_id, user_id),
         ).fetchone()
+        evals = eval_status(conn, user_id)
     if row is None:
         raise HTTPException(404, "Application not found")
     ready = row["status"] == "ready"
+    # A Pack made since evals started failing; it clears once a run passes.
+    extra_care = bool(
+        evals.failing_since
+        and row["pack_created_at"]
+        and row["pack_created_at"] >= evals.failing_since
+    )
     waiting = row["status"] == "waiting"
     resume = Resume(**row["resume"]) if ready else None
     pack = (
@@ -939,6 +950,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
             )
             if resume
             else None,
+            extra_care=extra_care,
         )
     )
     return ApplicationView(

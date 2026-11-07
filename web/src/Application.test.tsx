@@ -57,6 +57,7 @@ function application(
             },
           ]
         : null,
+      extra_care: false,
       coverage: ready
         ? {
             score: 75,
@@ -123,6 +124,15 @@ describe("Application", () => {
       "SQL: Met, not in this resume",
       "Terraform (nice-to-have): Missing",
     ]);
+  });
+
+  it("asks for extra care on a Pack made while evals are failing, without blocking it", async () => {
+    const ready = application("ready");
+    serve({ "GET /api/applications/a": () => ({ ...ready, pack: { ...ready.pack!, extra_care: true } }) });
+    render(<Application id="a" onBack={() => {}} />);
+
+    expect((await screen.findByRole("note")).textContent).toContain("Extra care: evals are failing");
+    expect(screen.getByLabelText("Resume")).toBeTruthy();
   });
 
   it("shows no documents until the Pack is verified", async () => {

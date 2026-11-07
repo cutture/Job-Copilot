@@ -1,15 +1,19 @@
 import logging
+import os
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from job_copilot import applications, filter, profile, rating, search
-from job_copilot.db import connect
+from job_copilot.db import connect, current_user_id
 
 log = logging.getLogger(__name__)
 
 IDLE_SECONDS = 2.0
+# The hour, in UTC, after which each day's Eval Run is queued.
+EVAL_HOUR_UTC = int(os.environ.get("EVAL_HOUR_UTC", "6"))
 MAX_TITLE_LENGTH = 120
 
 
@@ -88,13 +92,45 @@ def _posting_failed(user_id: UUID, payload: dict[str, Any]) -> None:
 
 
 Handler = Callable[[UUID, dict[str, Any]], None]
+
+
 # Each kind of job, and what to record if it fails, so one failure never blocks the queue.
+def _run_evals(user_id: UUID, payload: dict[str, Any]) -> None:
+    # Imported here, so only the worker loads DeepEval, and only when evals run.
+    # ponytail: the run holds the one worker for a few minutes a day; give evals their own
+    # worker if postings ever wait too long behind it.
+    from job_copilot import evals
+
+    evals.run(user_id)
+
+
+def _no_record(user_id: UUID, payload: dict[str, Any]) -> None:
+    """A failed Eval Run leaves its partial results, which show on the Eval Runs page."""
+
+
+def schedule_daily_evals(now: datetime) -> None:
+    """Queue today's Eval Run for the owner, once, after EVAL_HOUR_UTC."""
+    if now.hour < EVAL_HOUR_UTC:
+        return
+    owner = current_user_id()
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO jobs (user_id, kind, payload)
+               SELECT %(owner)s, 'eval_run', '{}'::jsonb
+               WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE kind = 'eval_run')
+                 AND NOT EXISTS (SELECT 1 FROM eval_runs WHERE user_id = %(owner)s
+                                 AND started_at >= date_trunc('day', %(now)s::timestamptz))""",
+            {"owner": owner, "now": now},
+        )
+
+
 HANDLERS: dict[str, tuple[Handler, Handler]] = {
     "process_posting": (_process_posting_job, _posting_failed),
     "extract_evidence": (profile.extract_evidence, profile.mark_extraction_failed),
     "rate_match": (rating.rate_match, rating.mark_not_rated),
     "search": (search.run_search, search.finish_search),
     "generate_pack": (applications.generate_pack, applications.pack_failed),
+    "eval_run": (_run_evals, _no_record),
 }
 
 
@@ -130,6 +166,7 @@ def run_once() -> bool:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     while True:
+        schedule_daily_evals(datetime.now(UTC))
         if not run_once():
             time.sleep(IDLE_SECONDS)
 

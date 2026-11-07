@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Application } from "./Application";
 import { Applications } from "./Applications";
+import { EvalBanner, EvalRuns } from "./EvalRuns";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { Matches, Origin, deleteQuestion } from "./Matches";
 import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches";
@@ -61,7 +62,7 @@ export function App() {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [view, setView] = useState<"postings" | "applications" | "profile">("postings");
+  const [view, setView] = useState<"postings" | "applications" | "profile" | "evals">("postings");
   const [showFiltered, setShowFiltered] = useState(false);
   const [evidenceDraft, setEvidenceDraft] = useState("");
   const [applicationId, setApplicationId] = useState<string | null>(null);
@@ -163,6 +164,7 @@ export function App() {
   if (applicationId) {
     return (
       <main style={{ maxWidth: 1320, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
+        <EvalBanner />
         <Application id={applicationId} onBack={backToListings} />
       </main>
     );
@@ -171,6 +173,7 @@ export function App() {
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
       <h1>Job Copilot</h1>
+      <EvalBanner />
       <nav aria-label="Pages" style={{ marginBottom: 16 }}>
         <button aria-pressed={view === "postings"} onClick={() => setView("postings")}>
           Job Postings
@@ -186,9 +189,13 @@ export function App() {
           }}
         >
           Profile
+        </button>{" "}
+        <button aria-pressed={view === "evals"} onClick={() => setView("evals")}>
+          Eval Runs
         </button>
       </nav>
       {view === "applications" && <Applications onOpen={setApplicationId} />}
+      {view === "evals" && <EvalRuns />}
       {view === "profile" && (
         <Profile key={evidenceDraft} draft={evidenceDraft} onEverythingDeleted={() => setPostings([])} />
       )}

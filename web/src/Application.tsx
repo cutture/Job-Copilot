@@ -47,6 +47,8 @@ type Pack = {
   removed_claims: RemovedClaim[] | null;
   // For information only: nothing that writes or renders the Pack uses it.
   coverage: { score: number; counted: CountedRequirement[] } | null;
+  // Made while evals are failing; it blocks nothing.
+  extra_care: boolean;
 };
 export type ApplicationData = {
   id: string;
@@ -433,6 +435,11 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
             Preview of both final documents. Every Claim was checked against your Evidence.
             {pack.model && ` Written by ${pack.model}.`}
           </p>
+          {pack.extra_care && (
+            <p role="note" style={{ ...card, background: "#fdecea", color: "#8a1c12" }}>
+              Extra care: evals are failing. Check this Application Pack closely before you send it.
+            </p>
+          )}
           {pack.removed_claims!.length > 0 && (
             <div style={card}>
               <h3 style={{ marginTop: 0 }}>Claims without Evidence</h3>

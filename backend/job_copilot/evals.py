@@ -1,8 +1,8 @@
 """Eval Runs: invented Eval Cases through the real Filter, rating and Pack steps.
 
-The owner runs them by hand from the worker container:
+The worker runs every case once a day, after EVAL_HOUR_UTC; the owner can also run them by hand:
 
-    docker compose exec worker python -m job_copilot.evals          # run every case
+    docker compose exec worker python -m job_copilot.evals          # run every case now
     docker compose exec worker python -m job_copilot.evals show     # the latest results
 
 Cases run as an invented person whose $3 monthly cap stops evals before anything else. A
@@ -39,6 +39,13 @@ CASES_FILE = Path(__file__).parent.parent / "evals" / "cases.json"
 # Provider trouble that means a case didn't run, as opposed to an answer that failed it.
 DID_NOT_RUN = ("Timeout", "RateLimit")
 Status = Literal["passed", "failed", "did_not_run"]
+# Where to look first for each kind of failure.
+FIX_FILTER = "Filter: its prompt in filter.py, or its location and pay rules"
+FIX_BAND = "Rating: its prompt in rating.py; the Band rules have their own code tests"
+FIX_HARD_BLOCKER = "Rating: which Requirements its prompt classes as Hard Blockers, in rating.py"
+FIX_PACK = "Application Pack: the writer prompts, then Verification, in applications.py"
+FIX_MODEL = "The model gateway or provider, in gateway.py"
+FIX_ANSWER = "The step's prompt, so the model answers in the expected shape"
 
 
 @dataclass
@@ -60,9 +67,11 @@ def _mentions(text: str, phrase: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text, re.IGNORECASE) is not None
 
 
-def judge(expect: dict[str, Any], outcome: Outcome) -> tuple[list[str], bool]:
-    """Compare an outcome with the case's labels: what failed, and whether any is a Hard Failure."""
+def judge(expect: dict[str, Any], outcome: Outcome) -> tuple[list[str], bool, str | None]:
+    """Compare an outcome with the case's labels: what failed, whether any is a Hard Failure,
+    and where to look first to fix it."""
     failures: list[str] = []
+    fixes: list[str] = []
     hard = False
     if "passes" in expect and outcome.passes != expect["passes"]:
         failures.append(
@@ -70,14 +79,17 @@ def judge(expect: dict[str, Any], outcome: Outcome) -> tuple[list[str], bool]:
             if expect["passes"]
             else "Filter let it through"
         )
+        fixes.append(FIX_FILTER)
     if "band" in expect and outcome.band != expect["band"]:
         failures.append(
             f"Band was {outcome.band}, labelled {expect['band']} "
             f"({'; '.join(outcome.band_reasons)})"
         )
+        fixes.append(FIX_BAND)
         hard |= {outcome.band, expect["band"]} == {"High", "Low"}
     if expect.get("hard_blocker") and not outcome.missing_hard_blockers:
         failures.append("Missed the Hard Blocker")
+        fixes.append(FIX_HARD_BLOCKER)
         hard = True
     checked = (
         ("not_in_resume", outcome.resume),
@@ -87,8 +99,10 @@ def judge(expect: dict[str, Any], outcome: Outcome) -> tuple[list[str], bool]:
         for trap in expect.get(key, []):
             if _mentions(documents, trap):
                 failures.append(f"An Invented Claim reached the final Pack: “{trap}”")
+                fixes.append(FIX_PACK)
                 hard = True
-    return failures, hard
+    # A Hard Failure's area comes first, since it matters most.
+    return failures, hard, (FIX_PACK if FIX_PACK in fixes else next(iter(fixes), None))
 
 
 class LabelsMetric(BaseMetric):  # type: ignore[no-untyped-call]
@@ -98,9 +112,10 @@ class LabelsMetric(BaseMetric):  # type: ignore[no-untyped-call]
         self.threshold = 1.0
         self.async_mode = False
         self.hard_failure = False
+        self.fix_area: str | None = None
 
     def measure(self, test_case: LLMTestCase, *args: Any, **kwargs: Any) -> float:
-        failures, self.hard_failure = judge(
+        failures, self.hard_failure, self.fix_area = judge(
             json.loads(test_case.expected_output or "{}"), (test_case.metadata or {})["outcome"]
         )
         self.reason = "; ".join(failures) or "Matches its labels"
@@ -157,18 +172,20 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
     return outcome
 
 
-def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool, str]:
-    """Run and judge one case: its status, whether it's a Hard Failure, and why."""
+def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool, str, str | None]:
+    """Run and judge one case: its status, whether it's a Hard Failure, why, and where to look
+    first to fix it."""
     try:
         outcome = run_case(case, profile)
     except gateway.CapReached:
-        return "did_not_run", False, "Did not run: the eval budget is used up"
+        return "did_not_run", False, "Did not run: the eval budget is used up", None
     except gateway.ModelUnavailable as error:
         if any(kind in str(error) for kind in DID_NOT_RUN):
-            return "did_not_run", False, f"Did not run: {error}"
-        return "failed", False, f"The model call failed: {error}"
+            return "did_not_run", False, f"Did not run: {error}", None
+        return "failed", False, f"The model call failed: {error}", FIX_MODEL
     except ValueError as error:
-        return "failed", False, f"The model's answer couldn't be used ({type(error).__name__})"
+        reason = f"The model's answer couldn't be used ({type(error).__name__})"
+        return "failed", False, reason, FIX_ANSWER
     metric = LabelsMetric()
     metric.measure(
         LLMTestCase(
@@ -177,7 +194,8 @@ def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool
             metadata={"outcome": outcome},
         )
     )
-    return ("passed" if metric.success else "failed"), metric.hard_failure, str(metric.reason)
+    status: Status = "passed" if metric.success else "failed"
+    return status, metric.hard_failure, str(metric.reason), metric.fix_area
 
 
 def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
@@ -190,12 +208,12 @@ def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
             (owner, version("deepeval")),
         ).fetchone()
     for case in loaded["cases"]:
-        status, hard, reason = _result(case, loaded["profile"])
+        status, hard, reason, fix_area = _result(case, loaded["profile"])
         with connect() as conn:
             conn.execute(
                 """INSERT INTO eval_results (user_id, run_id, case_id, area, status, hard_failure,
-                                            labels_checked, reason)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                                            labels_checked, reason, fix_area)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     owner,
                     run_row["id"],
@@ -205,6 +223,7 @@ def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
                     hard,
                     case["labels_checked"],
                     reason,
+                    fix_area,
                 ),
             )
     with connect() as conn:
@@ -232,7 +251,7 @@ def table(owner: UUID, run_id: int | None = None) -> str:
         if run_row is None:
             return "No Eval Runs yet."
         results = conn.execute(
-            """SELECT case_id, area, status, hard_failure, labels_checked, reason
+            """SELECT case_id, area, status, hard_failure, labels_checked, reason, fix_area
                FROM eval_results WHERE run_id = %s AND user_id = %s ORDER BY id""",
             (run_row["id"], owner),
         ).fetchall()
@@ -245,7 +264,8 @@ def table(owner: UUID, run_id: int | None = None) -> str:
     for r in results:
         result = "HARD FAIL" if r["hard_failure"] else r["status"].replace("_", " ")
         labels = "checked" if r["labels_checked"] else "unchecked"
-        lines.append(f"{r['case_id']:32} {r['area']:9} {result:12} {labels:10} {r['reason']}")
+        fix = f" Look first at: {r['fix_area']}" if r["fix_area"] else ""
+        lines.append(f"{r['case_id']:32} {r['area']:9} {result:12} {labels:10} {r['reason']}.{fix}")
     lines.append(f"Hard Failures: {hard}. Results of unchecked cases aren't trusted yet.")
     return "\n".join(lines)
 

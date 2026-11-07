@@ -18,6 +18,7 @@ function respondWith(listed: unknown[][]) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/api/search") return new Response(JSON.stringify({ runs_left: 5, daily_limit: 5, searching: false }));
     if (url === "/api/watchlist") return new Response("[]");
+    if (url === "/api/evals/status") return new Response(JSON.stringify({ failing: false, failing_since: null }));
     return init?.method === "POST"
       ? new Response("{}", { status: 201 })
       : new Response(JSON.stringify(listed.shift() ?? []));

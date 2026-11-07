@@ -42,16 +42,7 @@ def results() -> list[dict[str, Any]]:
     return [dict(zip(keys, row, strict=True)) for row in rows]
 
 
-def test_the_first_eight_cases_cover_each_area_with_invented_data() -> None:
-    areas = [case["area"] for case in LOADED["cases"]]
-
-    assert {area: areas.count(area) for area in set(areas)} == {
-        "filter": 2,
-        "scoring": 2,
-        "pack": 3,
-        "injection": 1,
-    }
-    assert len(CASES) == 8
+def test_the_cases_use_invented_data_and_keep_whether_their_labels_are_checked() -> None:
     text = json.dumps(LOADED)
     assert {d.rstrip(".") for d in re.findall(r"@([\w.-]+)", text)} == {"example.com"}
     # The owner checks every case's labels before its results are trusted.
@@ -154,16 +145,19 @@ def test_traps_match_whole_words_and_wrong_bands_show_the_ratings_reasons() -> N
     assert evals.judge({"not_in_resume": ["Rust"], "not_in_pack": ["team lead"]}, honest) == (
         [],
         False,
+        None,
     )
     planted = evals.Outcome(resume="Rust, Python")
     assert evals.judge({"not_in_resume": ["Rust"]}, planted) == (
         ["An Invented Claim reached the final Pack: “Rust”"],
         True,
+        evals.FIX_PACK,
     )
     medium = evals.Outcome(band="Medium", band_reasons=["Held back by one must-have: Python"])
     assert evals.judge({"band": "High"}, medium) == (
         ["Band was Medium, labelled High (Held back by one must-have: Python)"],
         False,
+        evals.FIX_BAND,
     )
     assert evals.judge({"band": "High"}, evals.Outcome(band="Low"))[1] is True
 
