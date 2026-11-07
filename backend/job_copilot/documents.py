@@ -350,9 +350,7 @@ def _download(
         pack = latest_pack(conn, user_id, application_id)
         # Only the styled resume carries the photo.
         stored = (
-            conn.execute(
-                "SELECT photo FROM profiles WHERE user_id = %s AND show_photo", (user_id,)
-            ).fetchone()
+            conn.execute("SELECT photo FROM profiles WHERE user_id = %s", (user_id,)).fetchone()
             if which == "Resume" and pair == "styled"
             else None
         )

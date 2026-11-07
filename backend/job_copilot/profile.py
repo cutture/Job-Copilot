@@ -369,7 +369,8 @@ class Preferences(BaseModel):
     accent_colour: AccentColour = "navy"
     # Headings for resume sections that fit no standard one, after the standard ones.
     custom_sections: list[str] = Field(default_factory=list, max_length=MAX_CUSTOM_SECTIONS)
-    # A photo on the styled resume. While it's off, no photo is kept.
+    # The person asked to add a photo of their own, since their resume has none. Turning it off
+    # deletes that photo; a resume's own photo is used without asking.
     show_photo: bool = False
     work_authorization: ShortText | None = None
     lives_in: ShortText | None = None
@@ -411,6 +412,8 @@ class Preferences(BaseModel):
 
 class Profile(Preferences):
     has_photo: bool
+    # The photo is the uploaded resume's own.
+    photo_from_resume: bool
     resume_filename: str | None
     resume_text: str | None
     extraction_status: Literal["queued", "done", "failed"] | None
@@ -485,7 +488,7 @@ def save_preferences(preferences: Preferences, user_id: UserId) -> Profile:
             # If Filter's inputs changed, the next search runs Filter again on postings still
             # in the Search Window.
             f"""UPDATE profiles SET {assignments}, updated_at = now(),
-                    photo = CASE WHEN %(show_photo)s THEN photo END,
+                    photo = CASE WHEN %(show_photo)s OR photo_from_resume THEN photo END,
                     recheck_due = recheck_due OR ({filter_now}) IS DISTINCT FROM ({filter_new})
                 WHERE user_id = %(user_id)s""",
             {**values, "user_id": user_id},
@@ -536,23 +539,33 @@ def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
 
 
 def _keep_photo_from(conn: Any, user_id: UUID, content: bytes) -> None:
-    """With the switch on, keep the resume's photo, if it has one that checks out."""
-    on = conn.execute("SELECT show_photo FROM profiles WHERE user_id = %s", (user_id,)).fetchone()
-    found = photo_in_resume(content) if on and on["show_photo"] else None
+    """Use the resume's photo if it has one that checks out. A photo from an earlier resume goes
+    when the new one has none; a photo the person added stays."""
+    found = photo_in_resume(content)
     try:
         photo = checked_photo(found) if found else None
     except ValueError:
-        return
+        photo = None
     if photo:
-        conn.execute("UPDATE profiles SET photo = %s WHERE user_id = %s", (photo, user_id))
+        conn.execute(
+            "UPDATE profiles SET photo = %s, photo_from_resume = true WHERE user_id = %s",
+            (photo, user_id),
+        )
+    else:
+        conn.execute(
+            """UPDATE profiles SET photo = NULL, photo_from_resume = false
+               WHERE user_id = %s AND photo_from_resume""",
+            (user_id,),
+        )
 
 
-NO_PHOTO = "There's no photo. Upload your resume again to use its photo, or upload one."
+NO_PHOTO = "There's no photo. Tick “Add a photo to my resume” in your Profile to add one."
 
 
 @router.post("/api/profile/photo")
 def upload_photo(file: UploadFile, user_id: UserId) -> Profile:
-    """Add or replace the photo on the styled resume. It's never sent to a model."""
+    """Add or replace the person's own photo, offered only when their resume has none. It's
+    never sent to a model."""
     content = file.file.read(MAX_PHOTO_BYTES + 1)
     if len(content) > MAX_PHOTO_BYTES:
         raise HTTPException(413, "This photo is over 5 MB. Upload a smaller one.")
@@ -563,11 +576,13 @@ def upload_photo(file: UploadFile, user_id: UserId) -> Profile:
     with connect() as conn:
         ensure_profile(conn, user_id)
         saved = conn.execute(
-            "UPDATE profiles SET photo = %s WHERE user_id = %s AND show_photo RETURNING user_id",
+            # Uploading is choosing to add a photo, so the choice is kept with it.
+            """UPDATE profiles SET photo = %s, show_photo = true
+               WHERE user_id = %s AND NOT photo_from_resume RETURNING user_id""",
             (photo, user_id),
         ).fetchone()
     if saved is None:
-        raise HTTPException(409, "Turn on “Photo on my styled resume” first.")
+        raise HTTPException(409, "Your resume's own photo is used, so there's none to add.")
     return get_profile(user_id)
 
 
@@ -575,8 +590,7 @@ def upload_photo(file: UploadFile, user_id: UserId) -> Profile:
 def get_photo(user_id: UserId) -> Response:
     with connect() as conn:
         row = conn.execute(
-            "SELECT photo FROM profiles WHERE user_id = %s AND show_photo AND photo IS NOT NULL",
-            (user_id,),
+            "SELECT photo FROM profiles WHERE user_id = %s AND photo IS NOT NULL", (user_id,)
         ).fetchone()
     if row is None:
         raise HTTPException(404, NO_PHOTO)
@@ -585,8 +599,12 @@ def get_photo(user_id: UserId) -> Response:
 
 @router.delete("/api/profile/photo", status_code=204)
 def delete_photo(user_id: UserId) -> None:
+    """Remove the photo the person added; a resume's own photo goes with the resume."""
     with connect() as conn:
-        conn.execute("UPDATE profiles SET photo = NULL WHERE user_id = %s", (user_id,))
+        conn.execute(
+            "UPDATE profiles SET photo = NULL WHERE user_id = %s AND NOT photo_from_resume",
+            (user_id,),
+        )
 
 
 @router.post("/api/profile/resume/read-again", status_code=202)

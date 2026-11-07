@@ -907,7 +907,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        pack.reviewed_at IS NOT NULL AS reviewed, a.submitted_at, a.outcome,
                        {COST} AS cost_usd, pr.name, pr.contact,
                        COALESCE(pr.accent_colour, 'navy') AS accent_colour,
-                       COALESCE(pr.show_photo AND pr.photo IS NOT NULL, false) AS has_photo,
+                       COALESCE(pr.photo IS NOT NULL, false) AS has_photo,
                        pack.version, pack.status, pack.failure, pack.model, pack.resume,
                        pack.cover_letter, pack.removed_claims, a.requirements
                 FROM applications a

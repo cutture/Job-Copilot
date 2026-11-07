@@ -17,7 +17,7 @@ from job_copilot.photo import photo_in_resume
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_application_pack import apply, rated_match, run_worker
 from tests.test_my_sections import ready_pack, write_sections
-from tests.test_profile import upload
+from tests.test_profile import make_docx, upload
 
 # Text an uploaded photo carries in its metadata, which must never be kept.
 HIDDEN = "Taken at 1 Example Street"
@@ -60,24 +60,58 @@ def stored_photo(client: TestClient) -> Any:
     return client.get("/api/profile/photo")
 
 
-def test_the_switch_is_off_by_default_and_no_photo_is_kept_or_shown_while_its_off(
+def profile(client: TestClient) -> Any:
+    return client.get("/api/profile").json()
+
+
+def test_a_resumes_own_photo_is_used_without_asking(
     client: TestClient, provider: FakeProvider
 ) -> None:
     upload_resume_with_photo(client, provider, image())
 
-    assert client.get("/api/profile").json()["show_photo"] is False
-    assert client.get("/api/profile").json()["has_photo"] is False
-    assert stored_photo(client).status_code == 404
+    assert (profile(client)["has_photo"], profile(client)["photo_from_resume"]) == (True, True)
+    assert stored_photo(client).status_code == 200
+    # There's nothing to add while the resume's own photo is used.
     refused = client.post("/api/profile/photo", files={"file": ("me.png", image())})
     assert refused.status_code == 409
 
 
-def test_with_the_switch_on_a_resumes_photo_is_kept_and_never_reaches_the_model(
+def test_without_a_photo_in_the_resume_there_is_none_until_the_person_adds_one(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    # The rating saves a Profile of its own, so the switch goes on after it.
+    provider.text = json.dumps({"sections": [], "items": ["Python Developer at Example Co"]})
+    upload(client, "resume.docx", make_docx(["Sam Rivera", "Python"]))
+    worker.run_once()
+
+    assert (profile(client)["show_photo"], profile(client)["has_photo"]) == (False, False)
+    assert stored_photo(client).status_code == 404
+
+    added = client.post("/api/profile/photo", files={"file": ("me.png", image())})
+
+    assert added.status_code == 200
+    assert (added.json()["show_photo"], added.json()["has_photo"]) == (True, True)
+    assert added.json()["photo_from_resume"] is False
+
+
+def test_a_new_resume_without_a_photo_drops_the_old_resumes_but_keeps_one_the_person_added(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    upload_resume_with_photo(client, provider, image())
+    provider.text = json.dumps({"sections": [], "items": ["Python Developer at Example Co"]})
+    upload(client, "resume.docx", make_docx(["Sam Rivera", "Python"]))
+
+    assert profile(client)["has_photo"] is False
+
+    client.post("/api/profile/photo", files={"file": ("me.png", image())})
+    upload(client, "resume.docx", make_docx(["Sam Rivera", "Python"]))
+
+    assert profile(client)["has_photo"] is True
+
+
+def test_a_resumes_photo_never_reaches_the_model(
+    client: TestClient, provider: FakeProvider
+) -> None:
     posting_id, ids = rated_match(client, provider)
-    switch(client, True)
     photo = image()
     upload_resume_with_photo(client, provider, photo)
     write_sections(provider, ids)
@@ -85,7 +119,6 @@ def test_with_the_switch_on_a_resumes_photo_is_kept_and_never_reaches_the_model(
     application = apply(client, posting_id)
     run_worker()
 
-    assert client.get("/api/profile").json()["has_photo"] is True
     kept = stored_photo(client)
     assert kept.headers["content-type"] == "image/jpeg"
     pack = client.get(f"/api/applications/{application['id']}").json()["pack"]
@@ -113,7 +146,6 @@ def test_a_resumes_photo_is_its_biggest_portrait_not_a_logo_or_banner() -> None:
 def test_a_separate_upload_replaces_the_photo_as_one_small_image_without_its_metadata(
     client: TestClient,
 ) -> None:
-    switch(client, True)
     assert client.post("/api/profile/photo", files={"file": ("a.png", image())}).status_code == 200
 
     replaced = client.post(
@@ -132,8 +164,6 @@ def test_a_separate_upload_replaces_the_photo_as_one_small_image_without_its_met
 
 
 def test_a_file_that_isnt_an_image_or_is_too_big_is_refused(client: TestClient) -> None:
-    switch(client, True)
-
     not_image = client.post("/api/profile/photo", files={"file": ("me.png", b"<svg>not</svg>")})
     too_big = client.post("/api/profile/photo", files={"file": ("me.png", b"\0" * 5_000_001)})
 
@@ -143,21 +173,23 @@ def test_a_file_that_isnt_an_image_or_is_too_big_is_refused(client: TestClient) 
     assert stored_photo(client).status_code == 404
 
 
-def test_turning_the_switch_off_deletes_the_photo(client: TestClient) -> None:
-    switch(client, True)
+def test_unticking_add_a_photo_deletes_the_persons_photo_but_not_the_resumes(
+    client: TestClient, provider: FakeProvider
+) -> None:
     client.post("/api/profile/photo", files={"file": ("me.png", image())})
 
     switch(client, False)
-    switch(client, True)
 
     assert stored_photo(client).status_code == 404
+    upload_resume_with_photo(client, provider, image())
+    switch(client, False)
+    assert stored_photo(client).status_code == 200
 
 
 def test_the_photo_is_in_the_styled_resume_only_and_it_still_passes_the_ats_check(
     client: TestClient, provider: FakeProvider
 ) -> None:
     pack = ready_pack(client, provider)
-    switch(client, True)
     client.post("/api/profile/photo", files={"file": ("me.png", image())})
     base = f"/api/applications/{pack['id']}"
     client.put(f"{base}/review", json={"reviewed": True})
@@ -174,7 +206,6 @@ def test_the_photo_is_in_the_styled_resume_only_and_it_still_passes_the_ats_chec
 
 
 def test_delete_everything_removes_the_photo(client: TestClient) -> None:
-    switch(client, True)
     client.post("/api/profile/photo", files={"file": ("me.png", image())})
 
     client.post("/api/delete-everything", json={"confirm": "DELETE"})

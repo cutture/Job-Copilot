@@ -33,9 +33,11 @@ type ProfileData = {
   accent_colour: AccentColour;
   // Headings for resume sections that fit no standard one.
   custom_sections: string[];
-  // A photo on the styled resume; none is kept while it's off.
+  // The person asked to add a photo of their own, since their resume has none.
   show_photo: boolean;
   has_photo: boolean;
+  // The photo is the uploaded resume's own, used without asking.
+  photo_from_resume: boolean;
   evidence: Evidence[];
 };
 
@@ -488,39 +490,42 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                   <button onClick={() => setCustom((headings) => [...headings, ""])}>Add a resume section</button>
                 )}
               </fieldset>
-              <label style={{ display: "block" }}>
-                <input
-                  type="checkbox"
-                  checked={form.show_photo}
-                  onChange={(event) => setForm((current) => current && { ...current, show_photo: event.target.checked })}
-                />{" "}
-                Photo on my styled resume
-              </label>
-              <p style={{ fontSize: 13, marginTop: 0 }}>
-                Off unless you turn it on. Your photo is never sent to an AI model, and turning this off deletes it.
-              </p>
-              {profile?.show_photo && (
-                <div style={{ marginBottom: 8 }}>
-                  {profile.has_photo && (
-                    <>
-                      <img
-                        src={`/api/profile/photo?v=${photoVersion}`}
-                        alt="Your photo"
-                        style={PHOTO_STYLE}
-                      />{" "}
-                      <button onClick={removePhoto}>Remove photo</button>
-                    </>
-                  )}
-                  {!profile.has_photo && (
-                    <p style={{ fontSize: 13, margin: "0 0 4px" }}>
-                      No photo yet. Upload your resume again to use its photo, or upload one here.
-                    </p>
-                  )}
-                  <label htmlFor="photo" style={{ display: "block" }}>
-                    Upload a photo
+              {profile?.photo_from_resume ? (
+                <p style={{ fontSize: 13 }}>
+                  <img src={`/api/profile/photo?v=${photoVersion}`} alt="Your photo" style={PHOTO_STYLE} /> Your
+                  resume's photo goes beside your name on your styled resume. It's never sent to an AI model.
+                </p>
+              ) : (
+                <>
+                  <label style={{ display: "block" }}>
+                    <input
+                      type="checkbox"
+                      checked={form.show_photo}
+                      onChange={(event) =>
+                        setForm((current) => current && { ...current, show_photo: event.target.checked })
+                      }
+                    />{" "}
+                    Add a photo to my resume
                   </label>
-                  <input id="photo" type="file" accept="image/jpeg,image/png" onChange={uploadPhoto} />
-                </div>
+                  <p style={{ fontSize: 13, marginTop: 0 }}>
+                    Your resume has no photo. Add one to show it beside your name on your styled resume. It's never sent
+                    to an AI model, and unticking this deletes it.
+                  </p>
+                  {form.show_photo && (
+                    <div style={{ marginBottom: 8 }}>
+                      {profile?.has_photo && (
+                        <>
+                          <img src={`/api/profile/photo?v=${photoVersion}`} alt="Your photo" style={PHOTO_STYLE} />{" "}
+                          <button onClick={removePhoto}>Remove photo</button>
+                        </>
+                      )}
+                      <label htmlFor="photo" style={{ display: "block" }}>
+                        Upload a photo
+                      </label>
+                      <input id="photo" type="file" accept="image/jpeg,image/png" onChange={uploadPhoto} />
+                    </div>
+                  )}
+                </>
               )}
               <label htmlFor="work-authorization">Work authorization</label>
               <input id="work-authorization" style={field} value={form.work_authorization} onChange={set("work_authorization")} />

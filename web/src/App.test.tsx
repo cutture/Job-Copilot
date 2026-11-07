@@ -142,7 +142,7 @@ describe("pasting a Job Posting", () => {
     const profile = {
       resume_filename: null, resume_text: null, extraction_status: null, work_authorization: null, lives_in: null, education: null, search_window_days: 15,
       languages: ["English"], seniority: null, roles: [], work_type: "employment", min_pay: [],
-      location_arrangements: ["remote"], location_places: [], custom_sections: [], show_photo: false, has_photo: false, evidence: [],
+      location_arrangements: ["remote"], location_places: [], custom_sections: [], show_photo: false, has_photo: false, photo_from_resume: false, evidence: [],
     };
     vi.stubGlobal(
       "fetch",
