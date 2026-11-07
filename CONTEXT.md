@@ -212,6 +212,10 @@ _Avoid_: Golden, fixture, test
 An eval result that must never happen, such as an Invented Claim reaching a final Application Pack.
 _Avoid_: Critical bug, blocker
 
+**Extra care**:
+The note "Extra care: evals are failing" on an Application Pack made while a checked Eval Case is failing, with a red banner on the dashboard. It clears once an Eval Run passes, and never blocks anything.
+_Avoid_: Warning mode, unsafe Pack
+
 **Tracked Score**:
 An eval measure watched for trends and judged against a target, which isn't a Hard Failure when missed.
 _Avoid_: Soft failure, KPI
