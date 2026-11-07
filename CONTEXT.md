@@ -128,6 +128,10 @@ _Avoid_: Theme, brand colour
 The check every downloaded file passes first: read the way an applicant tracking system reads it, it must have no tables, text boxes, header or footer text, and every Claim, the name and the contact line must come back intact and in order.
 _Avoid_: ATS score, resume score, keyword check
 
+**Keyword coverage**:
+How much of a posting's must-haves and nice-to-haves an Application Pack's resume answers, shown as a percentage for the person's information only. A Requirement counts when its Requirement Result is Met (in full) or Partial (half) and the resume cites Evidence that Result rests on; a Result resting on no Evidence item isn't counted. Nothing that writes or checks a Pack reads it.
+_Avoid_: ATS score, Match score, resume score
+
 **Resume section**:
 A titled part of an Application Pack's resume: Summary, Skills, Experience, Education, Qualifications, Affiliations, Certifications, or one the person names. Its order and headings come from the resume the person uploaded; with none, it's Summary, Skills, Experience, Education, Certifications.
 _Avoid_: Block, part, area
