@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { ConfirmDelete } from "./ConfirmDelete";
-import { ACCENTS, OUTCOMES, RESULTS, dollars, splitDates } from "./labels";
+import { ACCENTS, OUTCOMES, PHOTO_STYLE, RESULTS, dollars, splitDates } from "./labels";
 import type { AccentColour, Kind, Outcome, Result } from "./labels";
 
 type EvidenceRef = {
@@ -103,16 +103,6 @@ async function getApplication(id: string): Promise<ApplicationData> {
 
 // The top of both files, as they download: the styled pair's name is two-tone, its surname and
 // a thin rule in the accent colour.
-// The styled resume's photo, small and round beside the name, as the file sets it.
-const photoStyle: CSSProperties = {
-  width: 56,
-  height: 56,
-  borderRadius: "50%",
-  objectFit: "cover",
-  verticalAlign: "middle",
-  marginRight: 8,
-};
-
 function Header({ signature: { name, contact }, pair, accent, photo = false }: Props<{ photo?: boolean }>) {
   const colour = ACCENTS[accent].text;
   if (pair === "plain") {
@@ -128,7 +118,7 @@ function Header({ signature: { name, contact }, pair, accent, photo = false }: P
     <div style={{ textAlign: "center" }}>
       {(name || photo) && (
         <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "Calibri, sans-serif" }}>
-          {photo && <img src="/api/profile/photo" alt="Your photo" style={photoStyle} />}
+          {photo && <img src="/api/profile/photo" alt="Your photo" style={{ ...PHOTO_STYLE, marginRight: 8 }} />}
           {name && split > 0 && <span style={{ color: "#333333" }}>{name.slice(0, split + 1)}</span>}
           {name && <span style={{ color: colour }}>{name.slice(split + 1)}</span>}
         </div>

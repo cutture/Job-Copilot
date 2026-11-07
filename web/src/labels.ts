@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 // Shown on both the Application page and the Applications list.
 export type Outcome = "interview" | "offer" | "rejected" | "no_response";
 
@@ -38,3 +40,12 @@ export function splitDates(heading: string): [string, string | null] {
 export function dollars(cost: string): string {
   return `$${Number(cost).toFixed(4)}`;
 }
+
+// The photo, small and round, as the styled resume sets it beside the name.
+export const PHOTO_STYLE: CSSProperties = {
+  width: 56,
+  height: 56,
+  borderRadius: "50%",
+  objectFit: "cover",
+  verticalAlign: "middle",
+};

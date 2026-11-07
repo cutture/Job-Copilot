@@ -3,7 +3,7 @@ import type { ChangeEvent, CSSProperties } from "react";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { DeleteEverything, DeletionReportView } from "./DeleteEverything";
 import type { DeletionReport } from "./DeleteEverything";
-import { ACCENTS } from "./labels";
+import { ACCENTS, PHOTO_STYLE } from "./labels";
 import type { AccentColour } from "./labels";
 
 type Evidence = {
@@ -243,8 +243,9 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
     setError("");
     const body = new FormData();
     body.append("file", file);
-    const response = await fetch("/api/profile/photo", { method: "POST", body });
-    if (!response.ok) setError(await detail(response, "We couldn't use this photo. Try another."));
+    const response = await fetch("/api/profile/photo", { method: "POST", body }).catch(() => null);
+    if (!response) setError("We couldn't upload this photo. Try again.");
+    else if (!response.ok) setError(await detail(response, "We couldn't use this photo. Try another."));
     setPhotoVersion((version) => version + 1);
     refresh();
   }
@@ -505,10 +506,15 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                       <img
                         src={`/api/profile/photo?v=${photoVersion}`}
                         alt="Your photo"
-                        style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover", verticalAlign: "middle" }}
+                        style={PHOTO_STYLE}
                       />{" "}
                       <button onClick={removePhoto}>Remove photo</button>
                     </>
+                  )}
+                  {!profile.has_photo && (
+                    <p style={{ fontSize: 13, margin: "0 0 4px" }}>
+                      No photo yet. Upload your resume again to use its photo, or upload one here.
+                    </p>
                   )}
                   <label htmlFor="photo" style={{ display: "block" }}>
                     Upload a photo

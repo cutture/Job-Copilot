@@ -525,7 +525,7 @@ def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
                WHERE user_id = %s""",
             (filename, text, user_id),
         )
-        _keep_photo_from(conn, user_id, filename, content)
+        _keep_photo_from(conn, user_id, content)
         # A new resume replaces the old resume's unconfirmed items; confirmed ones stay.
         conn.execute(
             "DELETE FROM evidence WHERE user_id = %s AND origin = 'resume' AND NOT confirmed",
@@ -535,16 +535,19 @@ def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
     return get_profile(user_id)
 
 
-def _keep_photo_from(conn: Any, user_id: UUID, filename: str, content: bytes) -> None:
+def _keep_photo_from(conn: Any, user_id: UUID, content: bytes) -> None:
     """With the switch on, keep the resume's photo, if it has one that checks out."""
     on = conn.execute("SELECT show_photo FROM profiles WHERE user_id = %s", (user_id,)).fetchone()
-    found = photo_in_resume(filename, content) if on and on["show_photo"] else None
+    found = photo_in_resume(content) if on and on["show_photo"] else None
     try:
         photo = checked_photo(found) if found else None
     except ValueError:
         return
     if photo:
         conn.execute("UPDATE profiles SET photo = %s WHERE user_id = %s", (photo, user_id))
+
+
+NO_PHOTO = "There's no photo. Upload your resume again to use its photo, or upload one."
 
 
 @router.post("/api/profile/photo")
@@ -576,7 +579,7 @@ def get_photo(user_id: UserId) -> Response:
             (user_id,),
         ).fetchone()
     if row is None:
-        raise HTTPException(404, "There's no photo.")
+        raise HTTPException(404, NO_PHOTO)
     return Response(bytes(row["photo"]), media_type="image/jpeg")
 
 

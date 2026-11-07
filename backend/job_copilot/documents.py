@@ -314,7 +314,7 @@ def filename(name: str | None, role: str, employer: str | None, document: str) -
 
 
 def _rendered(
-    pack: Any, which: Literal["Resume", "Cover letter"], pair: Pair
+    pack: Any, which: Literal["Resume", "Cover letter"], pair: Pair, photo: bytes | None = None
 ) -> tuple[bytes, list[str]]:
     """The file, and the lines an ATS must read back from it in order."""
     name, contact, accent = pack["name"], pack["contact"], pack["accent_colour"]
@@ -322,7 +322,7 @@ def _rendered(
     if which == "Resume":
         resume = Resume(**pack["resume"])
         content = (
-            styled_resume_docx(resume, name, contact, accent, pack["photo"])
+            styled_resume_docx(resume, name, contact, accent, photo)
             if pair == "styled"
             else resume_docx(resume, name, contact)
         )
@@ -348,8 +348,17 @@ def _download(
 ) -> Response:
     with connect() as conn:
         pack = latest_pack(conn, user_id, application_id)
+        # Only the styled resume carries the photo.
+        stored = (
+            conn.execute(
+                "SELECT photo FROM profiles WHERE user_id = %s AND show_photo", (user_id,)
+            ).fetchone()
+            if which == "Resume" and pair == "styled"
+            else None
+        )
     check_reviewed(pack)
-    content, lines = _rendered(pack, which, pair)
+    photo = bytes(stored["photo"]) if stored and stored["photo"] else None
+    content, lines = _rendered(pack, which, pair, photo)
     found = ats.problems(content, lines)
     if found:
         raise HTTPException(

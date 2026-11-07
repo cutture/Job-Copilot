@@ -13,7 +13,8 @@ from PIL import Image
 from job_copilot import worker
 from job_copilot.photo import photo_in_resume
 from tests.conftest import TEST_DB, FakeProvider
-from tests.test_my_sections import ready_pack
+from tests.test_application_pack import apply, rated_match, run_worker
+from tests.test_my_sections import ready_pack, write_sections
 from tests.test_profile import upload
 
 # Text an uploaded photo carries in its metadata, which must never be kept.
@@ -72,21 +73,39 @@ def test_the_switch_is_off_by_default_and_no_photo_is_kept_or_shown_while_its_of
 def test_with_the_switch_on_a_resumes_photo_is_kept_and_never_reaches_the_model(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    # The Pack first, since its rating saves a Profile of its own.
-    pack = ready_pack(client, provider)
+    # The rating saves a Profile of its own, so the switch goes on after it.
+    posting_id, ids = rated_match(client, provider)
     switch(client, True)
     photo = image()
-
     upload_resume_with_photo(client, provider, photo)
+    write_sections(provider, ids)
+
+    application = apply(client, posting_id)
+    run_worker()
 
     assert client.get("/api/profile").json()["has_photo"] is True
     kept = stored_photo(client)
-    assert kept.status_code == 200
     assert kept.headers["content-type"] == "image/jpeg"
+    pack = client.get(f"/api/applications/{application['id']}").json()["pack"]
+    assert pack["status"] == "ready"
+    # Neither photo, nor any JPEG or PNG at all, is in what the resume reading or the Pack sent.
     sent = json.dumps(provider.received)
     for data in (photo, kept.content):
-        assert base64.b64encode(data).decode()[:200] not in sent
-    assert pack["status"] == "ready"
+        assert base64.b64encode(data).decode() not in sent
+    assert not any(start in sent for start in ("/9j/", "iVBORw0KGgo", "data:image"))
+
+
+def test_a_resumes_photo_is_its_biggest_portrait_not_a_logo_or_banner() -> None:
+    document = Document()
+    for size in [(48, 48), (900, 200), (200, 240)]:
+        document.add_picture(BytesIO(image(size=size)))
+    out = BytesIO()
+    document.save(out)
+
+    found = photo_in_resume(out.getvalue())
+
+    assert found is not None
+    assert Image.open(BytesIO(found)).size == (200, 240)
 
 
 def test_a_separate_upload_replaces_the_photo_as_one_small_image_without_its_metadata(
@@ -168,7 +187,7 @@ def test_a_photo_is_found_in_a_pdf_resume_too() -> None:
     pdf = BytesIO()
     Image.new("RGB", (300, 300), (10, 20, 30)).save(pdf, "PDF")
 
-    found = photo_in_resume("resume.pdf", pdf.getvalue())
+    found = photo_in_resume(pdf.getvalue())
 
     assert found is not None
     assert Image.open(BytesIO(found)).size == (300, 300)

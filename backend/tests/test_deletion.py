@@ -299,6 +299,13 @@ def test_every_table_with_a_persons_rows_is_deleted_by_delete_everything() -> No
         ).fetchall()
     # A new table holding a person's rows must join USER_TABLES, or EVAL_TABLES for eval data.
     assert {row[0] for row in found} == set(USER_TABLES) | set(EVAL_TABLES)
+    # Where the photo is kept is deleted too.
+    with psycopg.connect(TEST_DB) as conn:
+        photo = conn.execute(
+            """SELECT table_name FROM information_schema.columns
+               WHERE column_name = 'photo' AND table_schema = 'public'"""
+        ).fetchall()
+    assert photo and {row[0] for row in photo} <= set(USER_TABLES)
 
 
 def test_another_persons_items_cant_be_deleted(client: TestClient, provider: FakeProvider) -> None:

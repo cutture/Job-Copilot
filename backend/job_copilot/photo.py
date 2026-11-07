@@ -11,14 +11,15 @@ from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader
 
 MAX_PHOTO_BYTES = 5_000_000
-# Decoding a huge image can exhaust memory, so anything bigger is refused before it's decoded.
+# Decoding a huge image can exhaust memory, so one with more pixels is refused before decoding.
 MAX_PHOTO_PIXELS = 40_000_000
 # Small and round in the file, so a small square is enough.
 PHOTO_SIDE = 400
 # Icons and logos in a resume are smaller than this; a photo isn't.
 MIN_PHOTO_SIDE = 64
+# A photo is roughly square or portrait; a wide banner or logo isn't.
+PHOTO_SHAPES = (0.6, 1.6)
 NOT_AN_IMAGE = "This file isn't an image we can use. Upload a JPEG or PNG photo."
-Image.MAX_IMAGE_PIXELS = MAX_PHOTO_PIXELS
 
 
 def checked_photo(content: bytes) -> bytes:
@@ -26,6 +27,8 @@ def checked_photo(content: bytes) -> bytes:
     try:
         with Image.open(io.BytesIO(content)) as opened:
             if opened.format not in ("JPEG", "PNG"):
+                raise ValueError(NOT_AN_IMAGE)
+            if opened.width * opened.height > MAX_PHOTO_PIXELS:
                 raise ValueError(NOT_AN_IMAGE)
             opened.verify()
         # verify() leaves the image unusable, so it's opened again to decode it.
@@ -43,32 +46,50 @@ def checked_photo(content: bytes) -> bytes:
     return out.getvalue()
 
 
-def photo_in_resume(filename: str, content: bytes) -> bytes | None:
-    """The largest picture in a DOCX or PDF resume that's big enough to be a photo, if any."""
-    found: list[bytes] = []
+def _looks_like_a_photo(size: tuple[int, int]) -> bool:
+    width, height = size
+    low, high = PHOTO_SHAPES
+    return (
+        min(size) >= MIN_PHOTO_SIDE
+        and width * height <= MAX_PHOTO_PIXELS
+        and low <= width / height <= high
+    )
+
+
+def photo_in_resume(content: bytes) -> bytes | None:
+    """The picture in a DOCX or PDF resume most likely to be the person's photo, as PNG.
+
+    ponytail: the biggest square-ish picture wins, so a large square logo can beat a small
+    headshot; the person can upload the right photo instead.
+    """
+    found: list[Image.Image] = []
     try:
-        if filename.lower().endswith(".docx"):
-            with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                found = [
-                    archive.read(item)
-                    for item in archive.infolist()
-                    if item.filename.startswith("word/media/") and item.file_size <= MAX_PHOTO_BYTES
-                ]
+        if content.startswith(b"%PDF-"):
+            # pypdf decodes each picture with its colours and encoding applied, under its own cap
+            # on how much a stream may decompress to. A resume's photo is on its first page.
+            for picture in PdfReader(io.BytesIO(content)).pages[0].images:
+                if picture.image is not None and _looks_like_a_photo(picture.image.size):
+                    found.append(picture.image)
         else:
-            page = PdfReader(io.BytesIO(content)).pages[0]
-            found = [
-                picture.data for picture in page.images if len(picture.data) <= MAX_PHOTO_BYTES
-            ]
+            # read_resume has already checked how far the file unpacks.
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                for item in archive.infolist():
+                    if not item.filename.startswith("word/media/") or (
+                        item.file_size > MAX_PHOTO_BYTES
+                    ):
+                        continue
+                    try:
+                        with Image.open(io.BytesIO(archive.read(item))) as opened:
+                            if _looks_like_a_photo(opened.size):
+                                found.append(opened.convert("RGB"))
+                    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+                        continue  # A drawing or icon format that isn't a photo.
     except Exception:
         # A resume whose pictures can't be read still uploads; it just gives no photo.
         return None
-
-    def side(data: bytes) -> int:
-        try:
-            with Image.open(io.BytesIO(data)) as opened:
-                return min(opened.size)
-        except Exception:
-            return 0
-
-    photos = [data for data in found if side(data) >= MIN_PHOTO_SIDE]
-    return max(photos, key=len) if photos else None
+    if not found:
+        return None
+    best = max(found, key=lambda picture: picture.width * picture.height)
+    out = io.BytesIO()
+    best.convert("RGB").save(out, "PNG")
+    return out.getvalue()

@@ -192,6 +192,11 @@ describe("Profile setup", () => {
     expect(JSON.parse(String(calls.find((call) => call.method === "PUT")!.body)).show_photo).toBe(true);
 
     cleanup();
+    serve({ ...baseProfile, show_photo: true, has_photo: false });
+    render(<Profile />);
+    expect(await screen.findByText(/Upload your resume again to use its photo/)).toBeTruthy();
+
+    cleanup();
     const withPhoto = serve({ ...baseProfile, show_photo: true, has_photo: true });
     render(<Profile />);
     expect(await screen.findByRole("img", { name: "Your photo" })).toBeTruthy();
