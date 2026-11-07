@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from job_copilot import applications, deletion, documents, profile, rating, search, sources
+from job_copilot import applications, deletion, documents, export, profile, rating, search, sources
 from job_copilot.db import UserId, connect, current_user_id
 from job_copilot.sources import MAX_POSTING_LENGTH, MAX_TITLE_LENGTH
 
@@ -19,6 +19,7 @@ app.include_router(search.router)
 app.include_router(applications.router)
 app.include_router(documents.router)
 app.include_router(deletion.router)
+app.include_router(export.router)
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 

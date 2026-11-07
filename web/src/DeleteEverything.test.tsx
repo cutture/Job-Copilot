@@ -37,6 +37,14 @@ describe("DeleteEverything", () => {
     expect(sent).toEqual([JSON.stringify({ confirm: "DELETE", include_eval_runs: true })]);
   });
 
+  it("offers an export of the person's data first", () => {
+    render(<DeleteEverything onDeleted={() => {}} />);
+
+    const link = screen.getByRole("link", { name: "Download my data first" });
+    expect(link.getAttribute("href")).toBe("/api/export");
+    expect(link.hasAttribute("download")).toBe(true);
+  });
+
   it("lists the report", () => {
     render(<DeletionReportView report={report} />);
 

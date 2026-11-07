@@ -117,6 +117,11 @@ def check(posting_id: str) -> None:
             text = docx_text(get_bytes(f"{base}/{name}?pair={pair}"))
             leaked = sum(claim in text for claim in removed + APP_LABELS)
             print(f"{pair} {name}: {len(text.split())} words, removed or labels found: {leaked}")
+    # Read in memory and counted only; it holds the person's own data, so nothing is printed.
+    with zipfile.ZipFile(io.BytesIO(get_bytes("/api/export"))) as export:
+        names = export.namelist()
+    folders = {n.split("/")[1] for n in names if n.startswith("applications/")}
+    print(f"export: {len(names)} files, {len(folders)} Applications")
     print("cost:", call("GET", base)["cost_usd"])
 
 

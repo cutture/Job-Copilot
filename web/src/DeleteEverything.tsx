@@ -33,8 +33,16 @@ export function DeleteEverything({ onDeleted }: { onDeleted: (report: DeletionRe
       </p>
       <p style={{ fontSize: 13 }}>
         Some things are out of Job Copilot's reach: files you downloaded, what AI model providers already received, and
-        your API keys. The report afterwards says what happens to each. Export comes later, so download any files you
-        want to keep first.
+        your API keys. The report afterwards says what happens to each.
+      </p>
+      <p>
+        <a href="/api/export" download>
+          Download my data first
+        </a>{" "}
+        <span style={{ fontSize: 13 }}>
+          Your Profile, Applications and Application Packs as readable files, in one zip. Job Copilot can't import it
+          back.
+        </span>
       </p>
       <p>
         <label>
