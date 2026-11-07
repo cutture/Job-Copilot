@@ -29,6 +29,7 @@ from job_copilot.gateway import DataClass
 from job_copilot.profile import (
     PERSONAL_FIELDS,
     ReadKind,
+    SectionKind,
     SectionSpec,
     confirmed_evidence,
     ensure_profile,
@@ -87,8 +88,8 @@ RESUME_PROMPT = (
     + "You may only reorder and reword what the Evidence says: never add a skill, number, date, "
     "title, employer or achievement it doesn't state, and never make it sound bigger. Put first "
     "what best answers the posting's Requirements. Never write nationality, marital status, "
-    "birth date or religion. Reply with only a JSON object with a key for each section kind "
-    'listed in "sections", and no others:\n'
+    'birth date or religion. Reply with only a JSON object with a key for each "key" listed '
+    'in "sections", and no others:\n'
     '- "summary": two or three sentences, each {"text": ..., "evidence": [numbers]}\n'
     '- "skills": a list of {"text": one skill, "evidence": [numbers]}; for a "grouped" '
     'section, a list of groups instead, each {"group": {"text": the group\'s name, "evidence": '
@@ -97,6 +98,8 @@ RESUME_PROMPT = (
     '"evidence": [numbers]}, "bullets": [{"text": ..., "evidence": [numbers]}]}\n'
     '- "education", "qualifications", "affiliations", "certifications": a list of {"text": '
     '..., "evidence": [numbers]}\n'
+    '- a "custom" section\'s key: a list of {"text": ..., "evidence": [numbers]} for the '
+    'Evidence that fits its "heading", or an empty list if none does\n'
     '"evidence" lists the numbers of the Evidence items the text comes from.'
 )
 COVER_LETTER_PROMPT = (
@@ -122,7 +125,6 @@ VERIFY_PROMPT = (
     '"evidence": [numbers of the Evidence items that support it]}.'
 )
 
-SectionKind = Literal[ReadKind, "custom"]
 # The order a resume follows when the person uploaded none.
 DEFAULT_ORDER: tuple[ReadKind, ...] = (
     "summary",
@@ -444,9 +446,20 @@ def _drafts(items: Any, prefix: str, evidence: dict[int, Any]) -> list[DraftClai
     return [d for d in found if d]
 
 
+def _keys(sections: list[SectionSpec]) -> list[str]:
+    """Each section's key in the writer's answer: its kind, or customN for the Nth custom one."""
+    customs = iter(range(len(sections)))
+    return [f"custom{next(customs)}" if s["kind"] == "custom" else s["kind"] for s in sections]
+
+
 def write_resume(state: PackState) -> PackState:
     task = _writing_task(state, "resume")
-    task["sections"] = [{"kind": s["kind"], "grouped": s["grouped"]} for s in state["sections"]]
+    keys = _keys(state["sections"])
+    task["sections"] = [
+        {"key": key, "kind": s["kind"], "grouped": s["grouped"]}
+        | ({"heading": s["heading"]} if s["kind"] == "custom" else {})
+        for key, s in zip(keys, state["sections"], strict=True)
+    ]
     answer, model = _ask(state, "pack_resume", RESUME_PROMPT, task, WRITE_MAX_OUTPUT_TOKENS)
     answer = answer if isinstance(answer, dict) else {}
     evidence = state["evidence"]
@@ -460,7 +473,7 @@ def write_resume(state: PackState) -> PackState:
                 DraftRole(heading=heading, lines=_drafts(raw.get("bullets"), f"e{n}b", evidence))
             )
     resume = []
-    for wanted in state["sections"]:
+    for key, wanted in zip(keys, state["sections"], strict=True):
         kind = wanted["kind"]
         if kind == "experience":
             resume.append(
@@ -469,7 +482,7 @@ def write_resume(state: PackState) -> PackState:
                 )
             )
             continue
-        raw = answer.get(kind)
+        raw = answer.get(key)
         items = raw[:MAX_ITEMS] if isinstance(raw, list) else []
         if kind == "summary":
             items = [
@@ -479,7 +492,8 @@ def write_resume(state: PackState) -> PackState:
                 for sentence in SENTENCE_END.split(item["text"])
             ]
         grouped = [item for item in items if isinstance(item, dict) and "group" in item]
-        claims = _drafts([item for item in items if item not in grouped], PREFIXES[kind], evidence)
+        prefix = PREFIXES.get(kind) or f"u{key.removeprefix('custom')}l"
+        claims = _drafts([item for item in items if item not in grouped], prefix, evidence)
         groups: list[DraftGroup] = []
         for n, item in enumerate(grouped if kind == "skills" else []):
             skills = _drafts(item.get("skills"), f"g{n}s", evidence)
@@ -722,19 +736,22 @@ class WrittenPack(NamedTuple):
     model: str
 
 
-def resume_sections(theirs: list[SectionSpec]) -> list[SectionSpec]:
-    """The resume's sections: the person's own order and headings, else the default order.
+def resume_sections(theirs: list[SectionSpec], custom: list[str]) -> list[SectionSpec]:
+    """The resume's sections: the person's own order and headings, else the default order,
+    then their custom sections.
 
-    The core sections a person's resume names none of still come last, so nothing true is lost.
+    The core sections a person's resume names none of still come before the custom ones, so
+    nothing true is lost.
     """
+    customs = [SectionSpec(kind="custom", heading=h, grouped=False) for h in custom]
 
     def standard(kind: ReadKind) -> SectionSpec:
         return SectionSpec(kind=kind, heading=HEADINGS[kind], grouped=False)
 
     if not theirs:
-        return [standard(k) for k in DEFAULT_ORDER]
+        return [*(standard(k) for k in DEFAULT_ORDER), *customs]
     named = {section["kind"] for section in theirs}
-    return [*theirs, *(standard(k) for k in CORE_KINDS if k not in named)]
+    return [*theirs, *(standard(k) for k in CORE_KINDS if k not in named), *customs]
 
 
 def write_pack(
@@ -745,7 +762,7 @@ def write_pack(
     application_id: UUID | None = None,
     sections: list[SectionSpec] | None = None,
 ) -> WrittenPack:
-    """Write and verify a Pack, its resume in the person's own section order."""
+    """Write and verify a Pack, its resume in the given sections, else the default ones."""
     final = cast(
         PackState,
         WORKFLOW.invoke(
@@ -755,7 +772,7 @@ def write_pack(
                 posting=posting,
                 requirements=requirements,
                 evidence=evidence,
-                sections=resume_sections(sections or []),
+                sections=sections or resume_sections([], []),
             )
         ),
     )
@@ -787,7 +804,8 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
     evidence = _evidence(user_id)
     with connect() as conn:
         profile: Any = conn.execute(
-            "SELECT resume_sections FROM profiles WHERE user_id = %s", (user_id,)
+            "SELECT resume_sections, custom_sections FROM profiles WHERE user_id = %s",
+            (user_id,),
         ).fetchone()
     try:
         resume, letter, removed, model = write_pack(
@@ -796,7 +814,9 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
             row["requirements"],
             evidence,
             row["id"],
-            profile["resume_sections"] if profile else [],
+            resume_sections(profile["resume_sections"], profile["custom_sections"])
+            if profile
+            else None,
         )
     except gateway.GatewayError as error:
         # Includes the monthly cap: personal-data work waits rather than use another model.

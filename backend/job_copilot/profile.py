@@ -38,7 +38,7 @@ EXTRACTION_PROMPT = (
     "resume's own words as possible. Never add anything the resume doesn't say. Leave out the "
     "person's name and contact details, such as phone numbers, email and street addresses."
 )
-# The kinds of resume section a heading can map to; "other" headings aren't kept yet.
+# The standard kinds of resume section a heading can map to; any other becomes a custom section.
 ReadKind = Literal[
     "summary",
     "skills",
@@ -49,7 +49,15 @@ ReadKind = Literal[
     "certifications",
 ]
 SECTION_KINDS: tuple[ReadKind, ...] = get_args(ReadKind)
+SectionKind = Literal[ReadKind, "custom"]
 MAX_HEADING_LENGTH = 40
+MAX_CUSTOM_SECTIONS = 5
+# A heading shows in the downloaded files, so it carries no link or way to reach the person.
+LINK_OR_CONTACT = re.compile(
+    r"https?://|www\.|@|\b[\w-]+\.(?:com|org|net|io|dev|co|me|ai|app|info|uk|in)\b"
+    r"|\d[\d ().-]{5,}\d",
+    re.IGNORECASE,
+)
 # Personal fields a resume never carries, whatever the Evidence says.
 _FIELDS = (
     r"nationality|citizenship|marital(?: status)?|date of birth|birth ?date|d\.?o\.?b\.?|religion"
@@ -64,9 +72,32 @@ PERSONAL_HEADING = re.compile(rf"\b(?:{_FIELDS}|personal)(?!\w)", re.IGNORECASE)
 class SectionSpec(TypedDict):
     """One of the person's resume sections: its kind, their heading, and whether it groups."""
 
-    kind: ReadKind
+    kind: SectionKind
     heading: str
     grouped: bool
+
+
+def heading_refusal(heading: str) -> str | None:
+    """Why a custom section's heading can't be used, or None if it can."""
+    if len(heading) > MAX_HEADING_LENGTH:
+        return f"A section heading can be at most {MAX_HEADING_LENGTH} characters."
+    if LINK_OR_CONTACT.search(heading):
+        return "A section heading can't contain a link or contact details."
+    if PERSONAL_HEADING.search(heading):
+        return "A section heading can't name a personal field, such as nationality."
+    return None
+
+
+def _same_heading(heading: str) -> str:
+    return " ".join(heading.casefold().split())
+
+
+def merged_headings(*lists: list[str]) -> list[str]:
+    """Headings in order, each once whatever its case, up to the most a resume carries."""
+    seen: dict[str, str] = {}
+    for heading in (h for headings in lists for h in headings):
+        seen.setdefault(_same_heading(heading), heading)
+    return list(seen.values())[:MAX_CUSTOM_SECTIONS]
 
 
 # A long resume can need thousands of tokens of items, and a cut-off answer isn't valid JSON.
@@ -152,17 +183,24 @@ def _parse_reading(text: str) -> Any:
         return json.loads(text[: last_complete + 1] + ("]" if opening == "[" else "]}"))
 
 
-def _sections_from(raw: Any) -> list[SectionSpec]:
-    """The headings of the resume's own sections, mapped to known kinds, each kind once.
+def _sections_from(raw: Any) -> tuple[list[SectionSpec], list[str]]:
+    """The headings of the resume's own sections: those mapped to standard kinds, each kind
+    once, and the rest as custom headings.
 
-    A heading that names a personal field gives way to the standard one.
+    A standard heading that names a personal field gives way to the standard one; a custom
+    heading that can't be used isn't kept.
     """
     sections: dict[str, SectionSpec] = {}
+    custom: list[str] = []
     for section in raw if isinstance(raw, list) else []:
-        if not isinstance(section, dict) or section.get("kind") not in SECTION_KINDS:
+        if not isinstance(section, dict):
+            continue
+        heading = strip_controls(str(section.get("heading") or ""))[:MAX_HEADING_LENGTH]
+        if section.get("kind") not in SECTION_KINDS:
+            if heading and not heading_refusal(heading):
+                custom.append(heading)
             continue
         kind: ReadKind = section["kind"]
-        heading = strip_controls(str(section.get("heading") or ""))[:MAX_HEADING_LENGTH]
         if PERSONAL_HEADING.search(heading):
             heading = ""
         sections.setdefault(
@@ -173,10 +211,10 @@ def _sections_from(raw: Any) -> list[SectionSpec]:
                 grouped=section.get("grouped") is True and kind == "skills",
             ),
         )
-    return list(sections.values())
+    return list(sections.values()), merged_headings(custom)
 
 
-def _reading_from(answer: str) -> tuple[list[str], list[SectionSpec]]:
+def _reading_from(answer: str) -> tuple[list[str], tuple[list[SectionSpec], list[str]]]:
     """The Evidence items and the section headings in a reading of the resume."""
     parsed = _parse_reading(gateway.strip_fences(answer))
     items = parsed.get("items") if isinstance(parsed, dict) else parsed
@@ -209,7 +247,9 @@ def extract_evidence(user_id: UUID, payload: dict[str, Any]) -> None:
     items, sections = _reading_from(completion.text)
     with connect() as conn:
         current = conn.execute(
-            "SELECT resume_version FROM profiles WHERE user_id = %s FOR UPDATE", (user_id,)
+            """SELECT resume_version, custom_sections FROM profiles
+               WHERE user_id = %s FOR UPDATE""",
+            (user_id,),
         ).fetchone()
         if current is None or current["resume_version"] != version:
             return  # A newer resume was uploaded during the reading; its own reading follows.
@@ -223,10 +263,13 @@ def extract_evidence(user_id: UUID, payload: dict[str, Any]) -> None:
                 "INSERT INTO evidence (user_id, origin, text) VALUES (%s, 'resume', %s)",
                 (user_id, text),
             )
+        standard, custom = sections
         conn.execute(
-            """UPDATE profiles SET extraction_status = 'done', resume_sections = %s
+            # The person's own custom sections stay; the new file's are added after them.
+            """UPDATE profiles SET extraction_status = 'done', resume_sections = %s,
+                   custom_sections = %s
                WHERE user_id = %s""",
-            (Jsonb(sections), user_id),
+            (Jsonb(standard), Jsonb(merged_headings(current["custom_sections"], custom)), user_id),
         )
 
 
@@ -261,6 +304,7 @@ PREFERENCE_FIELDS = (
     "name",
     "contact",
     "accent_colour",
+    "custom_sections",
     "work_authorization",
     "lives_in",
     "education",
@@ -297,6 +341,8 @@ class Preferences(BaseModel):
     contact: ShortText | None = None
     # The colour of the styled resume and cover letter's name and headings.
     accent_colour: AccentColour = "navy"
+    # Headings for resume sections that fit no standard one, after the standard ones.
+    custom_sections: list[str] = Field(default_factory=list, max_length=MAX_CUSTOM_SECTIONS)
     work_authorization: ShortText | None = None
     lives_in: ShortText | None = None
     education: ShortText | None = None
@@ -321,6 +367,11 @@ class Preferences(BaseModel):
     @classmethod
     def clean_lists(cls, values: list[str]) -> list[str]:
         return _clean_list(values)
+
+    @field_validator("custom_sections")
+    @classmethod
+    def clean_headings(cls, values: list[str]) -> list[str]:
+        return merged_headings(_clean_list(values))
 
     @field_validator("languages")
     @classmethod
@@ -387,8 +438,13 @@ def save_preferences(preferences: Preferences, user_id: UserId) -> Profile:
         raise HTTPException(422, "Choose the currency for each Minimum Pay.")
     if len(set(currencies)) < len(currencies):
         raise HTTPException(422, "Give each currency only one Minimum Pay.")
+    for heading in preferences.custom_sections:
+        refusal = heading_refusal(heading)
+        if refusal:
+            raise HTTPException(422, refusal)
     values = preferences.model_dump()
     values["min_pay"] = Jsonb(values["min_pay"])
+    values["custom_sections"] = Jsonb(values["custom_sections"])
     assignments = ", ".join(f"{field} = %({field})s" for field in PREFERENCE_FIELDS)
     filter_now = ", ".join(FILTER_FIELDS)
     filter_new = ", ".join(f"%({field})s::{kind}" for field, kind in FILTER_FIELDS.items())

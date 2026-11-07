@@ -13,6 +13,7 @@ const baseProfile = {
   education: null,
   search_window_days: 15,
   accent_colour: "navy",
+  custom_sections: ["Volunteering", "Open Source"],
   languages: ["English"],
   seniority: null,
   roles: [],
@@ -159,6 +160,21 @@ describe("Profile setup", () => {
     expect(saved.location_arrangements).toEqual(["remote", "hybrid"]);
     expect(saved.languages).toEqual(["English"]);
     expect(saved.min_pay).toEqual([{ currency: "USD", yearly: 120000, hourly: 70 }]);
+  });
+
+  it("adds, renames and removes custom resume sections", async () => {
+    const calls = serve();
+    render(<Profile />);
+
+    fireEvent.change(await screen.findByLabelText("Custom section 1"), { target: { value: "Community Work" } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove Open Source" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add a section" }));
+    fireEvent.change(screen.getByLabelText("Custom section 2"), { target: { value: "Talks" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
+
+    await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
+    const saved = JSON.parse(String(calls.find((call) => call.method === "PUT")!.body));
+    expect(saved.custom_sections).toEqual(["Community Work", "Talks"]);
   });
 
   it("asks for the currency of a minimum saved without one", async () => {

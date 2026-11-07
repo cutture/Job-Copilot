@@ -31,6 +31,8 @@ type ProfileData = {
   location_places: string[];
   search_window_days: number;
   accent_colour: AccentColour;
+  // Headings for resume sections that fit no standard one.
+  custom_sections: string[];
   evidence: Evidence[];
 };
 
@@ -49,11 +51,15 @@ type Form = {
   location_places: string;
   search_window_days: string;
   accent_colour: AccentColour;
+  custom_sections: string[];
 };
 
 type PayRow = { currency: string; yearly: string; hourly: string };
 
 const REFRESH_MS = 2000;
+// As the server allows.
+const MAX_CUSTOM_SECTIONS = 5;
+const MAX_HEADING_LENGTH = 40;
 const CURRENCIES = ["USD", "EUR", "GBP", "INR", "AUD", "CAD", "SGD", "MYR", "THB", "IDR", "PHP", "VND", "AED", "CHF", "JPY"];
 const ARRANGEMENTS = [
   ["remote", "Remote"],
@@ -83,6 +89,7 @@ function toForm(profile: ProfileData): Form {
     location_places: profile.location_places.join(", "),
     search_window_days: String(profile.search_window_days),
     accent_colour: profile.accent_colour,
+    custom_sections: profile.custom_sections,
   };
 }
 
@@ -281,6 +288,7 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
         location_places: list(form.location_places),
         search_window_days: Number(form.search_window_days) || 15,
         accent_colour: form.accent_colour,
+        custom_sections: form.custom_sections.map((heading) => heading.trim()).filter(Boolean),
       }),
     });
     if (response.ok) {
@@ -293,6 +301,9 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
 
   const set = (key: keyof Form) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((current) => current && { ...current, [key]: event.target.value });
+
+  const setCustom = (change: (headings: string[]) => string[]) =>
+    setForm((current) => current && { ...current, custom_sections: change(current.custom_sections) });
 
   function setPay(index: number, key: keyof PayRow, value: string) {
     setForm(
@@ -421,6 +432,35 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                   </option>
                 ))}
               </select>
+              <fieldset style={{ border: "none", padding: 0, margin: "0 0 8px" }}>
+                <legend>Extra resume sections</legend>
+                <p style={{ fontSize: 13, marginTop: 0 }}>
+                  For what fits no standard section. They come after the standard sections and hold only lines
+                  your Evidence supports.
+                </p>
+                {form.custom_sections.map((heading, index) => (
+                  <div key={index} style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+                    <input
+                      aria-label={`Custom section ${index + 1}`}
+                      style={{ flex: 1 }}
+                      maxLength={MAX_HEADING_LENGTH}
+                      value={heading}
+                      onChange={(event) =>
+                        setCustom((headings) => headings.map((h, i) => (i === index ? event.target.value : h)))
+                      }
+                    />
+                    <button
+                      aria-label={`Remove ${heading || `custom section ${index + 1}`}`}
+                      onClick={() => setCustom((headings) => headings.filter((_, i) => i !== index))}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                {form.custom_sections.length < MAX_CUSTOM_SECTIONS && (
+                  <button onClick={() => setCustom((headings) => [...headings, ""])}>Add a section</button>
+                )}
+              </fieldset>
               <label htmlFor="work-authorization">Work authorization</label>
               <input id="work-authorization" style={field} value={form.work_authorization} onChange={set("work_authorization")} />
               <label htmlFor="lives-in">Where you live</label>
