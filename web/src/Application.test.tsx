@@ -59,11 +59,11 @@ function application(
       coverage: ready
         ? {
             score: 75,
-            requirements: [
+            counted: [
               { requirement: "Python", kind: "must_have", result: "met", in_resume: true },
               { requirement: "Retrieval", kind: "must_have", result: "partial", in_resume: true },
               { requirement: "SQL", kind: "must_have", result: "met", in_resume: false },
-              { requirement: "Terraform", kind: "nice_to_have", result: "missing", in_resume: false },
+              { requirement: "Terraform", kind: "nice_to_have", result: "missing", in_resume: null },
             ],
           }
         : null,

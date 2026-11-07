@@ -1,14 +1,13 @@
-"""The keyword coverage score: how much of a posting's Requirements the resume answers.
+"""Keyword coverage: how much of a posting's Requirements the resume answers.
 
 It's for the person to read. Nothing that writes, verifies or renders a Pack reads it, so it
 can never push a keyword into a resume.
 """
 
-from typing import Any
-
 from pydantic import BaseModel
 
 from job_copilot import bands
+from job_copilot.rating import RequirementView
 
 # What a Requirement the resume answers counts for; Missing and Unknown count nothing.
 WEIGHTS: dict[str, float] = {"met": 1.0, "partial": 0.5}
@@ -16,37 +15,43 @@ WEIGHTS: dict[str, float] = {"met": 1.0, "partial": 0.5}
 COUNTED_KINDS = ("must_have", "nice_to_have")
 
 
-class CoveredRequirement(BaseModel):
+class CountedRequirement(BaseModel):
     requirement: str
     kind: bands.Kind
     result: bands.Result
-    # The resume cites Evidence this Requirement Result rests on.
-    in_resume: bool
+    # Whether the resume cites Evidence the Result rests on; None for Missing or Unknown.
+    in_resume: bool | None
 
 
 class Coverage(BaseModel):
     # Percent, from 0 to 100.
     score: int
-    requirements: list[CoveredRequirement]
+    counted: list[CountedRequirement]
 
 
-def keyword_coverage(requirements: list[dict[str, Any]], cited: set[int]) -> Coverage | None:
-    """The score from an Application's Requirement Results and the Evidence its resume cites.
+def keyword_coverage(requirements: list[RequirementView], cited: set[int]) -> Coverage | None:
+    """Keyword coverage from an Application's Requirement Results and the Evidence its resume
+    cites. None when there's nothing to count.
 
     A Requirement counts when its Result is Met or Partial and the resume cites Evidence the
-    Result rests on. None when there's nothing to count.
+    Result rests on. A Submitted resume still cites Evidence deleted since, as it was sent.
     """
-    counted = [
-        CoveredRequirement(
-            requirement=r["requirement"],
-            kind=r["kind"],
-            result=r["result"],
-            in_resume=r["result"] in WEIGHTS and bool(cited & set(r.get("evidence_ids", []))),
+    counted = []
+    for r in requirements:
+        answered = r.result in WEIGHTS
+        # A Result resting on no Evidence item, such as one a Profile fact decides or one rated
+        # before Evidence IDs were kept, can't be traced to the resume.
+        if r.kind not in COUNTED_KINDS or (answered and not r.evidence_ids):
+            continue
+        counted.append(
+            CountedRequirement(
+                requirement=r.requirement,
+                kind=r.kind,
+                result=r.result,
+                in_resume=bool(cited & set(r.evidence_ids)) if answered else None,
+            )
         )
-        for r in requirements
-        if r["kind"] in COUNTED_KINDS
-    ]
     if not counted:
         return None
-    answered = sum(WEIGHTS[r.result] for r in counted if r.in_resume)
-    return Coverage(score=round(100 * answered / len(counted)), requirements=counted)
+    score = sum(WEIGHTS[r.result] for r in counted if r.in_resume)
+    return Coverage(score=round(100 * score / len(counted)), counted=counted)

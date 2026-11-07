@@ -106,9 +106,9 @@ def check(posting_id: str) -> None:
     print("cover letter sentences:", [len(p) for p in pack["cover_letter"]["paragraphs"]])
     removed = [r["text"] for r in pack["removed_claims"]]
     print("removed claims:", dict(Counter(r["kind"] for r in pack["removed_claims"])))
-    coverage = pack["coverage"] or {"score": None, "requirements": []}
-    in_resume = sum(r["in_resume"] for r in coverage["requirements"])
-    counted = len(coverage["requirements"])
+    coverage = pack["coverage"] or {"score": None, "counted": []}
+    in_resume = sum(bool(r["in_resume"]) for r in coverage["counted"])
+    counted = len(coverage["counted"])
     print(f"keyword coverage: {coverage['score']}%, {in_resume} of {counted} in the resume")
     call("PUT", f"{base}/review", {"reviewed": True})
     # Both pairs; each download has already passed the app's own ATS check.

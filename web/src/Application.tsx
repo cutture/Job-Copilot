@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ACCENTS, OUTCOMES, RESULTS, dollars, splitDates } from "./labels";
-import type { AccentColour, Outcome, Result } from "./labels";
+import type { AccentColour, Kind, Outcome, Result } from "./labels";
 
 type EvidenceRef = {
   text: string;
@@ -30,12 +30,12 @@ type SectionKind =
   | "custom";
 type Group = { heading: Claim; claims: Claim[] };
 type Section = { kind: SectionKind; heading: string; claims: Claim[]; groups: Group[]; roles: Role[] };
-type CoveredRequirement = {
+type CountedRequirement = {
   requirement: string;
-  kind: "must_have" | "nice_to_have";
+  kind: Exclude<Kind, "hard_blocker">;
   result: Result;
-  // The resume cites Evidence this Requirement Result rests on.
-  in_resume: boolean;
+  // Whether the resume cites Evidence the Result rests on; null for Missing or Unknown.
+  in_resume: boolean | null;
 };
 type Pack = {
   version: number;
@@ -46,7 +46,7 @@ type Pack = {
   cover_letter: { paragraphs: Claim[][] } | null;
   removed_claims: RemovedClaim[] | null;
   // For information only: nothing that writes or renders the Pack uses it.
-  coverage: { score: number; requirements: CoveredRequirement[] } | null;
+  coverage: { score: number; counted: CountedRequirement[] } | null;
 };
 export type ApplicationData = {
   id: string;
@@ -231,18 +231,17 @@ function allClaims(pack: Pack): Claim[] {
 }
 
 function KeywordCoverage({ coverage }: { coverage: NonNullable<Pack["coverage"]> }) {
-  const covered = (r: CoveredRequirement) =>
-    r.in_resume ? ", in your resume" : r.result === "met" || r.result === "partial" ? ", not in this resume" : "";
+  const where = { true: ", in your resume", false: ", not in this resume", null: "" };
   return (
     <section aria-label="Keyword coverage" style={{ fontSize: 13, marginBottom: 8 }}>
       <b>Keyword coverage: {coverage.score}%</b> of the posting's Requirements, from your Requirement Results. It's
       for your information only: the Pack never adds a keyword your Evidence doesn't support.
       <ul style={{ margin: "4px 0" }}>
-        {coverage.requirements.map((r) => (
-          <li key={r.requirement}>
+        {coverage.counted.map((r, position) => (
+          <li key={position}>
             {r.requirement}
             {r.kind === "nice_to_have" && " (nice-to-have)"}: {RESULTS[r.result]}
-            {covered(r)}
+            {where[`${r.in_resume}`]}
           </li>
         ))}
       </ul>

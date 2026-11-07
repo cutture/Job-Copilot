@@ -34,7 +34,7 @@ from job_copilot.profile import (
     ensure_profile,
     strip_controls,
 )
-from job_copilot.rating import RATING_MODEL
+from job_copilot.rating import RATING_MODEL, RequirementView
 
 # Personal data must never reach LangSmith, whatever the environment says.
 os.environ["LANGSMITH_TRACING"] = "false"
@@ -59,7 +59,8 @@ EDUCATION_EVIDENCE = 0
 # The cover letter is about the posting's main Requirements.
 MAIN_KINDS = {"hard_blocker", "must_have"}
 # A failed model call costs nothing, so it is tried once more before the Pack waits.
-RETRY = RetryPolicy(max_attempts=2, retry_on=gateway.ModelUnavailable)
+# An answer that isn't JSON, such as one with an unescaped quote, is usually fine when asked again.
+RETRY = RetryPolicy(max_attempts=2, retry_on=(gateway.ModelUnavailable, json.JSONDecodeError))
 STILL_WORKS = "Your Job Posting is saved, and everything else still works."
 WARNINGS = {
     "model_unavailable": f"Our AI model isn't responding, so this Application Pack is waiting. "
@@ -894,7 +895,11 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
             resume=resume,
             cover_letter=CoverLetter(**row["cover_letter"]) if ready else None,
             removed_claims=[RemovedClaim(**r) for r in row["removed_claims"]] if ready else None,
-            coverage=keyword_coverage(row["requirements"], _cited_ids(resume)) if resume else None,
+            coverage=keyword_coverage(
+                [RequirementView.model_validate(r) for r in row["requirements"]], _cited_ids(resume)
+            )
+            if resume
+            else None,
         )
     )
     return ApplicationView(

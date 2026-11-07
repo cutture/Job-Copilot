@@ -8,9 +8,11 @@ export const OUTCOMES: Record<Outcome, string> = {
   no_response: "No response",
 };
 
+export type Kind = "hard_blocker" | "must_have" | "nice_to_have";
 export type Result = "met" | "partial" | "missing" | "unknown";
 
-// A Requirement Result, as the Matches and the Final documents show it.
+// A Requirement's kind and Result, as the Matches and the Application page show them.
+export const KINDS: Record<Kind, string> = { hard_blocker: "Hard Blocker", must_have: "Must-have", nice_to_have: "Nice-to-have" };
 export const RESULTS: Record<Result, string> = { met: "Met", partial: "Partial", missing: "Missing", unknown: "Unknown" };
 
 export type AccentColour = "navy" | "teal" | "burgundy" | "gold";
