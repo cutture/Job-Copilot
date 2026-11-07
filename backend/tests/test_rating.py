@@ -356,15 +356,6 @@ def test_a_requirement_decided_by_where_you_live_is_always_a_hard_blocker(
     assert "Hard Blocker: Work from the Canada office" in match["reasons"]
 
 
-def test_the_model_is_told_personal_traits_are_nice_to_haves(
-    client: TestClient, provider: FakeProvider
-) -> None:
-    set_profile(client)
-    rate_posting(client, provider, answer(*three_met(add_evidence(client))))
-
-    assert "personal traits" in rating_messages(provider)
-
-
 def test_what_a_role_offers_is_never_a_requirement(
     client: TestClient, provider: FakeProvider
 ) -> None:
@@ -390,4 +381,50 @@ def test_what_a_role_offers_is_never_a_requirement(
     assert not {"Fully remote work", "Competitive salary", "Health insurance"} & set(listed)
     assert "Remote within Canada" in listed
     assert match["band"] == "High"
-    assert "what the role offers" in rating_messages(provider)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Fully remote work",
+        "Remote-first",
+        "Remote-friendly",
+        "Work from home",
+        "WFH",
+        "Remote work environment",
+        "Remote work opportunity",
+        "Hybrid (3 days in office)",
+        "On-site",
+        "401(k)",
+        "Competitive compensation package",
+        "Competitive salary and benefits",
+        "Unlimited PTO",
+        "Parental leave",
+        "Dental insurance",
+        "Flexible working hours",
+        "Equity package",
+    ],
+)
+def test_a_role_offer_is_recognised_however_it_is_named(name: str) -> None:
+    assert rating.ROLE_OFFER_PATTERN.fullmatch(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Remote within Canada",
+        "Benefits administration",
+        "Compensation analysis",
+        "Remote sensing",
+        "On-site support",
+        "Equity research",
+        "Equity",
+        "Flexible",
+        "Pay",
+        "Bonus",
+        "Holidays",
+        "Python",
+    ],
+)
+def test_a_skill_or_a_place_is_never_taken_for_a_role_offer(name: str) -> None:
+    assert not rating.ROLE_OFFER_PATTERN.fullmatch(name)

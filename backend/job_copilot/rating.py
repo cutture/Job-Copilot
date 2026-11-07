@@ -68,16 +68,25 @@ PROMPT = (
     '- "languages": the spoken languages the posting requires, each {"language": name, '
     '"quote": the words}. Leave languages out of "requirements". Leave out what the role '
     "offers, such as its work arrangement (remote, hybrid or on-site), pay or benefits: they "
-    "describe the job, not the person. A limit on where the person must live or work is still "
+    "describe the role, not the person. A limit on where the person must live or work is still "
     "a hard_blocker."
 )
-# What a role offers, named on its own, as a model may still list it. A name with a place in it,
-# such as "Remote within Canada", doesn't match, so a limit on where someone works stays.
-ROLE_OFFERS = re.compile(
-    r"(?:fully |100% )?(?:remote|hybrid|on[- ]?site|in[- ]office|flexible)"
-    r"(?: work(?:ing)?| role| position| job| hours| schedule| arrangement)?"
-    r"|(?:competitive |good |attractive )?(?:salary|pay|compensation|equity|stock options|"
-    r"bonus(?:es)?|benefits|health insurance|paid time off|pto|vacation|holidays?|pension)",
+# What a role offers, as a model may still name it on its own. The whole name must match, so a
+# skill such as "Benefits administration" stays, and so does a name with a place in it, such as
+# "Remote within Canada". A bare arrangement such as "On-site" goes: only postings that pass the
+# Filter are rated, and the Filter has already decided where the person can work.
+# ponytail: a fixed English list; widen it if offers still show up in Eval Runs.
+_OFFER = (
+    r"(?:remote(?:[- ](?:first|friendly|only))?|hybrid|on[- ]?site|in[- ]office"
+    r"|work(?:ing)? from (?:home|anywhere)|wfh|salary|compensation|(?:competitive|good) pay"
+    r"|stock options|equity (?:grants?|package)|401\(?k\)?|stipends?|benefits"
+    r"|(?:health|dental|vision|medical|life) insurance|paid time off|pto|vacation|parental leave"
+    r"|pension|flexible (?:hours|working(?: hours)?|schedule))"
+)
+_WORDS = r"(?:fully |100% |competitive |attractive |generous |unlimited )*"
+_TAIL = r"(?: (?:work(?:ing)?|role|position|environment|opportunity|package|arrangement|policy))*"
+ROLE_OFFER_PATTERN = re.compile(
+    rf"{_WORDS}{_OFFER}(?: (?:and|&) {_WORDS}{_OFFER})*{_TAIL}(?: ?\([^)]*\))?",
     re.IGNORECASE,
 )
 
@@ -232,8 +241,10 @@ def judge(answer: Any, posting: str, evidence: dict[int, str], facts: dict[str, 
         if not quote:
             continue
         judged = _judge(raw, quote, evidence, facts, asks)
-        # It describes the job, not the person, so no Evidence could ever meet it.
-        if judged.kind != "hard_blocker" and ROLE_OFFERS.fullmatch(judged.requirement.strip()):
+        # It describes the role, not the person, so no Evidence could ever meet it.
+        if judged.kind != "hard_blocker" and ROLE_OFFER_PATTERN.fullmatch(
+            judged.requirement.strip()
+        ):
             continue
         requirements.append(judged)
     languages = _languages(answer, posting, facts["languages"])
