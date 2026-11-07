@@ -65,6 +65,16 @@ REGIONS = {
     "middle east",
     "africa",
 }
+# The posting's own words for an office role, which an instruction to the AI can't undo. A
+# visit, or no requirement, doesn't make a role on-site.
+# ponytail: English phrasings only; add others as postings in other languages pass Filter.
+ON_SITE_WORDS = re.compile(
+    r"(?<!no )(?<!not )\bon[- ]?site\b(?! visits?\b| requirement)"
+    r"|\boffice[- ]based\b"
+    r"|\b(?:five|four|three|5|4|3) days a week in (?:the|our|an?) (?:\w+ ){0,2}office\b",
+    re.IGNORECASE,
+)
+HYBRID_WORDS = re.compile(r"\bhybrid\b", re.IGNORECASE)
 MAX_PLACES_IN_REASON = 3
 MAX_PLACE_LENGTH = 40
 # Common words that mark a language. Words shared with English, like "in", are left out.
@@ -234,6 +244,16 @@ def decide(facts: PostingFacts, preferences: dict[str, Any]) -> Decision:
     return Decision(True)
 
 
+def stated_arrangement(text: str) -> Literal["hybrid", "on_site"] | None:
+    """What the posting's own words say about working from an office, if anything.
+
+    A hybrid role names its office days too, so hybrid wins over on-site.
+    """
+    if HYBRID_WORDS.search(text):
+        return "hybrid"
+    return "on_site" if ON_SITE_WORDS.search(text) else None
+
+
 def read_facts(user_id: UUID, posting_text: str) -> PostingFacts:
     completion = gateway.complete(
         user_id=user_id,
@@ -246,7 +266,12 @@ def read_facts(user_id: UUID, posting_text: str) -> PostingFacts:
         ],
         max_output_tokens=FILTER_MAX_OUTPUT_TOKENS,
     )
-    return PostingFacts.model_validate(gateway.parse_json(completion.text))
+    facts = PostingFacts.model_validate(gateway.parse_json(completion.text))
+    # The posting is untrusted and may tell the model it's remote; its own words say otherwise.
+    stated = stated_arrangement(posting_text)
+    if stated and facts.work_arrangement in ("remote", "unknown"):
+        facts.work_arrangement = stated
+    return facts
 
 
 def preferences_for(user_id: UUID) -> dict[str, Any]:
