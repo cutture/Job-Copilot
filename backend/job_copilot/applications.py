@@ -446,20 +446,35 @@ def _drafts(items: Any, prefix: str, evidence: dict[int, Any]) -> list[DraftClai
     return [d for d in found if d]
 
 
-def _keys(sections: list[SectionSpec]) -> list[str]:
-    """Each section's key in the writer's answer: its kind, or customN for the Nth custom one."""
-    customs = iter(range(len(sections)))
-    return [f"custom{next(customs)}" if s["kind"] == "custom" else s["kind"] for s in sections]
+class Keyed(NamedTuple):
+    """A resume section as the writer is asked for it."""
+
+    key: str
+    prefix: str
+    task: dict[str, Any]
+    spec: SectionSpec
+
+
+def _keyed(sections: list[SectionSpec]) -> list[Keyed]:
+    """Each section's key in the writer's answer and its Claim ID prefix: its kind's, or customN
+    and uN for the Nth custom section, which is asked for by its heading."""
+    keyed, customs = [], 0
+    for spec in sections:
+        task: dict[str, Any] = {"kind": spec["kind"], "grouped": spec["grouped"]}
+        if spec["kind"] == "custom":
+            key, prefix = f"custom{customs}", f"u{customs}l"
+            task["heading"] = spec["heading"]
+            customs += 1
+        else:
+            key, prefix = spec["kind"], PREFIXES[spec["kind"]]
+        keyed.append(Keyed(key, prefix, {"key": key, **task}, spec))
+    return keyed
 
 
 def write_resume(state: PackState) -> PackState:
     task = _writing_task(state, "resume")
-    keys = _keys(state["sections"])
-    task["sections"] = [
-        {"key": key, "kind": s["kind"], "grouped": s["grouped"]}
-        | ({"heading": s["heading"]} if s["kind"] == "custom" else {})
-        for key, s in zip(keys, state["sections"], strict=True)
-    ]
+    keyed = _keyed(state["sections"])
+    task["sections"] = [k.task for k in keyed]
     answer, model = _ask(state, "pack_resume", RESUME_PROMPT, task, WRITE_MAX_OUTPUT_TOKENS)
     answer = answer if isinstance(answer, dict) else {}
     evidence = state["evidence"]
@@ -473,7 +488,7 @@ def write_resume(state: PackState) -> PackState:
                 DraftRole(heading=heading, lines=_drafts(raw.get("bullets"), f"e{n}b", evidence))
             )
     resume = []
-    for key, wanted in zip(keys, state["sections"], strict=True):
+    for key, prefix, _, wanted in keyed:
         kind = wanted["kind"]
         if kind == "experience":
             resume.append(
@@ -492,7 +507,6 @@ def write_resume(state: PackState) -> PackState:
                 for sentence in SENTENCE_END.split(item["text"])
             ]
         grouped = [item for item in items if isinstance(item, dict) and "group" in item]
-        prefix = PREFIXES.get(kind) or f"u{key.removeprefix('custom')}l"
         claims = _drafts([item for item in items if item not in grouped], prefix, evidence)
         groups: list[DraftGroup] = []
         for n, item in enumerate(grouped if kind == "skills" else []):
@@ -744,6 +758,8 @@ def resume_sections(theirs: list[SectionSpec], custom: list[str]) -> list[Sectio
     nothing true is lost.
     """
     customs = [SectionSpec(kind="custom", heading=h, grouped=False) for h in custom]
+    # The file's own custom headings are kept only to tell what a new file adds.
+    theirs = [section for section in theirs if section["kind"] != "custom"]
 
     def standard(kind: ReadKind) -> SectionSpec:
         return SectionSpec(kind=kind, heading=HEADINGS[kind], grouped=False)

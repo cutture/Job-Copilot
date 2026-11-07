@@ -433,7 +433,7 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                 ))}
               </select>
               <fieldset style={{ border: "none", padding: 0, margin: "0 0 8px" }}>
-                <legend>Extra resume sections</legend>
+                <legend>Your own resume sections</legend>
                 <p style={{ fontSize: 13, marginTop: 0 }}>
                   For what fits no standard section. They come after the standard sections and hold only lines
                   your Evidence supports.
@@ -441,7 +441,7 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                 {form.custom_sections.map((heading, index) => (
                   <div key={index} style={{ display: "flex", gap: 8, marginBottom: 4 }}>
                     <input
-                      aria-label={`Custom section ${index + 1}`}
+                      aria-label={`Resume section ${index + 1}`}
                       style={{ flex: 1 }}
                       maxLength={MAX_HEADING_LENGTH}
                       value={heading}
@@ -450,7 +450,7 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                       }
                     />
                     <button
-                      aria-label={`Remove ${heading || `custom section ${index + 1}`}`}
+                      aria-label={`Remove ${heading || `resume section ${index + 1}`}`}
                       onClick={() => setCustom((headings) => headings.filter((_, i) => i !== index))}
                     >
                       Remove
@@ -458,7 +458,7 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                   </div>
                 ))}
                 {form.custom_sections.length < MAX_CUSTOM_SECTIONS && (
-                  <button onClick={() => setCustom((headings) => [...headings, ""])}>Add a section</button>
+                  <button onClick={() => setCustom((headings) => [...headings, ""])}>Add a resume section</button>
                 )}
               </fieldset>
               <label htmlFor="work-authorization">Work authorization</label>

@@ -6,7 +6,7 @@ import re
 import unicodedata
 import zipfile
 from datetime import datetime
-from typing import Annotated, Any, Literal, TypedDict, get_args
+from typing import Annotated, Any, Literal, NamedTuple, TypedDict, get_args
 from uuid import UUID
 
 from docx import Document
@@ -52,12 +52,17 @@ SECTION_KINDS: tuple[ReadKind, ...] = get_args(ReadKind)
 SectionKind = Literal[ReadKind, "custom"]
 MAX_HEADING_LENGTH = 40
 MAX_CUSTOM_SECTIONS = 5
-# A heading shows in the downloaded files, so it carries no link or way to reach the person.
+# A heading shows in the downloaded files, so it carries no link or way to reach the person:
+# a web address, an email or handle, a profile path, or a phone number of 9 or more digits, so
+# year ranges such as "2019-2024" stay.
+# ponytail: an address spelled out ("sam at example dot com") isn't caught; add it if seen.
 LINK_OR_CONTACT = re.compile(
-    r"https?://|www\.|@|\b[\w-]+\.(?:com|org|net|io|dev|co|me|ai|app|info|uk|in)\b"
-    r"|\d[\d ().-]{5,}\d",
+    r"https?://|www\.|\S@|@\w|\b(?:linkedin|github|gitlab|twitter|behance|dribbble)(?:\.com)?/"
+    r"|(?:\+?\d[\s().-]*){9,}",
     re.IGNORECASE,
 )
+# A domain in lower case, as addresses are written, so "ASP.NET" and "Grad.in" stay.
+DOMAIN = re.compile(r"\b[a-z0-9-]+\.(?:com|org|net|io|dev|co|me|ai|app|info|uk|in)\b")
 # Personal fields a resume never carries, whatever the Evidence says.
 _FIELDS = (
     r"nationality|citizenship|marital(?: status)?|date of birth|birth ?date|d\.?o\.?b\.?|religion"
@@ -67,6 +72,11 @@ PERSONAL_FIELDS = re.compile(
     rf"\b(?:{_FIELDS})\s*[:\-–]|\bborn(?: on| in)?\s+\d|\b(?:un)?married\b", re.IGNORECASE
 )
 PERSONAL_HEADING = re.compile(rf"\b(?:{_FIELDS}|personal)(?!\w)", re.IGNORECASE)
+# A section of personal fields; "Personal Projects" is an honest custom section.
+PERSONAL_SECTION = re.compile(
+    rf"\b(?:{_FIELDS}|personal (?:details|information|info|data|particulars))(?!\w)",
+    re.IGNORECASE,
+)
 
 
 class SectionSpec(TypedDict):
@@ -77,13 +87,20 @@ class SectionSpec(TypedDict):
     grouped: bool
 
 
+class Headings(NamedTuple):
+    """A resume's headings: those mapped to standard kinds, and the rest as custom ones."""
+
+    standard: list[SectionSpec]
+    custom: list[str]
+
+
 def heading_refusal(heading: str) -> str | None:
     """Why a custom section's heading can't be used, or None if it can."""
     if len(heading) > MAX_HEADING_LENGTH:
         return f"A section heading can be at most {MAX_HEADING_LENGTH} characters."
-    if LINK_OR_CONTACT.search(heading):
+    if LINK_OR_CONTACT.search(heading) or DOMAIN.search(heading):
         return "A section heading can't contain a link or contact details."
-    if PERSONAL_HEADING.search(heading):
+    if PERSONAL_SECTION.search(heading):
         return "A section heading can't name a personal field, such as nationality."
     return None
 
@@ -183,7 +200,7 @@ def _parse_reading(text: str) -> Any:
         return json.loads(text[: last_complete + 1] + ("]" if opening == "[" else "]}"))
 
 
-def _sections_from(raw: Any) -> tuple[list[SectionSpec], list[str]]:
+def _sections_from(raw: Any) -> Headings:
     """The headings of the resume's own sections: those mapped to standard kinds, each kind
     once, and the rest as custom headings.
 
@@ -211,10 +228,10 @@ def _sections_from(raw: Any) -> tuple[list[SectionSpec], list[str]]:
                 grouped=section.get("grouped") is True and kind == "skills",
             ),
         )
-    return list(sections.values()), merged_headings(custom)
+    return Headings(list(sections.values()), merged_headings(custom))
 
 
-def _reading_from(answer: str) -> tuple[list[str], tuple[list[SectionSpec], list[str]]]:
+def _reading_from(answer: str) -> tuple[list[str], Headings]:
     """The Evidence items and the section headings in a reading of the resume."""
     parsed = _parse_reading(gateway.strip_fences(answer))
     items = parsed.get("items") if isinstance(parsed, dict) else parsed
@@ -247,7 +264,7 @@ def extract_evidence(user_id: UUID, payload: dict[str, Any]) -> None:
     items, sections = _reading_from(completion.text)
     with connect() as conn:
         current = conn.execute(
-            """SELECT resume_version, custom_sections FROM profiles
+            """SELECT resume_version, resume_sections, custom_sections FROM profiles
                WHERE user_id = %s FOR UPDATE""",
             (user_id,),
         ).fetchone()
@@ -263,13 +280,20 @@ def extract_evidence(user_id: UUID, payload: dict[str, Any]) -> None:
                 "INSERT INTO evidence (user_id, origin, text) VALUES (%s, 'resume', %s)",
                 (user_id, text),
             )
-        standard, custom = sections
+        # The file's custom headings are kept with its standard ones, so a new file adds only
+        # headings the last one didn't have: a section the person removed stays removed.
+        before = {_same(s["heading"]) for s in current["resume_sections"] if s["kind"] == "custom"}
+        added = [h for h in sections.custom if _same(h) not in before]
+        from_file = [SectionSpec(kind="custom", heading=h, grouped=False) for h in sections.custom]
         conn.execute(
-            # The person's own custom sections stay; the new file's are added after them.
             """UPDATE profiles SET extraction_status = 'done', resume_sections = %s,
                    custom_sections = %s
                WHERE user_id = %s""",
-            (Jsonb(standard), Jsonb(merged_headings(current["custom_sections"], custom)), user_id),
+            (
+                Jsonb([*sections.standard, *from_file]),
+                Jsonb(merged_headings(current["custom_sections"], added)),
+                user_id,
+            ),
         )
 
 

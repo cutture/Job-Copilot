@@ -166,10 +166,10 @@ describe("Profile setup", () => {
     const calls = serve();
     render(<Profile />);
 
-    fireEvent.change(await screen.findByLabelText("Custom section 1"), { target: { value: "Community Work" } });
+    fireEvent.change(await screen.findByLabelText("Resume section 1"), { target: { value: "Community Work" } });
     fireEvent.click(screen.getByRole("button", { name: "Remove Open Source" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add a section" }));
-    fireEvent.change(screen.getByLabelText("Custom section 2"), { target: { value: "Talks" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add a resume section" }));
+    fireEvent.change(screen.getByLabelText("Resume section 2"), { target: { value: "Talks" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
 
     await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));

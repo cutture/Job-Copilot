@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from job_copilot.profile import heading_refusal
 from tests.conftest import FakeProvider
 from tests.test_application_pack import apply, by_kind, claim, judgement, rated_match, run_worker
 from tests.test_my_sections import THEIR_SECTIONS, upload_resume, write_sections
@@ -73,6 +74,53 @@ def test_a_new_upload_adds_its_headings_and_keeps_the_persons_own(
     assert custom_sections(client) == ["Volunteering", "Open Source"]
 
 
+def test_a_removed_section_stays_removed_when_the_same_file_is_read_again(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    sections = [{"heading": "Open Source", "kind": "other"}, {"heading": "Talks", "kind": "other"}]
+    upload_resume(client, provider, sections)
+    save_custom(client, ["Talks"])
+
+    upload_resume(client, provider, [*sections, {"heading": "Mentoring", "kind": "other"}])
+
+    assert custom_sections(client) == ["Talks", "Mentoring"]
+
+
+def test_a_heading_from_a_resume_that_cant_be_used_isnt_kept(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    upload_resume(
+        client,
+        provider,
+        [
+            {"heading": "Talks: www.example.com", "kind": "other"},
+            {"heading": "Personal Information", "kind": "other"},
+            {"heading": "Personal Projects", "kind": "other"},
+        ],
+    )
+
+    assert custom_sections(client) == ["Personal Projects"]
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "Personal Projects",
+        "Personal Interests",
+        "Publications 2019-2024",
+        "Awards (2020 - 2023)",
+        "ASP.NET Projects",
+        "Grad.in Physics",
+        "Projects @ Google",
+        "Node.js Projects",
+        "Talks & Workshops",
+        "AI/ML Research",
+    ],
+)
+def test_an_honest_heading_is_never_refused(heading: str) -> None:
+    assert heading_refusal(heading) is None
+
+
 def test_a_person_can_add_rename_and_remove_custom_sections(client: TestClient) -> None:
     assert save_custom(client, ["Volunteering", "Open Source"]).status_code == 200
     assert save_custom(client, ["Community Work", "Open Source"]).status_code == 200
@@ -89,6 +137,7 @@ def test_a_person_can_add_rename_and_remove_custom_sections(client: TestClient) 
         ("https://example.com/me", "a link or contact details"),
         ("Write to sam@example.com", "a link or contact details"),
         ("Call +1 555 010 0199", "a link or contact details"),
+        ("linkedin/in/sam", "a link or contact details"),
         ("Personal Details", "a personal field"),
     ],
 )
