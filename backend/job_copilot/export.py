@@ -7,14 +7,16 @@ import io
 import json
 import re
 import zipfile
+from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from fastapi import APIRouter, Response
 
 from job_copilot.applications import CoverLetter, Resume, application_view
 from job_copilot.db import UserId, connect
+from job_copilot.documents import paragraph_text, summary_text
 from job_copilot.profile import get_profile
 
 router = APIRouter()
@@ -33,31 +35,50 @@ Files you downloaded before are on your computer, not here. Job Copilot can't im
 """
 
 
+class Signature(NamedTuple):
+    """The name and contact line at the top of both documents."""
+
+    name: str | None
+    contact: str | None
+
+    def header(self) -> list[str]:
+        return [
+            *([f"# {self.name}"] if self.name else []),
+            *([self.contact] if self.contact else []),
+        ]
+
+
 def _slug(text: str) -> str:
     """Only letters, digits and dashes, so a posting's title can't name a path."""
     return re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-")[:40] or "Application"
 
 
-def _resume_text(resume: Resume, name: str | None, contact: str | None) -> str:
-    lines = [f"# {name}" if name else "", contact or ""]
+def resume_text(resume: Resume, signature: Signature) -> str:
+    """The resume as Markdown, laid out like the plain resume."""
+    lines = signature.header()
     for section in resume.sections:
         lines += ["", f"## {section.heading}"]
         if section.kind == "summary":
-            lines.append(" ".join(sentence.text for sentence in section.claims))
-            continue
-        lines += [f"- {claim.text}" for claim in section.claims]
-        lines += [
-            f"- **{group.heading.text}:** {', '.join(skill.text for skill in group.claims)}"
-            for group in section.groups
-        ]
+            lines.append(summary_text(section))
+        elif section.kind == "skills":
+            if section.claims:
+                lines.append(", ".join(skill.text for skill in section.claims))
+            lines += [
+                f"**{group.heading.text}:** {', '.join(skill.text for skill in group.claims)}"
+                for group in section.groups
+            ]
+        else:
+            lines += [f"- {claim.text}" for claim in section.claims]
         for role in section.roles:
             lines += ["", f"### {role.heading.text}", *(f"- {line.text}" for line in role.lines)]
-    return "\n".join(line for line in lines if line is not None).strip() + "\n"
+    return "\n".join(lines).strip() + "\n"
 
 
-def _cover_letter_text(letter: CoverLetter, name: str | None) -> str:
-    paragraphs = [" ".join(sentence.text for sentence in p) for p in letter.paragraphs]
-    return "\n\n".join([*paragraphs, *([name] if name else [])]) + "\n"
+def cover_letter_text(letter: CoverLetter, signature: Signature) -> str:
+    """The cover letter as Markdown, laid out like the plain cover letter."""
+    paragraphs = [paragraph_text(paragraph) for paragraph in letter.paragraphs]
+    blocks = ["\n".join(signature.header()), *paragraphs, signature.name or ""]
+    return "\n\n".join(block for block in blocks if block) + "\n"
 
 
 def _write_json(archive: zipfile.ZipFile, path: str, value: Any) -> None:
@@ -79,20 +100,37 @@ def export(user_id: UserId) -> Response:
                WHERE a.user_id = %s ORDER BY a.created_at""",
             (user_id,),
         ).fetchall()
-        packs = conn.execute(
-            """SELECT application_id, version, status, model, resume, cover_letter,
-                      removed_claims, created_at
+        packs: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
+        for pack in conn.execute(
+            """SELECT application_id, version, status, failure, model, resume, cover_letter,
+                      removed_claims, reviewed_at, created_at
                FROM application_packs WHERE user_id = %s ORDER BY version""",
             (user_id,),
-        ).fetchall()
+        ).fetchall():
+            packs[pack.pop("application_id")].append(pack)
+    signature = Signature(profile.name, profile.contact)
+    # ponytail: built in memory, which suits one person's data; stream it if exports grow large.
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("README.txt", README.format(when=datetime.now(UTC).date().isoformat()))
         _write_json(archive, "profile.json", profile.model_dump(mode="json"))
         if photo:
+            # Every kept photo is re-encoded as a JPEG.
             archive.writestr("photo.jpg", bytes(photo["photo"]))
         for number, row in enumerate(applications, start=1):
-            _write_application(archive, user_id, number, row, packs, profile.name, profile.contact)
+            view = application_view(user_id, row["id"])
+            folder = f"applications/{number:02d}-{_slug(view.title)}"
+            _write_json(
+                archive,
+                f"{folder}/application.json",
+                {
+                    **view.model_dump(mode="json", exclude={"pack"}),
+                    "posting": row["posting"],
+                    "requirements": row["requirements"],
+                },
+            )
+            for pack in packs[row["id"]]:
+                _write_pack(archive, folder, pack, signature)
     return Response(
         out.getvalue(),
         media_type="application/zip",
@@ -100,35 +138,15 @@ def export(user_id: UserId) -> Response:
     )
 
 
-def _write_application(
-    archive: zipfile.ZipFile,
-    user_id: UUID,
-    number: int,
-    row: Any,
-    packs: list[Any],
-    name: str | None,
-    contact: str | None,
+def _write_pack(
+    archive: zipfile.ZipFile, folder: str, pack: dict[str, Any], signature: Signature
 ) -> None:
-    view = application_view(user_id, row["id"])
-    folder = f"applications/{number:02d}-{_slug(view.title)}"
-    _write_json(
-        archive,
-        f"{folder}/application.json",
-        {
-            **view.model_dump(mode="json", exclude={"pack"}),
-            "posting": row["posting"],
-            "requirements": row["requirements"],
-        },
-    )
-    for pack in (p for p in packs if p["application_id"] == row["id"]):
-        version = pack["version"]
-        _write_json(archive, f"{folder}/pack-v{version}.json", dict(pack))
-        if pack["status"] == "ready":
-            archive.writestr(
-                f"{folder}/resume-v{version}.md",
-                _resume_text(Resume(**pack["resume"]), name, contact),
-            )
-            archive.writestr(
-                f"{folder}/cover-letter-v{version}.md",
-                _cover_letter_text(CoverLetter(**pack["cover_letter"]), name),
-            )
+    version = pack["version"]
+    _write_json(archive, f"{folder}/pack-v{version}.json", pack)
+    if pack["status"] == "ready":
+        resume = Resume(**pack["resume"])
+        letter = CoverLetter(**pack["cover_letter"])
+        archive.writestr(f"{folder}/resume-v{version}.md", resume_text(resume, signature))
+        archive.writestr(
+            f"{folder}/cover-letter-v{version}.md", cover_letter_text(letter, signature)
+        )

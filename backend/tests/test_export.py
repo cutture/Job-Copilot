@@ -4,13 +4,19 @@ import json
 import zipfile
 from io import BytesIO
 
-import psycopg
 from fastapi.testclient import TestClient
 
+from job_copilot import worker
 from job_copilot.api import app
-from tests.conftest import TEST_DB, FakeProvider
-from tests.test_application_pack import PYTHON
+from job_copilot.applications import Claim, CoverLetter, Group, Resume, Section
+from job_copilot.export import Signature, cover_letter_text, resume_text
+from job_copilot.filter import FILTER_MODEL
+from job_copilot.rating import RATING_MODEL
+from tests.conftest import FakeProvider
+from tests.test_application_pack import PYTHON, apply
 from tests.test_deletion import as_other_person, ready_application
+from tests.test_filter import facts
+from tests.test_rating import POSTING, add_evidence, answer, set_profile, three_met
 
 PLANTED_TITLE = "../../etc/passwd Engineer"
 
@@ -63,11 +69,69 @@ def test_the_export_is_only_the_persons_own(client: TestClient, provider: FakePr
 def test_file_names_come_only_from_safe_characters(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    ready_application(client, provider)
-    with psycopg.connect(TEST_DB, autocommit=True) as conn:
-        conn.execute("UPDATE job_postings SET title = %s", (PLANTED_TITLE,))
+    # A posting's title is untrusted: whatever it says, it can't name a path in the zip.
+    set_profile(client)
+    evidence_id = add_evidence(client)
+    provider.answers = {
+        FILTER_MODEL: facts(title=PLANTED_TITLE),
+        RATING_MODEL: json.dumps(answer(*three_met(evidence_id))),
+    }
+    posting = client.post("/api/job-postings", json={"text": POSTING}).json()
+    while worker.run_once():
+        pass
+    apply(client, posting["id"])
 
     names = export(client).namelist()
 
     assert all(".." not in name and not name.startswith("/") for name in names)
     assert any("etc-passwd-Engineer" in name for name in names)
+
+
+def test_a_person_with_no_applications_still_gets_their_profile(client: TestClient) -> None:
+    files = export(client)
+
+    assert sorted(files.namelist()) == ["README.txt", "profile.json"]
+    assert json.loads(files.read("profile.json"))["evidence"] == []
+
+
+def test_the_text_files_are_laid_out_like_the_plain_pair() -> None:
+    signature = Signature("Sam Rivera", "sam@example.com")
+    skills = Claim(text="Python", evidence=[])
+    resume = Resume(
+        sections=[
+            Section(kind="summary", heading="Profile", claims=[claim("Ships retrieval.")]),
+            Section(
+                kind="skills",
+                heading="Skills",
+                claims=[skills, claim("SQL")],
+                groups=[Group(heading=claim("Cloud"), claims=[claim("Terraform")])],
+            ),
+            Section(kind="custom", heading="Open Source", claims=[claim("Maintains a library")]),
+        ]
+    )
+    letter = CoverLetter(paragraphs=[[claim("Dear team,")], [claim("I build."), claim("I ship.")]])
+
+    assert resume_text(resume, signature).splitlines() == [
+        "# Sam Rivera",
+        "sam@example.com",
+        "",
+        "## Profile",
+        "Ships retrieval.",
+        "",
+        "## Skills",
+        "Python, SQL",
+        "**Cloud:** Terraform",
+        "",
+        "## Open Source",
+        "- Maintains a library",
+    ]
+    assert cover_letter_text(letter, signature).split("\n\n") == [
+        "# Sam Rivera\nsam@example.com",
+        "Dear team,",
+        "I build. I ship.",
+        "Sam Rivera\n",
+    ]
+
+
+def claim(text: str) -> Claim:
+    return Claim(text=text, evidence=[])

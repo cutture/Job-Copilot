@@ -100,9 +100,14 @@ def _header(document: DocumentObject, name: str | None, contact: str | None) -> 
         document.add_paragraph(contact)
 
 
-def _summary(section: Section) -> str:
+def summary_text(section: Section) -> str:
     """The Summary's checked sentences, as one paragraph."""
     return " ".join(sentence.text for sentence in section.claims)
+
+
+def paragraph_text(paragraph: list[Claim]) -> str:
+    """A cover letter paragraph's checked sentences, as one paragraph."""
+    return " ".join(sentence.text for sentence in paragraph)
 
 
 def resume_docx(resume: Resume, name: str | None, contact: str | None) -> bytes:
@@ -111,7 +116,7 @@ def resume_docx(resume: Resume, name: str | None, contact: str | None) -> bytes:
     for section in resume.sections:
         document.add_heading(section.heading, level=2)
         if section.kind == "summary":
-            document.add_paragraph(_summary(section))
+            document.add_paragraph(summary_text(section))
         elif section.kind == "skills":
             if section.claims:
                 document.add_paragraph(", ".join(skill.text for skill in section.claims))
@@ -133,7 +138,7 @@ def cover_letter_docx(letter: CoverLetter, name: str | None, contact: str | None
     document = _blank_document(name, "Cover letter")
     _header(document, name, contact)
     for paragraph in letter.paragraphs:
-        document.add_paragraph(" ".join(sentence.text for sentence in paragraph))
+        document.add_paragraph(paragraph_text(paragraph))
     if name:
         document.add_paragraph(name)
     return _bytes(document)
@@ -264,7 +269,7 @@ def styled_resume_docx(
     for section in resume.sections:
         _heading(document, section.heading, accent)
         if section.kind == "summary":
-            document.add_paragraph(_summary(section))
+            document.add_paragraph(summary_text(section))
         elif section.kind == "skills":
             if section.claims:
                 _skill_columns(document, section.claims)
@@ -293,7 +298,7 @@ def styled_cover_letter_docx(
     document = _styled_document(name, "Cover letter")
     _styled_header(document, name, contact, accent)
     for paragraph in letter.paragraphs:
-        line = document.add_paragraph(" ".join(sentence.text for sentence in paragraph))
+        line = document.add_paragraph(paragraph_text(paragraph))
         line.paragraph_format.space_after = Pt(8)
     if name:
         document.add_paragraph(name)

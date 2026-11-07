@@ -37,7 +37,7 @@ export function DeleteEverything({ onDeleted }: { onDeleted: (report: DeletionRe
       </p>
       <p>
         <a href="/api/export" download>
-          Download my data first
+          Download my Profile and Applications first
         </a>{" "}
         <span style={{ fontSize: 13 }}>
           Your Profile, Applications and Application Packs as readable files, in one zip. Job Copilot can't import it

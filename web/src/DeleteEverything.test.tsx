@@ -40,7 +40,7 @@ describe("DeleteEverything", () => {
   it("offers an export of the person's data first", () => {
     render(<DeleteEverything onDeleted={() => {}} />);
 
-    const link = screen.getByRole("link", { name: "Download my data first" });
+    const link = screen.getByRole("link", { name: "Download my Profile and Applications first" });
     expect(link.getAttribute("href")).toBe("/api/export");
     expect(link.hasAttribute("download")).toBe(true);
   });
