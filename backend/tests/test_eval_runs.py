@@ -1,8 +1,8 @@
 """Daily Eval Runs, the Eval Runs page, and the warnings a failing run turns on."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import psycopg
 from fastapi.testclient import TestClient
@@ -69,19 +69,40 @@ def test_no_second_run_is_queued_on_a_day_that_already_had_one(
     assert queued_eval_runs() == 0
 
 
-def test_the_queued_run_runs_every_case_from_the_worker(monkeypatch: Any) -> None:
-    ran: list[Any] = []
-
-    def record(owner: Any) -> int:
-        ran.append(owner)
-        return 1
-
-    monkeypatch.setattr(evals, "run", record)
+def test_the_queued_run_runs_every_case_from_the_worker(provider: FakeProvider) -> None:
     worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
 
     worker.run_once()
 
-    assert ran == [OWNER]
+    with psycopg.connect(TEST_DB) as conn:
+        runs = conn.execute("SELECT id, finished_at FROM eval_runs").fetchall()
+        results = conn.execute("SELECT count(*) FROM eval_results").fetchone()
+    assert len(runs) == 1 and runs[0][1] is not None
+    assert results == (24,)
+
+
+def test_a_case_that_crashes_fails_alone_and_the_run_still_finishes(
+    client: TestClient, provider: FakeProvider, tmp_path: Path
+) -> None:
+    # A case with no posting can't come from the cases file honestly; it stands in for any
+    # step that crashes, which no honest input can be made to do on purpose.
+    broken = tmp_path / "cases.json"
+    good = cases_file(tmp_path, "filter-on-site-elsewhere")
+    loaded = json.loads(good.read_text(encoding="utf-8"))
+    crashing = {**loaded["cases"][0], "id": "crashing-case"}
+    del crashing["posting"]
+    broken.write_text(json.dumps({**loaded, "cases": [crashing, loaded["cases"][0]]}))
+    provider.answers = {FILTER_MODEL: facts(work_arrangement="on_site", locations=["Berlin"])}
+
+    run_id = evals.run(OWNER, broken)
+
+    run = client.get(f"/api/eval-runs/{run_id}").json()
+    assert run["finished_at"] is not None
+    assert [(r["case_id"], r["status"]) for r in run["results"]] == [
+        ("crashing-case", "failed"),
+        ("filter-on-site-elsewhere", "passed"),
+    ]
+    assert run["results"][0]["reason"] == "The case crashed (KeyError)"
 
 
 def test_the_eval_runs_page_shows_each_failure_with_its_reason_and_area_to_fix(

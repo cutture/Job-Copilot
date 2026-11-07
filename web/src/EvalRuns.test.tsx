@@ -78,7 +78,7 @@ describe("EvalRuns", () => {
     expect(within(unchecked).getByText("Labels not checked")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /^Run 1 / }));
-    expect(await screen.findByText("No case results.")).toBeTruthy();
+    expect(await screen.findByText(/No case results: the run stopped/)).toBeTruthy();
   });
 
   it("says when there are no runs yet", async () => {

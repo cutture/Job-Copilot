@@ -162,6 +162,26 @@ def test_traps_match_whole_words_and_wrong_bands_show_the_ratings_reasons() -> N
     assert evals.judge({"band": "High"}, evals.Outcome(band="Low"))[1] is True
 
 
+def test_a_sentence_saying_a_trap_is_lacking_isnt_an_invented_claim() -> None:
+    honest = evals.Outcome(letter="I don't hold the AWS Certified title yet.\nI build in Python.")
+    claimed = evals.Outcome(letter="I am AWS Certified.")
+
+    assert evals.judge({"not_in_pack": ["AWS Certified"]}, honest).failures == []
+    assert evals.judge({"not_in_pack": ["AWS Certified"]}, claimed).hard is True
+
+
+def test_a_removed_supported_claim_is_a_failure_but_not_a_hard_one() -> None:
+    verdict = evals.judge(
+        {"in_pack": ["DeepEval", "30%"]}, evals.Outcome(resume="Cut latency by 30%")
+    )
+
+    assert verdict == (
+        ["A Claim the Evidence supports was removed: “DeepEval”"],
+        False,
+        evals.FIX_VERIFY,
+    )
+
+
 def test_evals_stop_at_their_own_3_dollar_cap_and_leave_the_owners_ledger_alone(
     client: TestClient, provider: FakeProvider, tmp_path: Path
 ) -> None:

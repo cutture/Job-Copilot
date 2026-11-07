@@ -94,7 +94,6 @@ def _posting_failed(user_id: UUID, payload: dict[str, Any]) -> None:
 Handler = Callable[[UUID, dict[str, Any]], None]
 
 
-# Each kind of job, and what to record if it fails, so one failure never blocks the queue.
 def _run_evals(user_id: UUID, payload: dict[str, Any]) -> None:
     # Imported here, so only the worker loads DeepEval, and only when evals run.
     # ponytail: the run holds the one worker for a few minutes a day; give evals their own
@@ -104,7 +103,7 @@ def _run_evals(user_id: UUID, payload: dict[str, Any]) -> None:
     evals.run(user_id)
 
 
-def _no_record(user_id: UUID, payload: dict[str, Any]) -> None:
+def _keep_partial_results(user_id: UUID, payload: dict[str, Any]) -> None:
     """A failed Eval Run leaves its partial results, which show on the Eval Runs page."""
 
 
@@ -117,20 +116,25 @@ def schedule_daily_evals(now: datetime) -> None:
         conn.execute(
             """INSERT INTO jobs (user_id, kind, payload)
                SELECT %(owner)s, 'eval_run', '{}'::jsonb
-               WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE kind = 'eval_run')
-                 AND NOT EXISTS (SELECT 1 FROM eval_runs WHERE user_id = %(owner)s
-                                 AND started_at >= date_trunc('day', %(now)s::timestamptz))""",
+               WHERE NOT EXISTS (SELECT 1 FROM jobs
+                                 WHERE kind = 'eval_run' AND user_id = %(owner)s)
+                 -- The day starts at midnight UTC, whatever the database's time zone.
+                 AND NOT EXISTS (
+                     SELECT 1 FROM eval_runs WHERE user_id = %(owner)s
+                     AND started_at >= date_trunc('day', %(now)s::timestamptz AT TIME ZONE 'UTC')
+                                       AT TIME ZONE 'UTC')""",
             {"owner": owner, "now": now},
         )
 
 
+# Each kind of job, and what to record if it fails, so one failure never blocks the queue.
 HANDLERS: dict[str, tuple[Handler, Handler]] = {
     "process_posting": (_process_posting_job, _posting_failed),
     "extract_evidence": (profile.extract_evidence, profile.mark_extraction_failed),
     "rate_match": (rating.rate_match, rating.mark_not_rated),
     "search": (search.run_search, search.finish_search),
     "generate_pack": (applications.generate_pack, applications.pack_failed),
-    "eval_run": (_run_evals, _no_record),
+    "eval_run": (_run_evals, _keep_partial_results),
 }
 
 

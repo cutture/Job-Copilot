@@ -11,13 +11,14 @@ A wrong code-calculated Band is caught by the Band rule tests, which run with ev
 """
 
 import json
+import logging
 import os
 import re
 import sys
 from dataclasses import dataclass, field
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 from uuid import UUID
 
 # DeepEval must never phone home: no telemetry, no Confident AI, no .env loading, no update
@@ -34,6 +35,8 @@ from deepeval.test_case import LLMTestCase  # noqa: E402
 from job_copilot import applications, bands, filter, gateway, rating  # noqa: E402
 from job_copilot.db import connect, current_user_id  # noqa: E402
 
+log = logging.getLogger(__name__)
+
 EVAL_USER = UUID("00000000-0000-0000-0000-00000000e7a1")
 CASES_FILE = Path(__file__).parent.parent / "evals" / "cases.json"
 # Provider trouble that means a case didn't run, as opposed to an answer that failed it.
@@ -46,6 +49,13 @@ FIX_HARD_BLOCKER = "Rating: which Requirements its prompt classes as Hard Blocke
 FIX_PACK = "Application Pack: the writer prompts, then Verification, in applications.py"
 FIX_MODEL = "The model gateway or provider, in gateway.py"
 FIX_ANSWER = "The step's prompt, so the model answers in the expected shape"
+FIX_VERIFY = "Verification: it removed a Claim the Evidence supports, in applications.py"
+FIX_CRASH = "The step's code: the worker log names the error"
+# A sentence that denies a trap, such as "I don't hold the AWS certification yet", claims nothing.
+NEGATION = re.compile(
+    r"\b(?:not|no|never|don't|doesn't|haven't|hasn't|without|yet to|rather than|instead of)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -67,9 +77,23 @@ def _mentions(text: str, phrase: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text, re.IGNORECASE) is not None
 
 
-def judge(expect: dict[str, Any], outcome: Outcome) -> tuple[list[str], bool, str | None]:
-    """Compare an outcome with the case's labels: what failed, whether any is a Hard Failure,
-    and where to look first to fix it."""
+class Verdict(NamedTuple):
+    """What failed, whether any of it is a Hard Failure, and where to look first to fix it."""
+
+    failures: list[str]
+    hard: bool
+    fix_area: str | None
+
+
+def _claims(documents: str, trap: str) -> bool:
+    """Whether a line of the documents claims the trap, rather than saying it's lacking."""
+    return any(
+        _mentions(line, trap) and not NEGATION.search(line) for line in documents.splitlines()
+    )
+
+
+def judge(expect: dict[str, Any], outcome: Outcome) -> Verdict:
+    """Compare an outcome with the case's labels."""
     failures: list[str] = []
     fixes: list[str] = []
     hard = False
@@ -97,12 +121,17 @@ def judge(expect: dict[str, Any], outcome: Outcome) -> tuple[list[str], bool, st
     )
     for key, documents in checked:
         for trap in expect.get(key, []):
-            if _mentions(documents, trap):
+            if _claims(documents, trap):
                 failures.append(f"An Invented Claim reached the final Pack: “{trap}”")
                 fixes.append(FIX_PACK)
                 hard = True
+    # A wrong removal is tracked, not a Hard Failure.
+    for kept in expect.get("in_pack", []):
+        if not _mentions(f"{outcome.resume}\n{outcome.letter}", kept):
+            failures.append(f"A Claim the Evidence supports was removed: “{kept}”")
+            fixes.append(FIX_VERIFY)
     # A Hard Failure's area comes first, since it matters most.
-    return failures, hard, (FIX_PACK if FIX_PACK in fixes else next(iter(fixes), None))
+    return Verdict(failures, hard, FIX_PACK if FIX_PACK in fixes else next(iter(fixes), None))
 
 
 class LabelsMetric(BaseMetric):  # type: ignore[no-untyped-call]
@@ -186,6 +215,10 @@ def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool
     except ValueError as error:
         reason = f"The model's answer couldn't be used ({type(error).__name__})"
         return "failed", False, reason, FIX_ANSWER
+    except Exception as error:
+        # One case's crash fails only that case; the run goes on to the next.
+        log.exception("Eval Case %s crashed", case["id"])
+        return "failed", False, f"The case crashed ({type(error).__name__})", FIX_CRASH
     metric = LabelsMetric()
     metric.measure(
         LLMTestCase(
@@ -207,35 +240,38 @@ def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
                RETURNING id, started_at""",
             (owner, version("deepeval")),
         ).fetchone()
-    for case in loaded["cases"]:
-        status, hard, reason, fix_area = _result(case, loaded["profile"])
+    try:
+        for case in loaded["cases"]:
+            status, hard, reason, fix_area = _result(case, loaded["profile"])
+            with connect() as conn:
+                conn.execute(
+                    """INSERT INTO eval_results (user_id, run_id, case_id, area, status,
+                                                hard_failure, labels_checked, reason, fix_area)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (
+                        owner,
+                        run_row["id"],
+                        case["id"],
+                        case["area"],
+                        status,
+                        hard,
+                        case["labels_checked"],
+                        reason,
+                        fix_area,
+                    ),
+                )
+    finally:
+        # Even a run that stopped early is finished, so what it recorded shows and counts.
         with connect() as conn:
             conn.execute(
-                """INSERT INTO eval_results (user_id, run_id, case_id, area, status, hard_failure,
-                                            labels_checked, reason, fix_area)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (
-                    owner,
-                    run_row["id"],
-                    case["id"],
-                    case["area"],
-                    status,
-                    hard,
-                    case["labels_checked"],
-                    reason,
-                    fix_area,
-                ),
+                # ponytail: a run's cost is all eval spending since it started, so two runs at
+                # once would count each other's; tag model calls with their run if they overlap.
+                """UPDATE eval_runs SET finished_at = now(),
+                       cost_usd = (SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
+                                   WHERE user_id = %s AND created_at >= %s)
+                   WHERE id = %s AND user_id = %s""",
+                (EVAL_USER, run_row["started_at"], run_row["id"], owner),
             )
-    with connect() as conn:
-        conn.execute(
-            # ponytail: a run's cost is all eval spending since it started, so two runs at once
-            # would count each other's; tag model calls with their run if runs ever overlap.
-            """UPDATE eval_runs SET finished_at = now(),
-                   cost_usd = (SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
-                               WHERE user_id = %s AND created_at >= %s)
-               WHERE id = %s AND user_id = %s""",
-            (EVAL_USER, run_row["started_at"], run_row["id"], owner),
-        )
     return int(run_row["id"])
 
 

@@ -99,7 +99,7 @@ export function EvalRuns() {
             Run {run.id}, DeepEval {run.deepeval_version}
           </h3>
           {run.results.length === 0 ? (
-            <p>No case results.</p>
+            <p>No case results: the run stopped before any case finished. The next daily run tries again.</p>
           ) : (
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
               <thead>

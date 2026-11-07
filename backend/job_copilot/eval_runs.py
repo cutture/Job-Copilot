@@ -8,6 +8,7 @@ nothing checked passed or failed, as when the budget is used up, changes nothing
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -99,7 +100,7 @@ def get_eval_run(run_id: int, user_id: UserId) -> EvalRun:
     return EvalRun(**row, results=[EvalCaseResult(**r) for r in results])
 
 
-def eval_status(conn: Any, user_id: Any) -> EvalStatus:
+def eval_status(conn: Any, user_id: UUID) -> EvalStatus:
     """Whether the latest judged run failed, and since when evals have been failing."""
     runs = conn.execute(
         f"SELECT * FROM ({RUN_VERDICTS}) v WHERE failing OR judged ORDER BY finished_at",
