@@ -22,8 +22,10 @@ PHOTO_SHAPES = (0.6, 1.6)
 NOT_AN_IMAGE = "This file isn't an image we can use. Upload a JPEG or PNG photo."
 # A resume has a handful of pictures; more are left unread.
 MAX_PICTURES = 50
-# A second guard, app-wide on purpose: Pillow only decodes images for photos here.
-Image.MAX_IMAGE_PIXELS = MAX_PHOTO_PIXELS
+# A second guard, app-wide on purpose, since Pillow decodes images only for photos here. Pillow
+# refuses at twice its setting, so this refuses anything over MAX_PHOTO_PIXELS, whatever size a
+# file claims, including pictures pypdf decodes through Pillow.
+Image.MAX_IMAGE_PIXELS = MAX_PHOTO_PIXELS // 2
 
 
 def checked_photo(content: bytes) -> bytes:
@@ -81,8 +83,8 @@ def photo_in_resume(content: bytes) -> bytes | None:
     return out.getvalue()
 
 
-def _biggest(sizes: dict[str, tuple[int, int]]) -> str | None:
-    """The name of the photo-shaped picture with the most pixels, if any."""
+def _biggest[K](sizes: dict[K, tuple[int, int]]) -> K | None:
+    """The photo-shaped picture with the most pixels, if any."""
     shaped = {name: w * h for name, (w, h) in sizes.items() if _looks_like_a_photo((w, h))}
     return max(shaped, key=lambda name: shaped[name]) if shaped else None
 
@@ -90,24 +92,28 @@ def _biggest(sizes: dict[str, tuple[int, int]]) -> str | None:
 def _docx_photo(content: bytes) -> Image.Image | None:
     # read_resume has already checked how far the file unpacks.
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        names = [item.filename for item in archive.infolist()]
+        if len(names) != len(set(names)):
+            return None  # Two entries with one name could hide one picture behind another.
         media = [
             item
             for item in archive.infolist()
             if item.filename.startswith("word/media/") and item.file_size <= MAX_PHOTO_BYTES
         ][:MAX_PICTURES]
-        sizes: dict[str, tuple[int, int]] = {}
-        for item in media:
+        sizes: dict[int, tuple[int, int]] = {}
+        for index, item in enumerate(media):
             try:
                 # Opening reads only the header; nothing is decoded yet.
                 with Image.open(io.BytesIO(archive.read(item))) as opened:
-                    sizes[item.filename] = opened.size
+                    sizes[index] = opened.size
             except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
                 continue  # A drawing or icon format that isn't a photo.
         chosen = _biggest(sizes)
         if chosen is None:
             return None
-        with Image.open(io.BytesIO(archive.read(chosen))) as opened:
-            return opened.convert("RGB")
+        # The very entry whose header was checked, checked again before it's decoded.
+        with Image.open(io.BytesIO(archive.read(media[chosen]))) as opened:
+            return opened.convert("RGB") if _looks_like_a_photo(opened.size) else None
 
 
 def _pdf_photo(content: bytes) -> Image.Image | None:
@@ -121,6 +127,10 @@ def _pdf_photo(content: bytes) -> Image.Image | None:
         if picture.get("/Subtype") == "/Image":
             sizes[str(name)] = (int(picture["/Width"]), int(picture["/Height"]))
     chosen = _biggest(sizes)
+    if chosen is None:
+        return None
     # pypdf decodes only the chosen picture, with its colours and encoding applied, under its
-    # own cap on how much a stream may decompress to.
-    return page.images[chosen].image if chosen else None
+    # own cap on how much a stream may decompress to and Pillow's pixel cap. A file can claim
+    # one size and hold another, so the decoded picture is checked again.
+    picture = page.images[chosen].image
+    return picture if picture is not None and _looks_like_a_photo(picture.size) else None

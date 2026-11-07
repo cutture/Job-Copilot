@@ -2,6 +2,8 @@
 
 import base64
 import json
+import warnings
+import zipfile
 from io import BytesIO
 from typing import Any
 
@@ -191,3 +193,14 @@ def test_a_photo_is_found_in_a_pdf_resume_too() -> None:
 
     assert found is not None
     assert Image.open(BytesIO(found)).size == (300, 300)
+
+
+def test_a_resume_with_two_pictures_under_one_name_gives_no_photo() -> None:
+    out = BytesIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # zipfile warns about the duplicate, as it should.
+        with zipfile.ZipFile(out, "w") as archive:
+            archive.writestr("word/media/image1.png", image(size=(64, 64)))
+            archive.writestr("word/media/image1.png", image(size=(300, 360)))
+
+    assert photo_in_resume(out.getvalue()) is None
