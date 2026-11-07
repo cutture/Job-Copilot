@@ -128,6 +128,10 @@ _Avoid_: Theme, brand colour
 The check every downloaded file passes first: read the way an applicant tracking system reads it, it must have no tables, text boxes, header or footer text, and every Claim, the name and the contact line must come back intact and in order.
 _Avoid_: ATS score, resume score, keyword check
 
+**Export**:
+One download of a person's Profile, Applications and Application Packs as readable files, offered before Delete everything. It holds only that person's data, and there's no matching import.
+_Avoid_: Backup, data dump, download all
+
 **Keyword coverage**:
 How much of a posting's must-haves and nice-to-haves an Application Pack's resume answers, shown as a percentage for the person's information only. A Requirement counts when its Requirement Result is Met (in full) or Partial (half) and the resume cites Evidence that Result rests on; a Result resting on no Evidence item isn't counted. Nothing that writes or checks a Pack reads it.
 _Avoid_: ATS score, Match score, resume score
