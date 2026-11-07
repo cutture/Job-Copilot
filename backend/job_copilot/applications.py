@@ -23,6 +23,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, model_validator
 
 from job_copilot import claims, gateway
+from job_copilot.coverage import Coverage, keyword_coverage
 from job_copilot.db import UserId, connect
 from job_copilot.gateway import DataClass
 from job_copilot.profile import (
@@ -327,6 +328,8 @@ class PackView(BaseModel):
     resume: Resume | None
     cover_letter: CoverLetter | None
     removed_claims: list[RemovedClaim] | None
+    # For the person to read only: nothing that writes or renders a Pack uses it.
+    coverage: Coverage | None = None
 
 
 class ApplicationView(BaseModel):
@@ -853,6 +856,10 @@ def queue_pack(conn: Any, user_id: UUID, pack_id: int) -> None:
     )
 
 
+def _cited_ids(resume: Resume) -> set[int]:
+    return {ref.id for claim in resume.all_claims() for ref in claim.evidence if ref.id is not None}
+
+
 def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
     with connect() as conn:
         row: Any = conn.execute(
@@ -862,7 +869,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        {COST} AS cost_usd, pr.name, pr.contact,
                        COALESCE(pr.accent_colour, 'navy') AS accent_colour,
                        pack.version, pack.status, pack.failure, pack.model, pack.resume,
-                       pack.cover_letter, pack.removed_claims
+                       pack.cover_letter, pack.removed_claims, a.requirements
                 FROM applications a
                 JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
                 LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
@@ -874,6 +881,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
         raise HTTPException(404, "Application not found")
     ready = row["status"] == "ready"
     waiting = row["status"] == "waiting"
+    resume = Resume(**row["resume"]) if ready else None
     pack = (
         None
         if row["version"] is None
@@ -883,9 +891,10 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
             warning=WARNINGS.get(row["failure"], UNKNOWN_FAILURE) if waiting else None,
             model=row["model"],
             # Only a verified Pack's documents are ever shown.
-            resume=Resume(**row["resume"]) if ready else None,
+            resume=resume,
             cover_letter=CoverLetter(**row["cover_letter"]) if ready else None,
             removed_claims=[RemovedClaim(**r) for r in row["removed_claims"]] if ready else None,
+            coverage=keyword_coverage(row["requirements"], _cited_ids(resume)) if resume else None,
         )
     )
     return ApplicationView(

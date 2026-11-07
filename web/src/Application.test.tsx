@@ -56,6 +56,17 @@ function application(
             },
           ]
         : null,
+      coverage: ready
+        ? {
+            score: 75,
+            requirements: [
+              { requirement: "Python", kind: "must_have", result: "met", in_resume: true },
+              { requirement: "Retrieval", kind: "must_have", result: "partial", in_resume: true },
+              { requirement: "SQL", kind: "must_have", result: "met", in_resume: false },
+              { requirement: "Terraform", kind: "nice_to_have", result: "missing", in_resume: false },
+            ],
+          }
+        : null,
     },
   };
 }
@@ -96,6 +107,21 @@ describe("Application", () => {
     expect(screen.getAllByText("Resume: Python Developer, Example Co, Jan 2021 to present")).toHaveLength(2);
     expect(screen.getByText("Led a team of six engineers").tagName).toBe("S");
     expect(screen.getByText(/goes beyond what your Evidence says/)).toBeTruthy();
+  });
+
+  it("shows the keyword coverage score and which Requirements it counts", async () => {
+    serve({ "GET /api/applications/a": () => application("ready") });
+
+    render(<Application id="a" onBack={() => {}} />);
+
+    const coverage = await screen.findByRole("region", { name: "Keyword coverage" });
+    expect(coverage.textContent).toContain("Keyword coverage: 75%");
+    expect([...coverage.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      "Python: Met, in your resume",
+      "Retrieval: Partial, in your resume",
+      "SQL: Met, not in this resume",
+      "Terraform (nice-to-have): Missing",
+    ]);
   });
 
   it("shows no documents until the Pack is verified", async () => {

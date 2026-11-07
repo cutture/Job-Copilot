@@ -8,6 +8,11 @@ export const OUTCOMES: Record<Outcome, string> = {
   no_response: "No response",
 };
 
+export type Result = "met" | "partial" | "missing" | "unknown";
+
+// A Requirement Result, as the Matches and the Final documents show it.
+export const RESULTS: Record<Result, string> = { met: "Met", partial: "Partial", missing: "Missing", unknown: "Unknown" };
+
 export type AccentColour = "navy" | "teal" | "burgundy" | "gold";
 
 // Each accent colour's text colour and the light band behind headings, as the files use them.

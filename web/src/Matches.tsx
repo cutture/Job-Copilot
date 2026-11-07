@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { CSSProperties } from "react";
 import { ConfirmDelete } from "./ConfirmDelete";
+import { RESULTS } from "./labels";
+import type { Result } from "./labels";
 
 export type Band = "High" | "Medium" | "Low";
 export type RatingState = "rated" | "rating" | "waiting";
@@ -9,7 +11,7 @@ export type Requirement = {
   requirement: string;
   kind: "hard_blocker" | "must_have" | "nice_to_have";
   quote: string | null;
-  result: "met" | "partial" | "missing" | "unknown";
+  result: Result;
   evidence: string[];
   gap: string | null;
   profile_field?: string | null;
@@ -48,7 +50,6 @@ export type RatedPosting = PostingOrigin & {
 
 const BANDS: Band[] = ["High", "Medium", "Low"];
 const KINDS = { hard_blocker: "Hard Blocker", must_have: "Must-have", nice_to_have: "Nice-to-have" };
-const RESULTS = { met: "Met", partial: "Partial", missing: "Missing", unknown: "Unknown" };
 const BAND_COLOURS: Record<Band, CSSProperties> = {
   High: { background: "#dff5e3", color: "#14622a" },
   Medium: { background: "#fff3c4", color: "#6b4e00" },
