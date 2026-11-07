@@ -62,10 +62,12 @@ export type ApplicationData = {
   name: string | null;
   contact: string | null;
   accent_colour: AccentColour;
+  // A photo goes on the styled resume, served by the Profile.
+  has_photo: boolean;
   // None once the person deletes it.
   pack: Pack | null;
 };
-type Signature = Pick<ApplicationData, "name" | "contact">;
+type Signature = Pick<ApplicationData, "name" | "contact" | "has_photo">;
 export type Pair = "styled" | "plain";
 type Props<T> = { signature: Signature; pair: Pair; accent: AccentColour } & T;
 
@@ -101,7 +103,17 @@ async function getApplication(id: string): Promise<ApplicationData> {
 
 // The top of both files, as they download: the styled pair's name is two-tone, its surname and
 // a thin rule in the accent colour.
-function Header({ signature: { name, contact }, pair, accent }: Props<object>) {
+// The styled resume's photo, small and round beside the name, as the file sets it.
+const photoStyle: CSSProperties = {
+  width: 56,
+  height: 56,
+  borderRadius: "50%",
+  objectFit: "cover",
+  verticalAlign: "middle",
+  marginRight: 8,
+};
+
+function Header({ signature: { name, contact }, pair, accent, photo = false }: Props<{ photo?: boolean }>) {
   const colour = ACCENTS[accent].text;
   if (pair === "plain") {
     return (
@@ -114,10 +126,11 @@ function Header({ signature: { name, contact }, pair, accent }: Props<object>) {
   const split = name ? name.lastIndexOf(" ") : -1;
   return (
     <div style={{ textAlign: "center" }}>
-      {name && (
+      {(name || photo) && (
         <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "Calibri, sans-serif" }}>
-          {split > 0 && <span style={{ color: "#333333" }}>{name.slice(0, split + 1)}</span>}
-          <span style={{ color: colour }}>{name.slice(split + 1)}</span>
+          {photo && <img src="/api/profile/photo" alt="Your photo" style={photoStyle} />}
+          {name && split > 0 && <span style={{ color: "#333333" }}>{name.slice(0, split + 1)}</span>}
+          {name && <span style={{ color: colour }}>{name.slice(split + 1)}</span>}
         </div>
       )}
       {contact && <div style={{ borderBottom: `1px solid ${colour}`, paddingBottom: 2 }}>{contact}</div>}
@@ -161,7 +174,7 @@ function Resume({ resume, signature, pair, accent }: Props<{ resume: NonNullable
   const styled = pair === "styled";
   return (
     <div style={pageFor(pair)} aria-label="Resume">
-      <Header signature={signature} pair={pair} accent={accent} />
+      <Header signature={signature} pair={pair} accent={accent} photo={signature.has_photo} />
       {resume.sections.map((section, position) => (
         <div key={`${section.kind}-${position}`}>
           <Heading text={section.heading} pair={pair} accent={accent} />

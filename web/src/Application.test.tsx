@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Application } from "./Application";
 import type { ApplicationData } from "./Application";
@@ -23,6 +23,7 @@ function application(
     name: "Sam Rivera",
     contact: "sam@example.com",
     accent_colour: "teal",
+    has_photo: false,
     ...changes,
     pack: {
       version: 1,
@@ -227,6 +228,20 @@ describe("Application", () => {
     expect(buttons).toHaveLength(2);
     fireEvent.click(buttons[1]);
     expect(onBack).toHaveBeenCalled();
+  });
+
+  it("shows the photo round beside the name on the styled resume only", async () => {
+    serve({ "GET /api/applications/a": () => application("ready", { has_photo: true }) });
+    render(<Application id="a" onBack={() => {}} />);
+
+    const photo = within(await screen.findByLabelText("Resume")).getByRole("img", { name: "Your photo" });
+    expect(photo.getAttribute("src")).toBe("/api/profile/photo");
+    expect(photo.style.borderRadius).toBe("50%");
+    expect(within(screen.getByLabelText("Cover letter")).queryByRole("img")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Plain pair" }));
+
+    expect(within(screen.getByLabelText("Resume")).queryByRole("img")).toBeNull();
   });
 
   it("previews the styled pair by default and switches to the plain pair, downloading the one shown", async () => {

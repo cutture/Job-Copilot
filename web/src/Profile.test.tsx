@@ -14,6 +14,8 @@ const baseProfile = {
   search_window_days: 15,
   accent_colour: "navy",
   custom_sections: ["Volunteering", "Open Source"],
+  show_photo: false,
+  has_photo: false,
   languages: ["English"],
   seniority: null,
   roles: [],
@@ -175,6 +177,33 @@ describe("Profile setup", () => {
     await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
     const saved = JSON.parse(String(calls.find((call) => call.method === "PUT")!.body));
     expect(saved.custom_sections).toEqual(["Community Work", "Talks"]);
+  });
+
+  it("offers a photo only once the switch is on, and uploads and removes it", async () => {
+    const calls = serve();
+    render(<Profile />);
+
+    const toggle = await screen.findByLabelText("Photo on my styled resume");
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByLabelText("Upload a photo")).toBeNull();
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
+    await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
+    expect(JSON.parse(String(calls.find((call) => call.method === "PUT")!.body)).show_photo).toBe(true);
+
+    cleanup();
+    const withPhoto = serve({ ...baseProfile, show_photo: true, has_photo: true });
+    render(<Profile />);
+    expect(await screen.findByRole("img", { name: "Your photo" })).toBeTruthy();
+    const file = new File(["x"], "me.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Upload a photo"), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
+
+    await vi.waitFor(() =>
+      expect(withPhoto.map((call) => `${call.method} ${call.url}`)).toEqual(
+        expect.arrayContaining(["POST /api/profile/photo", "DELETE /api/profile/photo"]),
+      ),
+    );
   });
 
   it("asks for the currency of a minimum saved without one", async () => {

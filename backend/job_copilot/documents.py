@@ -54,6 +54,8 @@ ACCENTS: dict[AccentColour, tuple[str, str]] = {
     "gold": ("7A5C10", "F6F0E0"),
 }
 DARK = RGBColor(0x33, 0x33, 0x33)
+# The photo's width at the start of the styled resume's name line.
+PHOTO_WIDTH = Inches(0.75)
 # A date range closing a role's heading, such as "Jan 2021 to present", set at the right margin.
 DATES = re.compile(
     r",?\s*((?:[A-Z][a-z]{2,8}\.?\s+)?(?:19|20)\d{2}\s*(?:-|–|—|to|until)\s*"
@@ -177,12 +179,30 @@ def _run(
     run.bold = bold
 
 
+def _round_photo(line: Paragraph, photo: bytes) -> None:
+    """The person's photo, small and round, at the start of the line."""
+    run = line.add_run()
+    run.add_picture(BytesIO(photo), width=PHOTO_WIDTH)
+    shape = run._r.find(".//" + qn("a:prstGeom"))
+    if shape is not None:
+        shape.set("prst", "ellipse")
+    line.add_run("  ")
+
+
 def _styled_header(
-    document: DocumentObject, name: str | None, contact: str | None, accent: AccentColour
+    document: DocumentObject,
+    name: str | None,
+    contact: str | None,
+    accent: AccentColour,
+    photo: bytes | None = None,
 ) -> None:
     colour = RGBColor.from_string(ACCENTS[accent][0])
+    if photo and not name:
+        _round_photo(document.add_paragraph(), photo)
     if name:
         line = document.add_paragraph()
+        if photo:
+            _round_photo(line, photo)
         first, _, surname = name.rpartition(" ")
         if first:
             _run(line, f"{first} ", DARK, 24, bold=True)
@@ -231,10 +251,14 @@ def _skill_columns(document: DocumentObject, skills: list[Claim]) -> None:
 
 
 def styled_resume_docx(
-    resume: Resume, name: str | None, contact: str | None, accent: AccentColour
+    resume: Resume,
+    name: str | None,
+    contact: str | None,
+    accent: AccentColour,
+    photo: bytes | None = None,
 ) -> bytes:
     document = _styled_document(name, "Resume")
-    _styled_header(document, name, contact, accent)
+    _styled_header(document, name, contact, accent, photo)
     page = document.sections[0]
     right_margin_tab = page.page_width - page.left_margin - page.right_margin  # type: ignore[operator]
     for section in resume.sections:
@@ -298,7 +322,7 @@ def _rendered(
     if which == "Resume":
         resume = Resume(**pack["resume"])
         content = (
-            styled_resume_docx(resume, name, contact, accent)
+            styled_resume_docx(resume, name, contact, accent, pack["photo"])
             if pair == "styled"
             else resume_docx(resume, name, contact)
         )

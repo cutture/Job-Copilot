@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal, NamedTuple, TypedDict, get_args
 from uuid import UUID
 
 from docx import Document
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Response, UploadFile
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, field_validator
 from pypdf import PdfReader
@@ -18,6 +18,7 @@ from pypdf import PdfReader
 from job_copilot import gateway
 from job_copilot.db import UserId, connect
 from job_copilot.gateway import DataClass
+from job_copilot.photo import MAX_PHOTO_BYTES, checked_photo, photo_in_resume
 
 MAX_UPLOAD_BYTES = 5_000_000
 MAX_DOCX_UNPACKED_BYTES = 20_000_000
@@ -329,6 +330,7 @@ PREFERENCE_FIELDS = (
     "contact",
     "accent_colour",
     "custom_sections",
+    "show_photo",
     "work_authorization",
     "lives_in",
     "education",
@@ -367,6 +369,8 @@ class Preferences(BaseModel):
     accent_colour: AccentColour = "navy"
     # Headings for resume sections that fit no standard one, after the standard ones.
     custom_sections: list[str] = Field(default_factory=list, max_length=MAX_CUSTOM_SECTIONS)
+    # A photo on the styled resume. While it's off, no photo is kept.
+    show_photo: bool = False
     work_authorization: ShortText | None = None
     lives_in: ShortText | None = None
     education: ShortText | None = None
@@ -406,6 +410,7 @@ class Preferences(BaseModel):
 
 
 class Profile(Preferences):
+    has_photo: bool
     resume_filename: str | None
     resume_text: str | None
     extraction_status: Literal["queued", "done", "failed"] | None
@@ -452,7 +457,9 @@ def get_profile(user_id: UserId) -> Profile:
             f"SELECT {EVIDENCE_COLUMNS} FROM evidence WHERE user_id = %s ORDER BY id",
             (user_id,),
         ).fetchall()
-    return Profile(**row, evidence=[EvidenceItem(**item) for item in items])
+    return Profile(
+        **row, has_photo=row["photo"] is not None, evidence=[EvidenceItem(**item) for item in items]
+    )
 
 
 @router.put("/api/profile")
@@ -478,6 +485,7 @@ def save_preferences(preferences: Preferences, user_id: UserId) -> Profile:
             # If Filter's inputs changed, the next search runs Filter again on postings still
             # in the Search Window.
             f"""UPDATE profiles SET {assignments}, updated_at = now(),
+                    photo = CASE WHEN %(show_photo)s THEN photo END,
                     recheck_due = recheck_due OR ({filter_now}) IS DISTINCT FROM ({filter_new})
                 WHERE user_id = %(user_id)s""",
             {**values, "user_id": user_id},
@@ -517,6 +525,7 @@ def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
                WHERE user_id = %s""",
             (filename, text, user_id),
         )
+        _keep_photo_from(conn, user_id, filename, content)
         # A new resume replaces the old resume's unconfirmed items; confirmed ones stay.
         conn.execute(
             "DELETE FROM evidence WHERE user_id = %s AND origin = 'resume' AND NOT confirmed",
@@ -524,6 +533,57 @@ def upload_resume(file: UploadFile, user_id: UserId) -> Profile:
         )
         _queue_reading(conn, user_id)
     return get_profile(user_id)
+
+
+def _keep_photo_from(conn: Any, user_id: UUID, filename: str, content: bytes) -> None:
+    """With the switch on, keep the resume's photo, if it has one that checks out."""
+    on = conn.execute("SELECT show_photo FROM profiles WHERE user_id = %s", (user_id,)).fetchone()
+    found = photo_in_resume(filename, content) if on and on["show_photo"] else None
+    try:
+        photo = checked_photo(found) if found else None
+    except ValueError:
+        return
+    if photo:
+        conn.execute("UPDATE profiles SET photo = %s WHERE user_id = %s", (photo, user_id))
+
+
+@router.post("/api/profile/photo")
+def upload_photo(file: UploadFile, user_id: UserId) -> Profile:
+    """Add or replace the photo on the styled resume. It's never sent to a model."""
+    content = file.file.read(MAX_PHOTO_BYTES + 1)
+    if len(content) > MAX_PHOTO_BYTES:
+        raise HTTPException(413, "This photo is over 5 MB. Upload a smaller one.")
+    try:
+        photo = checked_photo(content)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
+    with connect() as conn:
+        ensure_profile(conn, user_id)
+        saved = conn.execute(
+            "UPDATE profiles SET photo = %s WHERE user_id = %s AND show_photo RETURNING user_id",
+            (photo, user_id),
+        ).fetchone()
+    if saved is None:
+        raise HTTPException(409, "Turn on “Photo on my styled resume” first.")
+    return get_profile(user_id)
+
+
+@router.get("/api/profile/photo")
+def get_photo(user_id: UserId) -> Response:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT photo FROM profiles WHERE user_id = %s AND show_photo AND photo IS NOT NULL",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "There's no photo.")
+    return Response(bytes(row["photo"]), media_type="image/jpeg")
+
+
+@router.delete("/api/profile/photo", status_code=204)
+def delete_photo(user_id: UserId) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE profiles SET photo = NULL WHERE user_id = %s", (user_id,))
 
 
 @router.post("/api/profile/resume/read-again", status_code=202)

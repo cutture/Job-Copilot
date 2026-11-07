@@ -355,6 +355,8 @@ class ApplicationView(BaseModel):
     name: str | None
     contact: str | None
     accent_colour: str
+    # A photo goes on the styled resume.
+    has_photo: bool
     # None once the person has deleted it.
     pack: PackView | None
 
@@ -905,6 +907,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        pack.reviewed_at IS NOT NULL AS reviewed, a.submitted_at, a.outcome,
                        {COST} AS cost_usd, pr.name, pr.contact,
                        COALESCE(pr.accent_colour, 'navy') AS accent_colour,
+                       COALESCE(pr.show_photo AND pr.photo IS NOT NULL, false) AS has_photo,
                        pack.version, pack.status, pack.failure, pack.model, pack.resume,
                        pack.cover_letter, pack.removed_claims, a.requirements
                 FROM applications a
@@ -1036,7 +1039,8 @@ def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
     """
     pack = conn.execute(
         f"""SELECT pack.*, a.submitted_at, p.title, p.employer, pr.name, pr.contact,
-                   COALESCE(pr.accent_colour, 'navy') AS accent_colour
+                   COALESCE(pr.accent_colour, 'navy') AS accent_colour,
+                   CASE WHEN pr.show_photo THEN pr.photo END AS photo
             FROM applications a
             LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
             JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id

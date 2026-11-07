@@ -33,6 +33,9 @@ type ProfileData = {
   accent_colour: AccentColour;
   // Headings for resume sections that fit no standard one.
   custom_sections: string[];
+  // A photo on the styled resume; none is kept while it's off.
+  show_photo: boolean;
+  has_photo: boolean;
   evidence: Evidence[];
 };
 
@@ -52,6 +55,7 @@ type Form = {
   search_window_days: string;
   accent_colour: AccentColour;
   custom_sections: string[];
+  show_photo: boolean;
 };
 
 type PayRow = { currency: string; yearly: string; hourly: string };
@@ -90,6 +94,7 @@ function toForm(profile: ProfileData): Form {
     search_window_days: String(profile.search_window_days),
     accent_colour: profile.accent_colour,
     custom_sections: profile.custom_sections,
+    show_photo: profile.show_photo,
   };
 }
 
@@ -194,6 +199,8 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
   const [saved, setSaved] = useState(false);
   const [confirmingAll, setConfirmingAll] = useState(false);
   const [deletion, setDeletion] = useState<DeletionReport | null>(null);
+  // Changes after each upload, so the preview shows the new photo.
+  const [photoVersion, setPhotoVersion] = useState(0);
 
   async function refresh(resetForm = false) {
     try {
@@ -227,6 +234,24 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
       setError(await detail(response, "We couldn't upload this file. Try again."));
       return;
     }
+    refresh();
+  }
+
+  async function uploadPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError("");
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch("/api/profile/photo", { method: "POST", body });
+    if (!response.ok) setError(await detail(response, "We couldn't use this photo. Try another."));
+    setPhotoVersion((version) => version + 1);
+    refresh();
+  }
+
+  async function removePhoto() {
+    const response = await fetch("/api/profile/photo", { method: "DELETE" }).catch(() => null);
+    if (!response?.ok) setError("We couldn't remove the photo. Try again.");
     refresh();
   }
 
@@ -289,6 +314,7 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
         search_window_days: Number(form.search_window_days) || 15,
         accent_colour: form.accent_colour,
         custom_sections: form.custom_sections.map((heading) => heading.trim()).filter(Boolean),
+        show_photo: form.show_photo,
       }),
     });
     if (response.ok) {
@@ -461,6 +487,35 @@ export function Profile({ draft = "", onEverythingDeleted }: { draft?: string; o
                   <button onClick={() => setCustom((headings) => [...headings, ""])}>Add a resume section</button>
                 )}
               </fieldset>
+              <label style={{ display: "block" }}>
+                <input
+                  type="checkbox"
+                  checked={form.show_photo}
+                  onChange={(event) => setForm((current) => current && { ...current, show_photo: event.target.checked })}
+                />{" "}
+                Photo on my styled resume
+              </label>
+              <p style={{ fontSize: 13, marginTop: 0 }}>
+                Off unless you turn it on. Your photo is never sent to an AI model, and turning this off deletes it.
+              </p>
+              {profile?.show_photo && (
+                <div style={{ marginBottom: 8 }}>
+                  {profile.has_photo && (
+                    <>
+                      <img
+                        src={`/api/profile/photo?v=${photoVersion}`}
+                        alt="Your photo"
+                        style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover", verticalAlign: "middle" }}
+                      />{" "}
+                      <button onClick={removePhoto}>Remove photo</button>
+                    </>
+                  )}
+                  <label htmlFor="photo" style={{ display: "block" }}>
+                    Upload a photo
+                  </label>
+                  <input id="photo" type="file" accept="image/jpeg,image/png" onChange={uploadPhoto} />
+                </div>
+              )}
               <label htmlFor="work-authorization">Work authorization</label>
               <input id="work-authorization" style={field} value={form.work_authorization} onChange={set("work_authorization")} />
               <label htmlFor="lives-in">Where you live</label>
