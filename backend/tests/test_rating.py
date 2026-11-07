@@ -363,3 +363,31 @@ def test_the_model_is_told_personal_traits_are_nice_to_haves(
     rate_posting(client, provider, answer(*three_met(add_evidence(client))))
 
     assert "personal traits" in rating_messages(provider)
+
+
+def test_what_a_role_offers_is_never_a_requirement(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    set_profile(client)
+    evidence_id = add_evidence(client)
+    offers = [
+        requirement("Fully remote work", "fully remote", result="missing"),
+        requirement("Competitive salary", "a competitive salary", result="missing"),
+        requirement("Health insurance", "health insurance", kind="nice_to_have", result="missing"),
+    ]
+    # A limit on where the person must work names a place, so it stays.
+    where = requirement(
+        "Remote within Canada", "authorised to work in Canada", evidence=[evidence_id]
+    )
+    text = POSTING + " The role is fully remote, with a competitive salary and health insurance."
+
+    posting = rate_posting(
+        client, provider, answer(*three_met(evidence_id), *offers, where), text=text
+    )
+
+    match = posting["match"]
+    listed = [r["requirement"] for r in match["requirements"]]
+    assert not {"Fully remote work", "Competitive salary", "Health insurance"} & set(listed)
+    assert "Remote within Canada" in listed
+    assert match["band"] == "High"
+    assert "what the role offers" in rating_messages(provider)

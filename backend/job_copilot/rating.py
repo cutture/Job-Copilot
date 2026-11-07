@@ -6,6 +6,7 @@ seniority and languages itself, and sets the Band with the rules in `bands`.
 
 import json
 import os
+import re
 from typing import Any, Literal
 from uuid import UUID
 
@@ -27,7 +28,7 @@ RATING_MODEL = "anthropic/claude-haiku-5-5"
 RATING_MAX_OUTPUT_TOKENS = 16000
 # ponytail: a starting judgement on cost; revisit once real costs are measured.
 RATINGS_PER_RUN = int(os.environ.get("RATINGS_PER_RUN", "50"))
-RUBRIC_VERSION = 2
+RUBRIC_VERSION = 3
 MAX_REQUIREMENTS = 40
 MAX_TEXT_LENGTH = 300
 RatingState = Literal["rated", "rating", "waiting"]
@@ -65,7 +66,19 @@ PROMPT = (
     '- "seniority": {"level": "Junior", "Mid", "Senior", "Staff" or null, "quote": the words '
     'that state it or null, "firm_minimum": true only if the posting makes it a strict minimum}\n'
     '- "languages": the spoken languages the posting requires, each {"language": name, '
-    '"quote": the words}. Leave languages out of "requirements".'
+    '"quote": the words}. Leave languages out of "requirements". Leave out what the role '
+    "offers, such as its work arrangement (remote, hybrid or on-site), pay or benefits: they "
+    "describe the job, not the person. A limit on where the person must live or work is still "
+    "a hard_blocker."
+)
+# What a role offers, named on its own, as a model may still list it. A name with a place in it,
+# such as "Remote within Canada", doesn't match, so a limit on where someone works stays.
+ROLE_OFFERS = re.compile(
+    r"(?:fully |100% )?(?:remote|hybrid|on[- ]?site|in[- ]office|flexible)"
+    r"(?: work(?:ing)?| role| position| job| hours| schedule| arrangement)?"
+    r"|(?:competitive |good |attractive )?(?:salary|pay|compensation|equity|stock options|"
+    r"bonus(?:es)?|benefits|health insurance|paid time off|pto|vacation|holidays?|pension)",
+    re.IGNORECASE,
 )
 
 
@@ -216,8 +229,13 @@ def judge(answer: Any, posting: str, evidence: dict[int, str], facts: dict[str, 
         except ValidationError:
             continue
         quote = _verified_quote(raw.quote, posting)
-        if quote:
-            requirements.append(_judge(raw, quote, evidence, facts, asks))
+        if not quote:
+            continue
+        judged = _judge(raw, quote, evidence, facts, asks)
+        # It describes the job, not the person, so no Evidence could ever meet it.
+        if judged.kind != "hard_blocker" and ROLE_OFFERS.fullmatch(judged.requirement.strip()):
+            continue
+        requirements.append(judged)
     languages = _languages(answer, posting, facts["languages"])
     seniority = _seniority(answer, posting, facts["seniority"])
     if seniority == "unknown":

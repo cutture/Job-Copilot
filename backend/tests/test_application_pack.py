@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import psycopg
 from fastapi.testclient import TestClient
 
-from job_copilot import worker
+from job_copilot import rating, worker
 from job_copilot.api import app, current_user_id
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_rating import (
@@ -144,7 +144,7 @@ def test_apply_starts_an_application_and_a_verified_pack(
     assert (started["band"], started["source"], started["rubric_version"]) == (
         "High",
         "Manual Source",
-        2,
+        rating.RUBRIC_VERSION,
     )
     assert started["pack"]["status"] == "generating"
     assert started["pack"]["resume"] is None
