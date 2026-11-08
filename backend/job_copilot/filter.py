@@ -65,16 +65,30 @@ REGIONS = {
     "middle east",
     "africa",
 }
-# The posting's own words for an office role, which an instruction to the AI can't undo. A
-# visit, or no requirement, doesn't make a role on-site.
-# ponytail: English phrasings only; add others as postings in other languages pass Filter.
-ON_SITE_WORDS = re.compile(
-    r"(?<!no )(?<!not )\bon[- ]?site\b(?! visits?\b| requirement)"
-    r"|\boffice[- ]based\b"
-    r"|\b(?:five|four|three|5|4|3) days a week in (?:the|our|an?) (?:\w+ ){0,2}office\b",
+WorkArrangement = Literal["remote", "hybrid", "on_site", "unknown"]
+# The posting's own words about how the role is worked, which an instruction to the AI can't
+# undo. Only words about the role count: "on-site interviews" or "hybrid cloud" say nothing.
+# ponytail: English phrasings only, and a negation counts only right before the phrase; add
+# others as postings that should be set aside pass Filter.
+_ROLE = r"(?:role|position|job)"
+ON_SITE_ROLE = re.compile(
+    rf"(?<!not an )(?<!not a )\bon[- ]?site {_ROLE}\b"
+    rf"|\b{_ROLE} is (?:fully |100% )?on[- ]?site\b"
+    r"|\bwork(?:ing)? (?:fully )?on[- ]?site\b(?! (?:with|at|for) (?:our )?(?:clients?|customers?))"
+    rf"|\boffice[- ]based\b|\bin[- ]office {_ROLE}\b|\boffice attendance (?:is )?required\b"
+    rf"|\b{_ROLE} is not remote\b|\bnot a remote {_ROLE}\b|\bnon[- ]remote\b",
     re.IGNORECASE,
 )
-HYBRID_WORDS = re.compile(r"\bhybrid\b", re.IGNORECASE)
+HYBRID_ROLE = re.compile(
+    rf"\bhybrid (?:{_ROLE}|work(?:ing)?|schedule|model|arrangement|setup)\b"
+    rf"|\b{_ROLE} is hybrid\b",
+    re.IGNORECASE,
+)
+OFFICE_DAYS = re.compile(
+    r"\b(?:five|four|three|5|4|3) days (?:a|per) week (?:in|at) (?:the|our|an?) (?:\w+ ){0,2}"
+    r"office\b",
+    re.IGNORECASE,
+)
 MAX_PLACES_IN_REASON = 3
 MAX_PLACE_LENGTH = 40
 # Common words that mark a language. Words shared with English, like "in", are left out.
@@ -96,7 +110,7 @@ class PostingFacts(BaseModel):
 
     title: str
     posting_type: Literal["employment", "freelance"]
-    work_arrangement: Literal["remote", "hybrid", "on_site", "unknown"]
+    work_arrangement: WorkArrangement
     locations: list[str] = []
     residence_required: list[str] = []
     salary_max: float | None = None
@@ -244,14 +258,17 @@ def decide(facts: PostingFacts, preferences: dict[str, Any]) -> Decision:
     return Decision(True)
 
 
-def stated_arrangement(text: str) -> Literal["hybrid", "on_site"] | None:
-    """What the posting's own words say about working from an office, if anything.
+def stated_arrangement(text: str) -> WorkArrangement | None:
+    """What the posting's own words say about how the role is worked, if anything.
 
-    A hybrid role names its office days too, so hybrid wins over on-site.
+    A role stated as on-site wins, so a planted "hybrid" line can't soften it. A hybrid role
+    names its office days, so hybrid wins over office days alone.
     """
-    if HYBRID_WORDS.search(text):
+    if ON_SITE_ROLE.search(text):
+        return "on_site"
+    if HYBRID_ROLE.search(text):
         return "hybrid"
-    return "on_site" if ON_SITE_WORDS.search(text) else None
+    return "on_site" if OFFICE_DAYS.search(text) else None
 
 
 def read_facts(user_id: UUID, posting_text: str) -> PostingFacts:
@@ -269,7 +286,7 @@ def read_facts(user_id: UUID, posting_text: str) -> PostingFacts:
     facts = PostingFacts.model_validate(gateway.parse_json(completion.text))
     # The posting is untrusted and may tell the model it's remote; its own words say otherwise.
     stated = stated_arrangement(posting_text)
-    if stated and facts.work_arrangement in ("remote", "unknown"):
+    if stated and facts.work_arrangement == "remote":
         facts.work_arrangement = stated
     return facts
 

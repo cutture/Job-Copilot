@@ -187,7 +187,8 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
         for r in match.requirements
         if r.kind == "hard_blocker" and r.result == "missing"
     ]
-    if case["area"] in ("pack", "injection"):
+    # A case labelled with what a Pack may or must hold goes on to write one.
+    if {"not_in_resume", "not_in_pack", "in_pack"} & case["expect"].keys():
         pack_evidence: dict[int, dict[str, Any]] = {
             n: {"text": text, "origin": "self_reported", "id": None} for n, text in evidence.items()
         }
