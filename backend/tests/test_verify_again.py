@@ -63,7 +63,7 @@ def test_a_line_verification_skips_is_asked_about_again_and_kept(
 
     assert SKIPPED_TEXT in summary(pack)
     # Asked again about only the skipped line, so nothing else is sent twice.
-    assert asked[1] == ["m0"]
+    assert asked[-1] == ["m0"]
     assert "Verification left 1 line unjudged: {'summary': 1}" in caplog.text
     assert SKIPPED_TEXT not in caplog.text
 
@@ -73,7 +73,6 @@ def test_a_line_still_skipped_after_asking_again_is_removed_as_unchecked(
 ) -> None:
     pack, asked = pack_with(client, provider, monkeypatch, times=2)
 
-    assert len(asked) == 2
     assert SKIPPED_TEXT not in summary(pack)
     removed = {r["text"]: r["kind"] for r in pack["removed_claims"]}
     assert removed[SKIPPED_TEXT] == "unchecked"
@@ -84,18 +83,21 @@ def test_a_line_still_skipped_after_asking_again_is_removed_as_unchecked(
     ("claim_id", "kind"),
     [
         ("m0", "summary"),
-        ("s3", "skill"),
-        ("g1", "group heading"),
-        ("g1s2", "group skill"),
-        ("e0", "role heading"),
-        ("e2b1", "role line"),
+        ("s3", "skills"),
+        ("g1", "skills"),
+        ("g1s2", "skills"),
+        ("e0", "experience"),
+        ("e2b1", "experience"),
         ("d0", "education"),
-        ("q0", "qualification"),
-        ("a1", "affiliation"),
-        ("t0", "certification"),
+        ("q0", "qualifications"),
+        ("a1", "affiliations"),
+        ("t0", "certifications"),
         ("u0l1", "custom"),
         ("c1s0", "cover letter"),
+        ("x9", "other"),
+        ("e0x1", "other"),
+        ("not an id", "other"),
     ],
 )
-def test_each_claim_id_names_the_kind_of_line(claim_id: str, kind: str) -> None:
+def test_each_claim_id_names_where_its_line_is(claim_id: str, kind: str) -> None:
     assert applications.claim_kind(claim_id) == kind

@@ -14,7 +14,7 @@ from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Literal, NamedTuple, TypedDict, cast
+from typing import Any, Literal, NamedTuple, TypedDict, cast, get_args
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response
@@ -568,27 +568,27 @@ def _resume_drafts(resume: list[DraftSection]) -> list[DraftClaim]:
     ]
 
 
-# Each Claim ID's kind of line, from its prefix, so a log can say what was skipped without text.
-CLAIM_KINDS = (
-    (re.compile(r"g\d+"), "group heading"),
-    (re.compile(r"g\d+s\d+"), "group skill"),
-    (re.compile(r"u\d+l\d+"), "custom"),
-    (re.compile(r"e\d+"), "role heading"),
-    (re.compile(r"e\d+b\d+"), "role line"),
-    (re.compile(r"c\d+s\d+"), "cover letter"),
-    (re.compile(r"m\d+"), "summary"),
-    (re.compile(r"s\d+"), "skill"),
-    (re.compile(r"d\d+"), "education"),
-    (re.compile(r"q\d+"), "qualification"),
-    (re.compile(r"a\d+"), "affiliation"),
-    (re.compile(r"t\d+"), "certification"),
-)
-VERDICTS = ("reworded", "stretched", "invented", "not_a_claim")
+Verdict = Literal["reworded", "stretched", "invented", "not_a_claim"]
+VERDICTS: tuple[Verdict, ...] = get_args(Verdict)
+# Claim IDs are a section's prefix and a number, then for a line inside another one, its own
+# letter and number: a skill group's skills, a role's lines, a custom section's lines and a
+# cover letter's sentences. A skill group's own heading is "g" and a number.
+_SECTION_OF_PREFIX = {prefix: kind for kind, prefix in PREFIXES.items()} | {"g": "skills"}
+_LINES_INSIDE = {("g", "s"): "skills", ("e", "b"): "experience", ("u", "l"): "custom"}
+_LINES_INSIDE[("c", "s")] = "cover letter"
+CLAIM_ID = re.compile(r"([a-z])\d+(?:([a-z])\d+)?")
 
 
 def claim_kind(claim_id: str) -> str:
-    """The kind of line a Claim ID belongs to, such as "summary" or "role line"."""
-    return next((kind for pattern, kind in CLAIM_KINDS if pattern.fullmatch(claim_id)), "other")
+    """Which section, or the cover letter, a Claim ID's line is in, so a log can say what was
+    skipped without any text."""
+    match = CLAIM_ID.fullmatch(claim_id)
+    if not match:
+        return "other"
+    first, inner = match.groups()
+    if inner:
+        return _LINES_INSIDE.get((first, inner), "other")
+    return _SECTION_OF_PREFIX.get(first, "other")
 
 
 def _kinds(ids: list[str]) -> dict[str, int]:
@@ -597,7 +597,7 @@ def _kinds(ids: list[str]) -> dict[str, int]:
 
 def _judgements(
     state: PackState, statements: list[dict[str, str]]
-) -> dict[str, tuple[str, list[int]]]:
+) -> dict[str, tuple[Verdict, list[int]]]:
     """Verification's verdict and cited Evidence for each statement it judged."""
     evidence = state["evidence"]
     answer, _ = _ask(
@@ -608,10 +608,11 @@ def _judgements(
         VERIFY_MAX_OUTPUT_TOKENS,
     )
     asked = {s["id"] for s in statements}
-    judgements: dict[str, tuple[str, list[int]]] = {}
+    judgements: dict[str, tuple[Verdict, list[int]]] = {}
     for item in answer.get("statements") or [] if isinstance(answer, dict) else []:
         if isinstance(item, dict) and item.get("id") in asked and item.get("verdict") in VERDICTS:
-            judgements.setdefault(item["id"], (item["verdict"], _cited(item, evidence)))
+            verdict = cast(Verdict, item["verdict"])
+            judgements.setdefault(item["id"], (verdict, _cited(item, evidence)))
     return judgements
 
 
@@ -645,7 +646,11 @@ def verify(state: PackState) -> PackState:
         for d in checked
     ]
     judgements = _judgements(state, statements)
-    # Verification sometimes leaves a few lines out; it's asked once more about only those.
+    # Verification sometimes leaves a few lines out, or gives one an unknown verdict; it's asked
+    # once more about only those. An unusable first answer leaves every line out, so the second
+    # call checks the whole Pack again.
+    # ponytail: with the step's retry on an unreadable answer, Verification can be called up to
+    # four times for one Pack; cap the retry if that cost shows up.
     skipped = [s for s in statements if s["id"] not in judgements]
     if skipped:
         ids = [s["id"] for s in skipped]

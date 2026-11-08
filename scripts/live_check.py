@@ -56,20 +56,28 @@ def docx_text(content: bytes) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", xml))
 
 
-def unjudged_lines(since: float) -> list[str]:
-    """The worker's notes on lines Verification skipped since then. They hold counts and kinds
-    of line only, never text."""
-    logs = subprocess.run(
+# The worker's two notes on lines Verification skipped, which hold counts and kinds only.
+SKIPPED = re.compile(r"Verification left (\d+) lines? unjudged: (\{.*\})")
+STILL = re.compile(r"Lines still unjudged after asking again: (\{.*\})")
+
+
+def unjudged_lines(since: float) -> str:
+    """How many lines Verification skipped since then, by kind, and how many it still skipped
+    when asked again."""
+    read = subprocess.run(
         ["docker", "compose", "logs", "worker", "--since", f"{int(time.time() - since) + 1}s"],
         capture_output=True,
         text=True,
         check=False,
-    ).stdout
-    return [
-        line.split("applications:", 1)[-1]
-        for line in logs.splitlines()
-        if "unjudged" in line and "job_copilot.applications" in line
-    ]
+    )
+    if read.returncode != 0:
+        return "couldn't read the worker log"
+    skipped = [m.groups() for m in map(SKIPPED.search, read.stdout.splitlines()) if m]
+    still = [m.group(1) for m in map(STILL.search, read.stdout.splitlines()) if m]
+    if not skipped:
+        return "none"
+    first = ", ".join(f"{count} {kinds}" for count, kinds in skipped)
+    return f"{first}; still unjudged after asking again: {', '.join(still) or 'none'}"
 
 
 def wait(check: Any) -> Any:
