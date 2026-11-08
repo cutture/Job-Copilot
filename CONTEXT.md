@@ -200,6 +200,14 @@ _Avoid_: Notification, follow-up
 The stages Matches → Apply clicks → Submitted → Interview → Offer, with the rate between each.
 _Avoid_: Pipeline
 
+**Monthly cap**:
+The most a person's paid AI calls may cost in a calendar month (UTC), $10 unless they change it in Settings. It covers every paid call whichever provider it goes to, Eval Runs included, which stop first at their own $3. A warning shows at 80%, and at the cap paid calls stop.
+_Avoid_: Budget, limit, quota
+
+**Spending ledger**:
+The record of every model call with its cost, which the Monthly cap is checked against before each paid call and which the Settings page totals by month.
+_Avoid_: Billing log, usage log, costs table
+
 **Eval Run**:
 One execution of the eval set against the models in use, with its stored results.
 _Avoid_: Test run, benchmark
