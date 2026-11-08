@@ -19,6 +19,7 @@ function respondWith(listed: unknown[][]) {
     if (url === "/api/search") return new Response(JSON.stringify({ runs_left: 5, daily_limit: 5, searching: false }));
     if (url === "/api/watchlist") return new Response("[]");
     if (url === "/api/evals/status") return new Response(JSON.stringify({ failing: false, failing_since: null }));
+    if (url === "/api/spending") return new Response(JSON.stringify({ level: "ok", warning: null }));
     return init?.method === "POST"
       ? new Response("{}", { status: 201 })
       : new Response(JSON.stringify(listed.shift() ?? []));

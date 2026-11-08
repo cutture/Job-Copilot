@@ -7,6 +7,8 @@ from fastapi import Depends
 from psycopg.rows import DictRow, dict_row
 
 SEEDED_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+# The invented person Eval Cases run as. Their spending counts towards the owner's cap.
+EVAL_USER_ID = UUID("00000000-0000-0000-0000-00000000e7a1")
 
 
 def connect() -> psycopg.Connection[DictRow]:

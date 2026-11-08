@@ -33,11 +33,11 @@ from deepeval.metrics import BaseMetric  # noqa: E402
 from deepeval.test_case import LLMTestCase  # noqa: E402
 
 from job_copilot import applications, bands, filter, gateway, rating  # noqa: E402
-from job_copilot.db import connect, current_user_id  # noqa: E402
+from job_copilot.db import EVAL_USER_ID, connect, current_user_id  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-EVAL_USER = UUID("00000000-0000-0000-0000-00000000e7a1")
+EVAL_USER = EVAL_USER_ID
 CASES_FILE = Path(__file__).parent.parent / "evals" / "cases.json"
 # Provider trouble that means a case didn't run, as opposed to an answer that failed it.
 DID_NOT_RUN = ("Timeout", "RateLimit")

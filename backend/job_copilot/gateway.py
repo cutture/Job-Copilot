@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from job_copilot.db import connect
+from job_copilot.db import EVAL_USER_ID, SEEDED_USER_ID, connect
 
 log = logging.getLogger(__name__)
 
@@ -183,6 +183,34 @@ def _cost(rule: ModelRule, input_tokens: int, output_tokens: int) -> Decimal:
     )
 
 
+# The start of this calendar month in UTC, when every cap starts again.
+MONTH_START = "date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"
+
+
+def spenders(user_id: UUID) -> tuple[UUID, ...]:
+    """Whose paid calls count towards a person's cap: the owner's covers evals too."""
+    # ponytail: one owner in local mode; evals belong to whoever owns the install.
+    return (user_id, EVAL_USER_ID) if user_id == SEEDED_USER_ID else (user_id,)
+
+
+def caps_for(user_id: UUID) -> tuple[UUID, ...]:
+    """Each cap a person's paid call counts against: an eval call is held to evals' own cap
+    first, and to the owner's."""
+    return (EVAL_USER_ID, SEEDED_USER_ID) if user_id == EVAL_USER_ID else (user_id,)
+
+
+def cap_and_spent(conn: Any, user_id: UUID) -> tuple[Decimal, Decimal]:
+    """A person's monthly cap, and this month's spending towards it."""
+    row: Any = conn.execute(
+        f"""SELECT u.monthly_cap_usd AS cap,
+                   (SELECT COALESCE(SUM(c.cost_usd), 0) FROM model_calls c
+                    WHERE c.user_id = ANY(%s) AND c.created_at >= {MONTH_START}) AS spent
+            FROM users u WHERE u.id = %s""",
+        (list(spenders(user_id)), user_id),
+    ).fetchone()
+    return Decimal(row["cap"]), Decimal(row["spent"])
+
+
 def _check_cap(
     user_id: UUID, rule: ModelRule, messages: list[dict[str, str]], max_output_tokens: int
 ) -> None:
@@ -191,16 +219,10 @@ def _check_cap(
     # ponytail: check then call, so parallel workers could overshoot slightly; reserve spend
     # in a transaction if more than one worker runs paid calls for a user.
     with connect() as conn:
-        row: Any = conn.execute(
-            """SELECT u.monthly_cap_usd AS cap, COALESCE(SUM(c.cost_usd), 0) AS spent
-               FROM users u LEFT JOIN model_calls c ON c.user_id = u.id
-                 AND c.created_at >=
-                     date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
-               WHERE u.id = %s GROUP BY u.monthly_cap_usd""",
-            (user_id,),
-        ).fetchone()
-    if row["spent"] + estimate > row["cap"]:
-        raise CapReached("The monthly paid API cap has been reached")
+        for cap_owner in caps_for(user_id):
+            cap, spent = cap_and_spent(conn, cap_owner)
+            if spent + estimate > cap:
+                raise CapReached("The monthly paid API cap has been reached")
 
 
 def _trace(settings: TraceSettings, event: dict[str, Any]) -> None:

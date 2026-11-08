@@ -17,6 +17,7 @@ from job_copilot import (
     rating,
     search,
     sources,
+    spending,
 )
 from job_copilot.db import UserId, connect, current_user_id
 from job_copilot.sources import MAX_POSTING_LENGTH, MAX_TITLE_LENGTH
@@ -31,6 +32,7 @@ app.include_router(documents.router)
 app.include_router(deletion.router)
 app.include_router(export.router)
 app.include_router(eval_runs.router)
+app.include_router(spending.router)
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 

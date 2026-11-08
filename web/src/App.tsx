@@ -8,6 +8,7 @@ import { Matches, Origin, deleteQuestion } from "./Matches";
 import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches";
 import { Profile } from "./Profile";
 import { Search } from "./Search";
+import { Spending, SpendingBanner } from "./Spending";
 
 type JobPosting = PostingOrigin & {
   id: string;
@@ -62,7 +63,7 @@ export function App() {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [view, setView] = useState<"postings" | "applications" | "profile" | "evals">("postings");
+  const [view, setView] = useState<"postings" | "applications" | "profile" | "evals" | "spending">("postings");
   const [showFiltered, setShowFiltered] = useState(false);
   const [evidenceDraft, setEvidenceDraft] = useState("");
   const [applicationId, setApplicationId] = useState<string | null>(null);
@@ -165,6 +166,7 @@ export function App() {
     return (
       <main style={{ maxWidth: 1320, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
         <EvalBanner />
+        <SpendingBanner />
         <Application id={applicationId} onBack={backToListings} />
       </main>
     );
@@ -174,6 +176,7 @@ export function App() {
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
       <h1>Job Copilot</h1>
       <EvalBanner />
+      <SpendingBanner />
       <nav aria-label="Pages" style={{ marginBottom: 16 }}>
         <button aria-pressed={view === "postings"} onClick={() => setView("postings")}>
           Job Postings
@@ -192,10 +195,14 @@ export function App() {
         </button>{" "}
         <button aria-pressed={view === "evals"} onClick={() => setView("evals")}>
           Eval Runs
+        </button>{" "}
+        <button aria-pressed={view === "spending"} onClick={() => setView("spending")}>
+          Spending
         </button>
       </nav>
       {view === "applications" && <Applications onOpen={setApplicationId} />}
       {view === "evals" && <EvalRuns />}
+      {view === "spending" && <Spending />}
       {view === "profile" && (
         <Profile key={evidenceDraft} draft={evidenceDraft} onEverythingDeleted={() => setPostings([])} />
       )}
