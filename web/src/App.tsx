@@ -197,7 +197,7 @@ export function App() {
           Eval Runs
         </button>{" "}
         <button aria-pressed={view === "spending"} onClick={() => setView("spending")}>
-          Spending
+          Settings
         </button>
       </nav>
       {view === "applications" && <Applications onOpen={setApplicationId} />}

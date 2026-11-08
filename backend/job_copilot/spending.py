@@ -17,8 +17,9 @@ from job_copilot.gateway import MONTH_START, cap_and_spent, spenders
 router = APIRouter()
 
 WARN_AT = Decimal("0.8")
-# Months of spending shown, matching how long the ledger is kept.
+# Months of spending shown: the spec keeps the ledger 13 months, and clean-up comes with #32.
 MONTHS_SHOWN = 13
+Level = Literal["ok", "warning", "reached"]
 MAX_CAP_USD = 1000
 
 
@@ -35,7 +36,7 @@ class Spending(BaseModel):
     cap_usd: Decimal
     # Evals stop at their own cap first, inside the person's.
     eval_cap_usd: Decimal | None
-    level: Literal["ok", "warning", "reached"]
+    level: Level
     warning: str | None
     months: list[MonthSpending]
 
@@ -44,16 +45,18 @@ class NewCap(BaseModel):
     monthly_cap_usd: Decimal = Field(gt=0, le=MAX_CAP_USD, decimal_places=2)
 
 
-def _warning(
-    spent: Decimal, cap: Decimal
-) -> tuple[Literal["ok", "warning", "reached"], str | None]:
+def _warning(spent: Decimal, cap: Decimal) -> tuple[Level, str | None]:
     if spent >= cap:
         return "reached", (
-            f"You've reached this month's ${cap:.2f} cap. Paid AI work waits until next month "
-            "or until you raise the cap; free models keep working."
+            f"You've reached this month's ${cap:.2f} cap. Paid AI work, such as ratings, reading "
+            "your resume and Application Packs, stops until the 1st or until you raise the cap "
+            "on the Settings page. Reading new postings keeps working."
         )
     if spent >= WARN_AT * cap:
-        return "warning", f"You've used 80% of this month's ${cap:.2f} cap: ${spent:.2f} so far."
+        return "warning", (
+            f"You've used 80% of this month's ${cap:.2f} cap: ${spent:.2f} so far. Raise the cap "
+            "on the Settings page if you need more."
+        )
     return "ok", None
 
 
@@ -70,9 +73,9 @@ def get_spending(user_id: UserId) -> Spending:
                        COALESCE(SUM(cost_usd) FILTER (WHERE user_id = %s), 0) AS evals_usd
                 FROM model_calls
                 WHERE user_id = ANY(%s)
-                  AND created_at >= {MONTH_START} - interval '{MONTHS_SHOWN - 1} months'
+                  AND created_at >= {MONTH_START} - %s * interval '1 month'
                 GROUP BY 1 ORDER BY 1 DESC""",
-            (EVAL_USER_ID, list(spenders(user_id))),
+            (EVAL_USER_ID, list(spenders(user_id)), MONTHS_SHOWN - 1),
         ).fetchall()
         this_month: Any = conn.execute(
             f"SELECT date_trunc('month', {MONTH_START} AT TIME ZONE 'UTC') AS month"

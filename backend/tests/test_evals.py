@@ -10,7 +10,7 @@ import psycopg
 from fastapi.testclient import TestClient
 
 from job_copilot import evals, rating
-from job_copilot.db import SEEDED_USER_ID
+from job_copilot.db import EVAL_USER_ID, SEEDED_USER_ID
 from job_copilot.filter import FILTER_MODEL
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_filter import facts
@@ -188,15 +188,15 @@ def test_evals_stop_at_their_own_3_dollar_cap_and_leave_the_owners_ledger_alone(
     provider.answers = {rating.RATING_MODEL: json.dumps(answer())}
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
         cap = conn.execute(
-            "SELECT monthly_cap_usd FROM users WHERE id = %s", (evals.EVAL_USER,)
+            "SELECT monthly_cap_usd FROM users WHERE id = %s", (EVAL_USER_ID,)
         ).fetchone()
         assert cap is not None and cap[0] == 3
-        conn.execute("UPDATE users SET monthly_cap_usd = 0 WHERE id = %s", (evals.EVAL_USER,))
+        conn.execute("UPDATE users SET monthly_cap_usd = 0 WHERE id = %s", (EVAL_USER_ID,))
     try:
         evals.run(OWNER, cases_file(tmp_path, "scoring-strong-match"))
     finally:
         with psycopg.connect(TEST_DB, autocommit=True) as conn:
-            conn.execute("UPDATE users SET monthly_cap_usd = 3 WHERE id = %s", (evals.EVAL_USER,))
+            conn.execute("UPDATE users SET monthly_cap_usd = 3 WHERE id = %s", (EVAL_USER_ID,))
 
     [result] = results()
     assert result["status"] == "did_not_run"

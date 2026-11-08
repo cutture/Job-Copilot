@@ -12,7 +12,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from job_copilot.applications import delete_packs, drop_queued_work, forget_evidence
-from job_copilot.db import UserId, connect
+from job_copilot.db import EVAL_USER_ID, UserId, connect
+from job_copilot.gateway import spenders
 
 router = APIRouter()
 
@@ -41,8 +42,11 @@ NOT_DELETED = [
     "API keys in your .env file aren't stored by Job Copilot. Remove them yourself.",
     "Job Copilot makes no backups in local mode. Backups you made yourself aren't touched.",
 ]
-LEDGER_NOTE = (
-    "The spending ledger is deleted too, so this month's spending cap starts again from $0."
+LEDGER_NOTE = "The spending ledger is deleted too, so this month's spending starts again from $0."
+# Eval Runs' own spending counts towards the owner's cap, so it's deleted with them or it stays.
+EVAL_LEDGER_KEPT = (
+    "The spending ledger is deleted too, apart from Eval Runs' spending this month, which stays "
+    "with the Eval Runs and still counts towards your cap."
 )
 
 
@@ -124,23 +128,37 @@ def delete_evidence(evidence_id: int, user_id: UserId) -> None:
 @router.post("/api/delete-everything")
 def delete_everything(request: DeleteEverything, user_id: UserId) -> DeletionReport:
     """Delete every record of the person's. The typed DELETE is checked by the request model."""
+    # Eval Runs' spending belongs to the owner's invented eval person, and goes with Eval Runs.
+    with_evals = request.include_eval_runs and EVAL_USER_ID in spenders(user_id)
+    ledger = [user_id, EVAL_USER_ID] if with_evals else [user_id]
     with connect() as conn:
         traces: Any = conn.execute(
             """SELECT count(DISTINCT trace_id) AS traces FROM model_calls
-               WHERE user_id = %s AND trace_id IS NOT NULL""",
-            (user_id,),
+               WHERE user_id = ANY(%s) AND trace_id IS NOT NULL""",
+            (ledger,),
         ).fetchone()
         conn.execute(
             """INSERT INTO trace_deletions (trace_id)
-               SELECT trace_id FROM model_calls WHERE user_id = %s AND trace_id IS NOT NULL
+               SELECT trace_id FROM model_calls WHERE user_id = ANY(%s) AND trace_id IS NOT NULL
                ON CONFLICT DO NOTHING""",
-            (user_id,),
+            (ledger,),
         )
         tables = USER_TABLES | (EVAL_TABLES if request.include_eval_runs else {})
         deleted = {
             label: conn.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,)).rowcount
             for table, label in tables.items()
         }
+        if with_evals:
+            deleted[USER_TABLES["model_calls"]] += conn.execute(
+                "DELETE FROM model_calls WHERE user_id = %s", (EVAL_USER_ID,)
+            ).rowcount
+        eval_spending_kept = (
+            not with_evals
+            and conn.execute(
+                "SELECT 1 FROM model_calls WHERE user_id = ANY(%s) LIMIT 1",
+                (list(spenders(user_id)),),
+            ).fetchone()
+        )
     not_deleted = list(NOT_DELETED)
     if traces["traces"]:
         # ponytail: the IDs wait in trace_deletions until the trace deletion job sends them, at
@@ -150,4 +168,5 @@ def delete_everything(request: DeleteEverything, user_id: UserId) -> DeletionRep
             f"{traces['traces']} traces at Langfuse are queued for deletion, up to 50 a day. "
             "They hold masked records of each model call, never your resume text.",
         )
-    return DeletionReport(deleted=deleted, not_deleted=not_deleted, notes=[LEDGER_NOTE])
+    note = EVAL_LEDGER_KEPT if eval_spending_kept else LEDGER_NOTE
+    return DeletionReport(deleted=deleted, not_deleted=not_deleted, notes=[note])

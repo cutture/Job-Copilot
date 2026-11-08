@@ -135,3 +135,24 @@ def test_another_persons_spending_isnt_shown(client: TestClient) -> None:
         assert Decimal(shown["evals_usd"]) == 0
     finally:
         app.dependency_overrides.clear()
+
+
+def test_delete_everything_keeps_eval_spending_unless_eval_runs_go_too(
+    client: TestClient,
+) -> None:
+    spend("2.00")
+    spend("1.00", EVAL_USER_ID)
+
+    kept = client.post("/api/delete-everything", json={"confirm": "DELETE"}).json()
+
+    assert Decimal(spending(client)["spent_usd"]) == Decimal("1.00")
+    assert "apart from Eval Runs' spending" in kept["notes"][0]
+
+    gone = client.post(
+        "/api/delete-everything", json={"confirm": "DELETE", "include_eval_runs": True}
+    ).json()
+
+    assert Decimal(spending(client)["spent_usd"]) == 0
+    assert gone["notes"] == [
+        "The spending ledger is deleted too, so this month's spending starts again from $0."
+    ]

@@ -287,7 +287,7 @@ def test_delete_everything_needs_delete_typed_and_leaves_no_row_for_the_person(
     assert report["not_deleted"][0].startswith(f"{queued[0]} traces at Langfuse are queued")
     assert any("downloaded stay on your computer" in item for item in report["not_deleted"])
     assert report["notes"] == [
-        "The spending ledger is deleted too, so this month's spending cap starts again from $0."
+        "The spending ledger is deleted too, so this month's spending starts again from $0."
     ]
 
 

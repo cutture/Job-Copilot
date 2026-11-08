@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
+import { dollars } from "./labels";
 
 type SpendingData = {
   spent_usd: string;
@@ -13,7 +14,7 @@ type SpendingData = {
   months: { month: string; spent_usd: string; evals_usd: string }[];
 };
 
-const money = (amount: string) => `$${Number(amount).toFixed(2)}`;
+const money = (amount: string) => dollars(amount, 2);
 const cell: CSSProperties = { borderBottom: "1px solid #ddd", padding: "4px 8px", textAlign: "left" };
 
 async function getSpending(): Promise<SpendingData> {
@@ -79,15 +80,16 @@ export function Spending() {
   if (!spending) return <p>Loading your spending…</p>;
   return (
     <section>
-      <h2>Spending</h2>
+      <h2>Settings</h2>
+      <h3>Spending</h3>
       <p>
         This month: {money(spending.spent_usd)} of your {money(spending.cap_usd)} monthly cap, across every paid AI
         call whichever provider it went to.
       </p>
       {spending.eval_cap_usd && (
         <p style={{ fontSize: 13 }}>
-          {money(spending.evals_usd)} of it from Eval Runs, which stop at {money(spending.eval_cap_usd)} so the rest of
-          your cap stays free for your own work.
+          {money(spending.evals_usd)} of it from Eval Runs. They stop at their own {money(spending.eval_cap_usd)}, or at
+          your cap if that comes first. Changing your cap doesn't change theirs.
         </p>
       )}
       <label htmlFor="cap">Monthly cap, in US dollars</label>{" "}

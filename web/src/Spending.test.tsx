@@ -40,7 +40,7 @@ describe("Spending", () => {
     render(<Spending />);
 
     expect(await screen.findByText(/\$8\.40 of your \$10\.00 monthly cap/)).toBeTruthy();
-    expect(screen.getByText(/\$1\.20 of it from Eval Runs, which stop at \$3\.00/)).toBeTruthy();
+    expect(screen.getByText(/\$1\.20 of it from Eval Runs\. They stop at their own \$3\.00/)).toBeTruthy();
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows.map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent))).toEqual([
       ["November 2026", "$8.40", "$1.20"],

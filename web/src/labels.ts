@@ -37,8 +37,9 @@ export function splitDates(heading: string): [string, string | null] {
   return [heading.slice(0, match.index).replace(/[ ,]+$/, ""), match[1]];
 }
 
-export function dollars(cost: string): string {
-  return `$${Number(cost).toFixed(4)}`;
+// Model calls cost fractions of a cent, so costs show four decimal places unless told fewer.
+export function dollars(cost: string, places = 4): string {
+  return `$${Number(cost).toFixed(places)}`;
 }
 
 // The photo, small and round, as the styled resume sets it beside the name.

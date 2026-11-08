@@ -37,7 +37,6 @@ from job_copilot.db import EVAL_USER_ID, connect, current_user_id  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-EVAL_USER = EVAL_USER_ID
 CASES_FILE = Path(__file__).parent.parent / "evals" / "cases.json"
 # Provider trouble that means a case didn't run, as opposed to an answer that failed it.
 DID_NOT_RUN = ("Timeout", "RateLimit")
@@ -175,11 +174,11 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
     posting = case["posting"]
     # A case labelled with a Filter result, an injection case included, stops at Filter.
     if "passes" in case["expect"]:
-        decision = filter.decide(filter.read_facts(EVAL_USER, posting), profile["preferences"])
+        decision = filter.decide(filter.read_facts(EVAL_USER_ID, posting), profile["preferences"])
         outcome.passes, outcome.filter_reason = decision.passed, decision.reason
         return outcome
     evidence = dict(enumerate(profile["evidence"], start=1))
-    match = rating.rate_posting(EVAL_USER, posting, evidence, profile["facts"])
+    match = rating.rate_posting(EVAL_USER_ID, posting, evidence, profile["facts"])
     outcome.band, outcome.band_reasons = match.band, match.reasons + match.gaps
     # An unknown Hard Blocker only holds a Band back, so it doesn't count as caught.
     outcome.missing_hard_blockers = [
@@ -198,7 +197,7 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
             "id": None,
         }
         requirements = [r.model_dump() for r in match.requirements]
-        pack = applications.write_pack(EVAL_USER, posting, requirements, pack_evidence)
+        pack = applications.write_pack(EVAL_USER_ID, posting, requirements, pack_evidence)
         outcome.resume, outcome.letter = _documents_text(pack)
     return outcome
 
@@ -272,7 +271,7 @@ def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
                        cost_usd = (SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
                                    WHERE user_id = %s AND created_at >= %s)
                    WHERE id = %s AND user_id = %s""",
-                (EVAL_USER, run_row["started_at"], run_row["id"], owner),
+                (EVAL_USER_ID, run_row["started_at"], run_row["id"], owner),
             )
     return int(run_row["id"])
 
