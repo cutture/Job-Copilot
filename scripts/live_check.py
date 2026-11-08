@@ -117,7 +117,9 @@ def check(posting_id: str) -> None:
     print(
         "resume claims by section:",
         {
-            s["kind"]: len(s["claims"]) + sum(1 + len(r["lines"]) for r in s["roles"])
+            s["kind"]: len(s["claims"])
+            + sum(1 + len(g["claims"]) for g in s.get("groups", []))
+            + sum(1 + len(r["lines"]) for r in s["roles"])
             for s in pack["resume"]["sections"]
         },
     )
