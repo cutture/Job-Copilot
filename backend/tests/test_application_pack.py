@@ -258,7 +258,10 @@ def test_each_part_is_its_own_call_and_verification_sees_no_writing_context(
 
     calls = provider.received[before:]
     tasks = [json.loads(c["messages"][-1]["content"])["task"] for c in calls]
-    assert tasks == ["resume", "cover_letter", "verify"]
+    # Verification is asked again about the one line it left out, FastAPI.
+    assert tasks == ["resume", "cover_letter", "verify", "verify"]
+    again = json.loads(calls[3]["messages"][-1]["content"])["statements"]
+    assert [s["text"] for s in again] == ["FastAPI"]
     assert {c["model"] for c in calls} == {"anthropic/claude-haiku-5-5"}
     # The cover letter is about the main Requirements only.
     asked = [json.loads(c["messages"][-1]["content"])["requirements"] for c in calls[:2]]

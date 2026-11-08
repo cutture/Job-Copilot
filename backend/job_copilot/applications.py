@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -567,6 +568,53 @@ def _resume_drafts(resume: list[DraftSection]) -> list[DraftClaim]:
     ]
 
 
+# Each Claim ID's kind of line, from its prefix, so a log can say what was skipped without text.
+CLAIM_KINDS = (
+    (re.compile(r"g\d+"), "group heading"),
+    (re.compile(r"g\d+s\d+"), "group skill"),
+    (re.compile(r"u\d+l\d+"), "custom"),
+    (re.compile(r"e\d+"), "role heading"),
+    (re.compile(r"e\d+b\d+"), "role line"),
+    (re.compile(r"c\d+s\d+"), "cover letter"),
+    (re.compile(r"m\d+"), "summary"),
+    (re.compile(r"s\d+"), "skill"),
+    (re.compile(r"d\d+"), "education"),
+    (re.compile(r"q\d+"), "qualification"),
+    (re.compile(r"a\d+"), "affiliation"),
+    (re.compile(r"t\d+"), "certification"),
+)
+VERDICTS = ("reworded", "stretched", "invented", "not_a_claim")
+
+
+def claim_kind(claim_id: str) -> str:
+    """The kind of line a Claim ID belongs to, such as "summary" or "role line"."""
+    return next((kind for pattern, kind in CLAIM_KINDS if pattern.fullmatch(claim_id)), "other")
+
+
+def _kinds(ids: list[str]) -> dict[str, int]:
+    return dict(Counter(claim_kind(i) for i in ids))
+
+
+def _judgements(
+    state: PackState, statements: list[dict[str, str]]
+) -> dict[str, tuple[str, list[int]]]:
+    """Verification's verdict and cited Evidence for each statement it judged."""
+    evidence = state["evidence"]
+    answer, _ = _ask(
+        state,
+        "pack_verification",
+        VERIFY_PROMPT,
+        {"task": "verify", "evidence": _numbered(evidence), "statements": statements},
+        VERIFY_MAX_OUTPUT_TOKENS,
+    )
+    asked = {s["id"] for s in statements}
+    judgements: dict[str, tuple[str, list[int]]] = {}
+    for item in answer.get("statements") or [] if isinstance(answer, dict) else []:
+        if isinstance(item, dict) and item.get("id") in asked and item.get("verdict") in VERDICTS:
+            judgements.setdefault(item["id"], (item["verdict"], _cited(item, evidence)))
+    return judgements
+
+
 def verify(state: PackState) -> PackState:
     evidence = state["evidence"]
     today = datetime.now(UTC).date()
@@ -588,28 +636,29 @@ def verify(state: PackState) -> PackState:
 
     checked = [d for d in in_resume + in_letter if d["id"] not in removed]
     resume_ids = {d["id"] for d in in_resume}
-    answer, _ = _ask(
-        state,
-        "pack_verification",
-        VERIFY_PROMPT,
+    statements = [
         {
-            "task": "verify",
-            "evidence": _numbered(evidence),
-            "statements": [
-                {
-                    "id": d["id"],
-                    "part": "resume" if d["id"] in resume_ids else "cover letter",
-                    "text": d["text"],
-                }
-                for d in checked
-            ],
-        },
-        VERIFY_MAX_OUTPUT_TOKENS,
-    )
-    judgements: dict[str, tuple[str, list[int]]] = {}
-    for item in answer.get("statements") or [] if isinstance(answer, dict) else []:
-        if isinstance(item, dict) and isinstance(item.get("id"), str):
-            judgements.setdefault(item["id"], (str(item.get("verdict")), _cited(item, evidence)))
+            "id": d["id"],
+            "part": "resume" if d["id"] in resume_ids else "cover letter",
+            "text": d["text"],
+        }
+        for d in checked
+    ]
+    judgements = _judgements(state, statements)
+    # Verification sometimes leaves a few lines out; it's asked once more about only those.
+    skipped = [s for s in statements if s["id"] not in judgements]
+    if skipped:
+        ids = [s["id"] for s in skipped]
+        log.warning(
+            "Verification left %d line%s unjudged: %s",
+            len(ids),
+            "" if len(ids) == 1 else "s",
+            _kinds(ids),
+        )
+        judgements |= _judgements(state, skipped)
+        still = [i for i in ids if i not in judgements]
+        if still:
+            log.warning("Lines still unjudged after asking again: %s", _kinds(still))
 
     supported: dict[str, list[int]] = {}
     for d in checked:

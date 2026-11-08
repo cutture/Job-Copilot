@@ -13,6 +13,7 @@ import html
 import io
 import json
 import re
+import subprocess
 import sys
 import time
 import urllib.request
@@ -55,6 +56,22 @@ def docx_text(content: bytes) -> str:
     return html.unescape(re.sub(r"<[^>]+>", " ", xml))
 
 
+def unjudged_lines(since: float) -> list[str]:
+    """The worker's notes on lines Verification skipped since then. They hold counts and kinds
+    of line only, never text."""
+    logs = subprocess.run(
+        ["docker", "compose", "logs", "worker", "--since", f"{int(time.time() - since) + 1}s"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    return [
+        line.split("applications:", 1)[-1]
+        for line in logs.splitlines()
+        if "unjudged" in line and "job_copilot.applications" in line
+    ]
+
+
 def wait(check: Any) -> Any:
     deadline = time.time() + WAIT_SECONDS
     while time.time() < deadline:
@@ -93,6 +110,7 @@ def check(posting_id: str) -> None:
     view = wait(written)
     pack = view["pack"]
     print(f"pack: {pack['status']} in {time.time() - started:.0f}s, model: {pack['model']}")
+    print("lines Verification skipped:", unjudged_lines(started) or "none")
     if pack["status"] != "ready":
         print("warning:", pack["warning"])
         return
