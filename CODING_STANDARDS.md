@@ -12,6 +12,7 @@ The reviewer applies every rule below to each diff. Tooling already enforces for
 
 - Every query filters on `user_id`, and so does every join and subquery between a person's tables (`a.user_id = p.user_id`), even when an ownership check ran first.
 - A new table with a `user_id` column joins the Delete everything table lists. A test fails until it does.
+- Eval Runs run as an invented eval person who belongs to the owner. The owner's Monthly cap and spending include that person's spending, through `gateway.spenders`, and no other user's do.
 
 ## Shortcuts
 
