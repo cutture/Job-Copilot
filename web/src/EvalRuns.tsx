@@ -3,14 +3,6 @@ import type { CSSProperties } from "react";
 import { dollars } from "./labels";
 import { Recommendations } from "./Recommendations";
 
-const STEPS: Record<string, string> = {
-  filter: "Filter",
-  evidence: "Reading the resume",
-  rating: "Rating Matches",
-  pack: "Writing Application Packs",
-  verification: "Verification",
-};
-
 type EvalRunSummary = {
   id: number;
   started_at: string;
@@ -23,7 +15,7 @@ type EvalRunSummary = {
   // Results of cases whose labels the owner hasn't checked yet.
   unchecked: number;
   // The step and model a Challenger run tried; absent for the person's own models.
-  challenger_step?: string | null;
+  challenger_label?: string | null;
   challenger_name?: string | null;
 };
 type EvalCaseResult = {
@@ -35,7 +27,7 @@ type EvalCaseResult = {
   reason: string;
   // Where to look first to fix a failure.
   fix_area: string | null;
-  // The model each step used, by name.
+  // The model each step used, both named for the person.
   models?: Record<string, string> | null;
 };
 type TrackedScore = {
@@ -110,9 +102,9 @@ export function EvalRuns() {
             <button aria-pressed={run?.id === summary.id} onClick={() => open(summary.id)}>
               Run {summary.id} · {new Date(summary.started_at).toLocaleString()}
             </button>{" "}
-            {summary.challenger_name && summary.challenger_step && (
+            {summary.challenger_name && (
               <em>
-                Challenger: {summary.challenger_name} for {STEPS[summary.challenger_step] ?? summary.challenger_step} ·{" "}
+                Challenger: {summary.challenger_name} for {summary.challenger_label} ·{" "}
               </em>
             )}
             {summary.finished_at === null && <>Running · </>}
@@ -181,7 +173,7 @@ export function EvalRuns() {
                     <td style={cell}>{result.fix_area ?? ""}</td>
                     <td style={cell}>
                       {Object.entries(result.models ?? {})
-                        .map(([step, model]) => `${STEPS[step] ?? step}: ${model}`)
+                        .map(([step, model]) => `${step}: ${model}`)
                         .join("; ")}
                     </td>
                   </tr>

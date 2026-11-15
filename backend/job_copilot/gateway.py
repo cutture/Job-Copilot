@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID, uuid4
 
 import httpx
@@ -85,20 +85,41 @@ STEP_OF = {
     "pack_verification": "verification",
 }
 
-# The Challenger a run is trying, as (step, model); calls for that step use it alone.
-_challenger: ContextVar[tuple[str, str] | None] = ContextVar("challenger", default=None)
+# How each model step is named to the person.
+STEP_LABELS = {
+    "filter": "Filter",
+    "evidence": "Reading the resume",
+    "rating": "Rating Matches",
+    "pack": "Writing Application Packs",
+    "verification": "Verification",
+}
+
+
+class Challenger(NamedTuple):
+    """A model tried on one model step."""
+
+    step: str
+    model: str
+
+
+# The Challenger a run is trying; calls for its step use it alone.
+_challenger: ContextVar[Challenger | None] = ContextVar("challenger", default=None)
 # Where calls record the model each step used, while an Eval Case runs.
 _used: ContextVar[dict[str, str] | None] = ContextVar("used", default=None)
 
 
 @contextmanager
-def challenging(step: str, model: str) -> Iterator[None]:
+def challenging(challenger: Challenger) -> Iterator[None]:
     """Run one step on one model, with no Fallback List, as a Challenger run does."""
-    token = _challenger.set((step, model))
+    token = _challenger.set(challenger)
     try:
         yield
     finally:
         _challenger.reset(token)
+
+
+def active_challenger() -> Challenger | None:
+    return _challenger.get()
 
 
 @contextmanager
@@ -459,8 +480,8 @@ def approved_model(user_id: UUID, step: str) -> str | None:
 def _ordered(user_id: UUID, step: str, models: Sequence[str]) -> Sequence[str]:
     """The Fallback List for this call: a Challenger alone, or the approved model first."""
     challenger = _challenger.get()
-    if challenger and challenger[0] == step:
-        return (challenger[1],)
+    if challenger and challenger.step == step:
+        return (challenger.model,)
     approved = approved_model(user_id, step)
     return (approved, *(m for m in models if m != approved)) if approved else models
 
@@ -543,8 +564,8 @@ def complete_first(
     Retention is confirmed, and for a paid model at the cap or when its credit ran out today.
     Eval Cases stop at their own cap instead, so they never test a model the person isn't using.
     """
-    group = STEP_OF.get(step, step)
-    models = _ordered(user_id, group, models)
+    model_step = STEP_OF.get(step, step)
+    models = _ordered(user_id, model_step, models)
     for model in models:
         rule = MODELS.get(model)
         if rule is None or data_class not in rule.data_classes:
@@ -568,7 +589,7 @@ def complete_first(
                 )
                 used = _used.get()
                 if used is not None:
-                    used[group] = completion.model
+                    used[model_step] = completion.model
                 return completion
             except CapReached:
                 if user_id == EVAL_USER_ID:

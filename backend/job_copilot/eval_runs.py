@@ -36,11 +36,17 @@ def load_cases(cases_file: Path = CASES_FILE) -> dict[str, Any]:
 
 
 # Free Challengers tried weekly on each step; a paid one runs only when the owner starts it.
-CHALLENGERS = (("rating", gateway.GROQ_PERSONAL), ("pack", gateway.GROQ_PERSONAL))
+CHALLENGERS = (
+    gateway.Challenger("rating", gateway.GROQ_PERSONAL),
+    gateway.Challenger("pack", gateway.GROQ_PERSONAL),
+)
 CHALLENGER_EVERY_DAYS = 7
-# Labels on a case that writes a Pack.
+# The model steps a Challenger can take over; both handle personal data.
+CHALLENGER_STEPS = ("rating", "pack")
+# Labels on a case that writes a Pack, and the ones a rating Challenger is judged on.
 PACK_LABELS = {"not_in_resume", "not_in_pack", "in_pack"}
-Challenger = tuple[str, str]
+RATING_LABELS = {"band", "hard_blocker", "requirements"}
+Challenger = gateway.Challenger
 
 
 def uses_step(case: dict[str, Any], step: str) -> bool:
@@ -49,6 +55,14 @@ def uses_step(case: dict[str, Any], step: str) -> bool:
     if step == "rating":
         return "passes" not in case["expect"]
     return bool(PACK_LABELS & case["expect"].keys())
+
+
+def for_challenger(case: dict[str, Any], challenger: Challenger | None) -> dict[str, Any]:
+    """The case as a Challenger runs it: a rating Challenger stops after rating, so it's judged
+    on its rating labels only and writes no Pack."""
+    if challenger is None or challenger.step != "rating":
+        return case
+    return {**case, "expect": {k: v for k, v in case["expect"].items() if k in RATING_LABELS}}
 
 
 def start_run(conn: Any, owner: UUID, challenger: Challenger | None = None) -> Any:
@@ -68,11 +82,9 @@ def challenger_of(owner: UUID, run_id: int) -> Challenger | None:
                WHERE id = %s AND user_id = %s""",
             (run_id, owner),
         ).fetchone()
-    return (
-        (row["challenger_step"], row["challenger_model"])
-        if row and row["challenger_step"]
-        else None
-    )
+    if row is None or row["challenger_step"] is None:
+        return None
+    return Challenger(row["challenger_step"], row["challenger_model"])
 
 
 def _queue_cases(conn: Any, owner: UUID, run_id: int, case_ids: list[str]) -> None:
@@ -160,7 +172,8 @@ def queue_challenger_runs(owner: UUID, now: datetime, cases_file: Path = CASES_F
     such as Groq before Zero Data Retention is confirmed, isn't run.
     """
     cases = load_cases(cases_file)["cases"]
-    for step, model in CHALLENGERS:
+    for challenger in CHALLENGERS:
+        step, model = challenger
         if gateway.approved_model(owner, step) == model or not gateway.can_take_personal(
             owner, model
         ):
@@ -175,7 +188,7 @@ def queue_challenger_runs(owner: UUID, now: datetime, cases_file: Path = CASES_F
             ).fetchone()
             if recent:
                 continue
-            run = start_run(conn, owner, (step, model))
+            run = start_run(conn, owner, challenger)
             _queue_cases(conn, owner, run["id"], [c["id"] for c in cases if uses_step(c, step)])
 
 
@@ -255,6 +268,7 @@ class EvalRunSummary(BaseModel):
     unchecked: int
     # The step and model a Challenger run tried; None for the person's own models.
     challenger_step: str | None = None
+    challenger_label: str | None = None
     challenger_name: str | None = None
 
 
@@ -267,7 +281,7 @@ class EvalCaseResult(BaseModel):
     reason: str
     # Where to look first to fix a failure.
     fix_area: str | None
-    # The model each step used, by name.
+    # The model each step used, both named for the person.
     models: dict[str, str] | None = None
 
 
@@ -304,13 +318,17 @@ SUMMARY = """
 def list_eval_runs(user_id: UserId) -> list[EvalRunSummary]:
     with connect() as conn:
         rows = conn.execute(SUMMARY + " LIMIT 60", {"user_id": user_id, "run_id": None}).fetchall()
-    return [EvalRunSummary(**_named(row)) for row in rows]
+    return [EvalRunSummary(**_with_challenger_named(row)) for row in rows]
 
 
-def _named(row: Any) -> dict[str, Any]:
-    """A run's row with its Challenger's model named readably."""
-    model = row["challenger_model"]
-    return {**row, "challenger_name": model and gateway.model_name(model)}
+def _with_challenger_named(row: Any) -> dict[str, Any]:
+    """A run's row with its Challenger's step and model named for the person."""
+    step, model = row["challenger_step"], row["challenger_model"]
+    return {
+        **row,
+        "challenger_label": step and gateway.STEP_LABELS.get(step, step),
+        "challenger_name": model and gateway.model_name(model),
+    }
 
 
 @router.get("/api/eval-runs/{run_id}")
@@ -326,13 +344,16 @@ def get_eval_run(run_id: int, user_id: UserId) -> EvalRun:
             (run_id, user_id),
         ).fetchall()
     return EvalRun(
-        **_named(row),
+        **_with_challenger_named(row),
         results=[
             EvalCaseResult(
                 **{
                     **r,
                     "models": r["models"]
-                    and {step: gateway.model_name(m) for step, m in r["models"].items()},
+                    and {
+                        gateway.STEP_LABELS.get(step, step): gateway.model_name(m)
+                        for step, m in r["models"].items()
+                    },
                 }
             )
             for r in results

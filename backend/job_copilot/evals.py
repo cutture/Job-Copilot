@@ -325,18 +325,19 @@ def _result(case: dict[str, Any], profile: dict[str, Any]) -> CaseResult:
 
 
 def _record(owner: UUID, run_id: int, case: dict[str, Any], profile: dict[str, Any]) -> None:
+    case = eval_runs.for_challenger(case, gateway.active_challenger())
     with gateway.recording_models() as used:
         result = _result(case, profile)
     eval_runs.record_result(owner, run_id, case, *result, models=used)
 
 
 @contextmanager
-def _as(challenger: eval_runs.Challenger | None) -> Iterator[None]:
+def _running_as(challenger: eval_runs.Challenger | None) -> Iterator[None]:
     """Run as a Challenger run, or on the person's own models."""
     if challenger is None:
         yield
         return
-    with gateway.challenging(*challenger):
+    with gateway.challenging(challenger):
         yield
 
 
@@ -346,7 +347,7 @@ def run_queued_case(
     """Run one queued case of a run, and finish the run after its last case."""
     loaded = eval_runs.load_cases(cases_file)
     # A case removed from the file since the run was queued is skipped.
-    with _as(eval_runs.challenger_of(owner, run_id)):
+    with _running_as(eval_runs.challenger_of(owner, run_id)):
         for case in loaded["cases"]:
             if case["id"] == case_id:
                 _record(owner, run_id, case, loaded["profile"])
@@ -361,11 +362,13 @@ def run(
     """Run every case now, or a Challenger's on the cases that use its step, store the
     results, and return the Eval Run's ID."""
     loaded = eval_runs.load_cases(cases_file)
-    cases = [c for c in loaded["cases"] if not challenger or eval_runs.uses_step(c, challenger[0])]
+    cases = [
+        c for c in loaded["cases"] if not challenger or eval_runs.uses_step(c, challenger.step)
+    ]
     with connect() as conn:
         run_id = int(eval_runs.start_run(conn, owner, challenger)["id"])
     try:
-        with _as(challenger):
+        with _running_as(challenger):
             for case in cases:
                 _record(owner, run_id, case, loaded["profile"])
     finally:
@@ -412,8 +415,10 @@ def main() -> None:
     match sys.argv[1:]:
         case ["show"]:
             pass
-        case ["challenger", step, model] if step in ("rating", "pack") and model in gateway.MODELS:
-            run(owner, challenger=(step, model))
+        case ["challenger", step, model] if step in eval_runs.CHALLENGER_STEPS and (
+            gateway.DataClass.PERSONAL in getattr(gateway.MODELS.get(model), "data_classes", ())
+        ):
+            run(owner, challenger=gateway.Challenger(step, model))
         case []:
             run(owner)
         case _:

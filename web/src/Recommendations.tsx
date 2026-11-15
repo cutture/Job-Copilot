@@ -1,19 +1,18 @@
 import { useEffect, useState } from "react";
 
-type Evidence = { score: string; challenger: number; current: number };
-type Recommendation = {
+type ScoreComparison = { score: string; challenger: number; current: number };
+type ModelRecommendation = {
   step: string;
+  label: string;
   model: string;
   model_name: string;
   current_name: string;
   runs: number[];
-  evidence: Evidence[];
-  // Last month's use of the step, at the Challenger's prices.
-  monthly_cost_usd: string;
+  compared: ScoreComparison[];
+  // Last month's total spending, with this step repriced at the Challenger's rates.
+  projected_monthly_usd: string;
 };
 type StepModel = { step: string; label: string; model_name: string; approved: boolean };
-
-const STEP_LABELS: Record<string, string> = { rating: "Rating Matches", pack: "Writing Application Packs" };
 
 async function send(url: string, method: string, body?: object): Promise<Response> {
   return fetch(url, {
@@ -25,18 +24,18 @@ async function send(url: string, method: string, body?: object): Promise<Respons
 
 // A Challenger that did better than the current model; nothing changes until it's approved.
 export function Recommendations() {
-  const [found, setFound] = useState<Recommendation[]>([]);
+  const [found, setFound] = useState<ModelRecommendation[]>([]);
   const [done, setDone] = useState("");
 
   useEffect(() => {
-    fetch("/api/recommendations")
-      .then((response) => (response.ok ? response.json() : []))
+    fetch("/api/model-recommendations")
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
       .then(setFound)
-      .catch(() => {});
+      .catch(() => setDone("We couldn't check for model recommendations. Try refreshing the page."));
   }, []);
 
-  async function decide(recommendation: Recommendation, approve: boolean) {
-    const response = await send(`/api/recommendations/${approve ? "approve" : "dismiss"}`, "POST", {
+  async function decide(recommendation: ModelRecommendation, approve: boolean) {
+    const response = await send(`/api/model-recommendations/${approve ? "approve" : "dismiss"}`, "POST", {
       step: recommendation.step,
       model: recommendation.model,
     });
@@ -58,13 +57,12 @@ export function Recommendations() {
       {found.map((recommendation) => (
         <div key={`${recommendation.step} ${recommendation.model}`} style={{ border: "1px solid #b7d3f2", padding: "8px 12px", marginBottom: 8 }}>
           <p style={{ margin: 0 }}>
-            {recommendation.model_name} did better than {recommendation.current_name} at{" "}
-            {STEP_LABELS[recommendation.step] ?? recommendation.step} in its last {recommendation.runs.length} Challenger
-            runs, with no Hard Failures. At last month's use it would cost ${Number(recommendation.monthly_cost_usd).toFixed(2)}{" "}
-            a month.
+            {recommendation.model_name} did better than {recommendation.current_name} at {recommendation.label} in
+            its last {recommendation.runs.length} Challenger runs, with no Hard Failures. With it, last month's
+            spending would have come to ${Number(recommendation.projected_monthly_usd).toFixed(2)} in all.
           </p>
           <ul style={{ margin: "4px 0" }}>
-            {recommendation.evidence.map((e) => (
+            {recommendation.compared.map((e) => (
               <li key={e.score}>
                 {e.score}: {Math.round(e.challenger)}% against {Math.round(e.current)}%
               </li>

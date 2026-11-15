@@ -25,6 +25,8 @@ def past_run(
 ) -> None:
     """A finished run of 4 rating cases, `band_right` of them with the right Band."""
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        # Groq may take the data: Challengers are recommended only for what they may receive.
+        conn.execute("UPDATE users SET groq_zdr_confirmed = true WHERE id = %s", (SEEDED_USER_ID,))
         run: Any = conn.execute(
             """INSERT INTO eval_runs (user_id, deepeval_version, started_at, finished_at,
                                       challenger_step, challenger_model)
@@ -63,7 +65,7 @@ def three_weeks(challenger_right: int, current_right: int, **challenger: Any) ->
 
 
 def recommended(client: TestClient) -> list[dict[str, Any]]:
-    response = client.get("/api/recommendations")
+    response = client.get("/api/model-recommendations")
     assert response.status_code == 200
     recommendations: list[dict[str, Any]] = response.json()
     return recommendations
@@ -77,8 +79,11 @@ def test_a_challenger_better_on_its_steps_scores_for_three_weeks_is_recommended(
     [recommendation] = recommended(client)
     assert (recommendation["step"], recommendation["model"]) == ("rating", GROQ)
     assert recommendation["model_name"] == "Groq gpt-oss-120b (free)"
-    assert recommendation["current_name"] == "Claude Haiku 5.5"
-    [band] = [e for e in recommendation["evidence"] if e["score"] == "Exact Band"]
+    assert (recommendation["label"], recommendation["current_name"]) == (
+        "Rating Matches",
+        "Claude Haiku 5.5",
+    )
+    [band] = [e for e in recommendation["compared"] if e["score"] == "Exact Band"]
     assert (band["challenger"], band["current"]) == (100, 75)
 
 
@@ -88,6 +93,27 @@ def test_two_weeks_arent_enough(client: TestClient, provider: FakeProvider) -> N
         past_run(week, GROQ, challenger=True, band_right=4)
 
     assert recommended(client) == []
+
+
+def test_three_runs_must_be_about_a_week_apart(client: TestClient, provider: FakeProvider) -> None:
+    for _ in range(3):
+        past_run(0, HAIKU, challenger=False, band_right=3)
+        past_run(0, GROQ, challenger=True, band_right=4)
+
+    assert recommended(client) == []
+
+
+def test_groq_isnt_recommended_once_zero_data_retention_is_unconfirmed(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    three_weeks(challenger_right=4, current_right=3)
+    client.put("/api/model-settings/groq-zdr", json={"confirmed": False})
+
+    assert recommended(client) == []
+    response = client.post(
+        "/api/model-recommendations/approve", json={"step": "rating", "model": GROQ}
+    )
+    assert response.status_code == 409
 
 
 def test_any_hard_failure_rules_a_challenger_out(
@@ -126,7 +152,9 @@ def test_approving_switches_the_step_and_starts_an_eval_run_on_it(
 ) -> None:
     three_weeks(challenger_right=4, current_right=3)
 
-    response = client.post("/api/recommendations/approve", json={"step": "rating", "model": GROQ})
+    response = client.post(
+        "/api/model-recommendations/approve", json={"step": "rating", "model": GROQ}
+    )
 
     assert response.status_code == 200
     assert gateway.approved_model(SEEDED_USER_ID, "rating") == GROQ
@@ -143,7 +171,9 @@ def test_approving_switches_the_step_and_starts_an_eval_run_on_it(
 def test_only_a_current_recommendation_can_be_approved(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    response = client.post("/api/recommendations/approve", json={"step": "rating", "model": SONNET})
+    response = client.post(
+        "/api/model-recommendations/approve", json={"step": "rating", "model": SONNET}
+    )
 
     assert response.status_code == 409
     assert gateway.approved_model(SEEDED_USER_ID, "rating") is None
@@ -154,7 +184,7 @@ def test_a_dismissed_recommendation_stays_away_until_a_newer_challenger_run(
 ) -> None:
     three_weeks(challenger_right=4, current_right=3)
 
-    client.post("/api/recommendations/dismiss", json={"step": "rating", "model": GROQ})
+    client.post("/api/model-recommendations/dismiss", json={"step": "rating", "model": GROQ})
     assert recommended(client) == []
 
     past_run(0, HAIKU, challenger=False, band_right=3)
@@ -171,7 +201,7 @@ def test_settings_show_each_steps_model_and_switch_back(
     client: TestClient, provider: FakeProvider
 ) -> None:
     three_weeks(challenger_right=4, current_right=3)
-    client.post("/api/recommendations/approve", json={"step": "rating", "model": GROQ})
+    client.post("/api/model-recommendations/approve", json={"step": "rating", "model": GROQ})
 
     steps = {s["step"]: s for s in client.get("/api/step-models").json()}
     assert (steps["rating"]["model_name"], steps["rating"]["approved"]) == (
@@ -184,10 +214,53 @@ def test_settings_show_each_steps_model_and_switch_back(
     assert gateway.approved_model(SEEDED_USER_ID, "rating") is None
 
 
-def test_the_monthly_cost_on_the_challenger_is_shown(
+def spent_last_month(step: str, model: str, tokens_in: int, tokens_out: int, cost: str) -> None:
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        conn.execute(
+            """INSERT INTO model_calls (user_id, model, step, input_tokens, output_tokens, cost_usd)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (SEEDED_USER_ID, model, step, tokens_in, tokens_out, Decimal(cost)),
+        )
+
+
+def sonnet_three_weeks() -> None:
+    for week in (3, 2, 1):
+        past_run(week, HAIKU, challenger=False, band_right=3)
+        past_run(week, SONNET, challenger=True, band_right=4)
+
+
+def test_last_months_total_with_the_step_repriced_must_fit_the_cap(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    three_weeks(challenger_right=4, current_right=3)
+    sonnet_three_weeks()
+    # Rating: 100k tokens in and 20k out, $0.02 on Haiku and $0.40 on Sonnet.
+    spent_last_month("rating", HAIKU, 100_000, 20_000, "0.02")
 
     [recommendation] = recommended(client)
-    assert Decimal(recommendation["monthly_cost_usd"]) == 0
+    assert Decimal(recommendation["projected_monthly_usd"]) == Decimal("0.40")
+
+    # Other steps spent $9.70, so with rating on Sonnet the month would come to $10.10.
+    spent_last_month("pack_resume", HAIKU, 0, 0, "9.70")
+    assert recommended(client) == []
+
+
+def test_the_challengers_other_steps_must_match_the_runs_its_compared_with(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    for week in (3, 2, 1):
+        past_run(week, HAIKU, challenger=False, band_right=3)
+        past_run(week, GROQ, challenger=True, band_right=4)
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        # The current runs wrote Packs on another model than the Challenger runs did.
+        conn.execute(
+            """UPDATE eval_results e SET models = models || jsonb_build_object('pack', %s::text)
+               FROM eval_runs r WHERE e.run_id = r.id AND r.challenger_model IS NULL""",
+            (GROQ,),
+        )
+        conn.execute(
+            """UPDATE eval_results e SET models = models || jsonb_build_object('pack', %s::text)
+               FROM eval_runs r WHERE e.run_id = r.id AND r.challenger_model IS NOT NULL""",
+            (HAIKU,),
+        )
+
+    assert recommended(client) == []

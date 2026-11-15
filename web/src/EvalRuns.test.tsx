@@ -105,8 +105,8 @@ describe("EvalRuns", () => {
   });
 
   it("labels a Challenger run and shows the model each step used", async () => {
-    const challenger = { ...runs[0], id: 4, challenger_step: "rating", challenger_name: "Groq gpt-oss-120b (free)" };
-    const result = { ...run2.results[1], models: { rating: "Groq gpt-oss-120b (free)", pack: "Claude Haiku 5.5" } };
+    const challenger = { ...runs[0], id: 4, challenger_label: "Rating Matches", challenger_name: "Groq gpt-oss-120b (free)" };
+    const result = { ...run2.results[1], models: { "Rating Matches": "Groq gpt-oss-120b (free)", "Writing Application Packs": "Claude Haiku 5.5" } };
     serve({
       "/api/eval-runs": [challenger],
       "/api/eval-runs/4": { ...challenger, deepeval_version: "4.3.3", results: [result], tracked_scores: [] },

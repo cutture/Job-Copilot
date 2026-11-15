@@ -18,6 +18,7 @@ from tests.test_evals import LOADED, OWNER, cases_file
 HAIKU = gateway.HAIKU
 GROQ = gateway.GROQ_PERSONAL
 SONNET = gateway.SONNET
+RATING_GROQ = gateway.Challenger("rating", GROQ)
 
 
 def ask(step: str = "rating") -> str:
@@ -43,15 +44,14 @@ def confirm_groq_zdr(client: TestClient) -> None:
     client.put("/api/model-settings/groq-zdr", json={"confirmed": True})
 
 
-def test_each_step_belongs_to_one_model_step() -> None:
-    assert gateway.STEP_OF == {
-        "filter": "filter",
-        "resume_evidence": "evidence",
-        "rating": "rating",
-        "pack_resume": "pack",
-        "pack_cover_letter": "pack",
-        "pack_verification": "verification",
-    }
+def test_an_approved_pack_writing_model_writes_the_cover_letter_too_but_not_verification(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    confirm_groq_zdr(client)
+    use_for("pack", GROQ)
+
+    assert ask("pack_cover_letter") == GROQ
+    assert ask("pack_verification") == HAIKU
 
 
 def test_an_approved_model_goes_first_for_its_step_only(
@@ -80,7 +80,7 @@ def test_a_challenger_run_pins_its_step_to_the_challenger_alone(
     confirm_groq_zdr(client)
     provider.errors = {GROQ: TimeoutError()}
 
-    with gateway.challenging("rating", GROQ):
+    with gateway.challenging(gateway.Challenger("rating", GROQ)):
         # No fallback: a Challenger's failure is its own result.
         with pytest.raises(gateway.ModelUnavailable):
             ask("rating")
@@ -99,15 +99,16 @@ def test_calls_record_the_model_each_step_used(client: TestClient, provider: Fak
     assert used == {"rating": HAIKU, "pack": GROQ, "verification": HAIKU}
 
 
-def test_sonnet_may_receive_personal_data_and_is_priced(provider: FakeProvider) -> None:
-    rule = gateway.MODELS[SONNET]
+def test_a_sonnet_challenger_rates_with_personal_data_at_its_price(
+    provider: FakeProvider,
+) -> None:
+    with gateway.challenging(gateway.Challenger("rating", SONNET)):
+        assert ask("rating") == SONNET
 
-    assert DataClass.PERSONAL in rule.data_classes
-    assert (rule.input_usd_per_million, rule.output_usd_per_million) == (
-        Decimal("2.00"),
-        Decimal("10.00"),
-    )
-    assert gateway.model_name(SONNET) == "Claude Sonnet 5.5"
+    with psycopg.connect(TEST_DB) as conn:
+        cost = conn.execute("SELECT cost_usd FROM model_calls").fetchone()
+    # 10 tokens in at $2 a million, 5 out at $10 a million.
+    assert cost == (Decimal("0.00007"),)
 
 
 def models_used(**overrides: Any) -> dict[str, str]:
@@ -166,17 +167,29 @@ def test_a_challenger_run_uses_its_model_for_its_step_and_records_the_models(
     run_id = evals.run(
         OWNER,
         cases_file(tmp_path, "scoring-thin-posting", "filter-on-site-elsewhere"),
-        ("rating", GROQ),
+        RATING_GROQ,
     )
 
     run = client.get(f"/api/eval-runs/{run_id}").json()
-    assert (run["challenger_step"], run["challenger_name"]) == (
-        "rating",
+    assert (run["challenger_label"], run["challenger_name"]) == (
+        "Rating Matches",
         "Groq gpt-oss-120b (free)",
     )
     # Only the cases that use the step run.
     [result] = run["results"]
-    assert result["models"]["rating"] == "Groq gpt-oss-120b (free)"
+    assert result["models"] == {"Rating Matches": "Groq gpt-oss-120b (free)"}
+
+
+def test_a_rating_challenger_stops_after_rating_even_on_a_pack_case(
+    client: TestClient, provider: FakeProvider, tmp_path: Path
+) -> None:
+    confirm_groq_zdr(client)
+
+    run_id = evals.run(OWNER, cases_file(tmp_path, "pack-keeps-reworded-claims"), RATING_GROQ)
+
+    [result] = client.get(f"/api/eval-runs/{run_id}").json()["results"]
+    assert list(result["models"]) == ["Rating Matches"]
+    assert {r["model"] for r in provider.received} == {GROQ}
 
 
 def test_a_failing_challenger_run_never_turns_on_the_banner(
@@ -186,7 +199,7 @@ def test_a_failing_challenger_run_never_turns_on_the_banner(
     provider.errors = {GROQ: ValueError("unusable")}
     provider.answers = {GROQ: "not json"}
 
-    evals.run(OWNER, cases_file(tmp_path, "scoring-strong-match"), ("rating", GROQ))
+    evals.run(OWNER, cases_file(tmp_path, "scoring-strong-match"), RATING_GROQ)
 
     assert client.get("/api/evals/status").json()["failing"] is False
     # Nor does it count as today's daily run.

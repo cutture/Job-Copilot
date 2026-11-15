@@ -5,12 +5,13 @@ import { Recommendations, StepModels } from "./Recommendations";
 const groq = "groq/openai/gpt-oss-120b";
 const recommendation = {
   step: "rating",
+  label: "Rating Matches",
   model: groq,
   model_name: "Groq gpt-oss-120b (free)",
   current_name: "Claude Haiku 5.5",
   runs: [7, 5, 3],
-  evidence: [{ score: "Exact Band", challenger: 100, current: 75 }],
-  monthly_cost_usd: "0",
+  compared: [{ score: "Exact Band", challenger: 100, current: 75 }],
+  projected_monthly_usd: "4.2",
 };
 const steps = [
   { step: "rating", label: "Rating Matches", model_name: "Groq gpt-oss-120b (free)", approved: true },
@@ -41,25 +42,26 @@ afterEach(() => {
 describe("Recommendations", () => {
   it("shows a qualifying Challenger with its evidence and approves it", async () => {
     const calls = serve({
-      "GET /api/recommendations": [recommendation],
-      "POST /api/recommendations/approve": steps,
+      "GET /api/model-recommendations": [recommendation],
+      "POST /api/model-recommendations/approve": steps,
     });
     render(<Recommendations />);
 
     expect(await screen.findByText(/Groq gpt-oss-120b \(free\) did better than Claude Haiku 5.5 at Rating Matches/)).toBeTruthy();
     expect(screen.getByText(/Exact Band: 100% against 75%/)).toBeTruthy();
+    expect(screen.getByText(/would have come to \$4\.20 in all/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(await screen.findByText(/Approved\. An Eval Run on the new model has started/)).toBeTruthy();
     expect(calls.at(-1)).toEqual({
-      url: "/api/recommendations/approve",
+      url: "/api/model-recommendations/approve",
       method: "POST",
       body: JSON.stringify({ step: "rating", model: groq }),
     });
   });
 
   it("dismisses a recommendation", async () => {
-    serve({ "GET /api/recommendations": [recommendation], "POST /api/recommendations/dismiss": [] });
+    serve({ "GET /api/model-recommendations": [recommendation], "POST /api/model-recommendations/dismiss": [] });
     render(<Recommendations />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
@@ -68,8 +70,15 @@ describe("Recommendations", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
+  it("says when recommendations can't be loaded", async () => {
+    serve({});
+    render(<Recommendations />);
+
+    expect(await screen.findByText(/couldn't check for model recommendations/)).toBeTruthy();
+  });
+
   it("shows nothing when no Challenger qualifies", async () => {
-    serve({ "GET /api/recommendations": [] });
+    serve({ "GET /api/model-recommendations": [] });
     const { container } = render(<Recommendations />);
 
     await Promise.resolve();
