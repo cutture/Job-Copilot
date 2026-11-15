@@ -50,3 +50,16 @@ export const PHOTO_STYLE: CSSProperties = {
   objectFit: "cover",
   verticalAlign: "middle",
 };
+
+const DAY_MS = 86_400_000;
+// Automatic deletions are announced in their last week.
+const NOTICE_DAYS = 7;
+
+// "This Pack will be deleted in 7 days", in the last week before an automatic deletion.
+export function deletionNotice(deletesOn: string | null | undefined, what: string, today = new Date()): string | null {
+  if (!deletesOn) return null;
+  const days = Math.round((Date.parse(deletesOn) - Date.parse(today.toISOString().slice(0, 10))) / DAY_MS);
+  if (days > NOTICE_DAYS) return null;
+  if (days <= 0) return `${what} will be deleted today`;
+  return `${what} will be deleted in ${days} ${days === 1 ? "day" : "days"}`;
+}

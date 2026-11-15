@@ -16,6 +16,7 @@ from job_copilot import (
     model_settings,
     profile,
     rating,
+    retention,
     search,
     sources,
     spending,
@@ -84,6 +85,8 @@ class JobPosting(BaseModel):
     credit_text: str | None = None
     apply_url: str | None
     expired: bool
+    # When a Filtered Posting is deleted.
+    deletes_on: date | None = None
     # The Application started by clicking Apply, if there is one.
     application_id: UUID | None = None
     rating_state: rating.RatingState | None = None
@@ -145,6 +148,8 @@ def list_postings(user_id: UserId) -> list[JobPosting]:
             f"""SELECT {", ".join(f"p.{f}" for f in POSTING_FIELDS)},
                        {", ".join(f"m.{f}" for f in MATCH_FIELDS)},
                        p.expired_at IS NOT NULL AS expired, a.id AS application_id,
+                       CASE WHEN p.status = 'filtered' AND a.id IS NULL
+                            THEN {retention.FILTERED_DELETES_ON} END AS deletes_on,
                        CASE WHEN p.status <> 'received' THEN NULL
                             WHEN m.job_posting_id IS NOT NULL THEN 'rated'
                             WHEN {rating.RATING_QUEUED} THEN 'rating'
@@ -159,6 +164,7 @@ def list_postings(user_id: UserId) -> list[JobPosting]:
         JobPosting(
             **{f: row[f] for f in POSTING_FIELDS},
             expired=row["expired"],
+            deletes_on=row["deletes_on"],
             application_id=row["application_id"],
             credit_text=_credit_text(row["source"]),
             rating_state=row["rating_state"],

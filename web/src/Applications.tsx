@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { OUTCOMES, dollars } from "./labels";
+import { OUTCOMES, deletionNotice, dollars } from "./labels";
 import type { Outcome } from "./labels";
 
 type ApplicationRow = {
@@ -11,6 +11,8 @@ type ApplicationRow = {
   submitted_at: string | null;
   outcome: Outcome | null;
   cost_usd: string;
+  // When a never-submitted Pack is deleted, unless the Application is opened first.
+  deletes_on?: string | null;
 };
 
 const STATUSES = {
@@ -60,7 +62,12 @@ export function Applications({ onOpen }: { onOpen: (id: string) => void }) {
               </button>
             </td>
             <td style={cell}>{row.source}</td>
-            <td style={cell}>{STATUSES[row.status]}</td>
+            <td style={cell}>
+              {STATUSES[row.status]}
+              {deletionNotice(row.deletes_on, "Its Pack") && (
+                <div style={{ fontSize: 13 }}>{deletionNotice(row.deletes_on, "Its Pack")} unless you open it</div>
+              )}
+            </td>
             <td style={cell}>{row.outcome ? OUTCOMES[row.outcome] : "None yet"}</td>
             <td style={cell}>{row.submitted_at ? new Date(row.submitted_at).toLocaleString() : "Not yet"}</td>
             <td style={cell}>{dollars(row.cost_usd)}</td>

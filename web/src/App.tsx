@@ -4,6 +4,7 @@ import { Application } from "./Application";
 import { Applications } from "./Applications";
 import { EvalBanner, EvalRuns } from "./EvalRuns";
 import { ConfirmDelete } from "./ConfirmDelete";
+import { deletionNotice } from "./labels";
 import { Matches, Origin, deleteQuestion } from "./Matches";
 import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches";
 import { Profile } from "./Profile";
@@ -17,6 +18,8 @@ type JobPosting = PostingOrigin & {
   status: string;
   posting_type: "employment" | "freelance" | null;
   filter_reason: string | null;
+  // When a Filtered Posting is deleted.
+  deletes_on?: string | null;
   salary_note: string | null;
   rating_state?: RatingState | null;
   match?: Match | null;
@@ -44,6 +47,9 @@ function PostingRow({ posting, onDelete }: { posting: JobPosting; onDelete: (pos
       {posting.status === "not_rated" && <em> Our AI model couldn't rate this posting.</em>}
       {posting.rating_state === "rating" && <em> Rating…</em>}
       {posting.filter_reason && <div style={{ fontSize: 13 }}>{posting.filter_reason}</div>}
+      {deletionNotice(posting.deletes_on, "This posting") && (
+        <div style={{ fontSize: 13 }}>{deletionNotice(posting.deletes_on, "This posting")}</div>
+      )}
       <div>
         <ConfirmDelete question={deleteQuestion(posting)} onConfirm={() => onDelete(posting)} />
       </div>

@@ -2,11 +2,11 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
-from job_copilot import applications, eval_runs, filter, profile, rating, search
+from job_copilot import applications, eval_runs, filter, profile, rating, retention, search
 from job_copilot.db import connect, current_user_id
 
 log = logging.getLogger(__name__)
@@ -111,6 +111,23 @@ def schedule_daily_evals(now: datetime) -> None:
         eval_runs.queue_daily_run(current_user_id(), now)
 
 
+# The day clean-up last ran, so it runs once a day while the app is running.
+_cleaned_on: date | None = None
+
+
+def daily_clean_up(now: datetime) -> None:
+    """Delete what's past its retention period, and send queued trace deletions, once a day."""
+    global _cleaned_on
+    if _cleaned_on == now.date():
+        return
+    _cleaned_on = now.date()
+    try:
+        retention.clean_up()
+        retention.send_trace_deletions()
+    except Exception as error:  # Clean-up never stops the worker; it tries again tomorrow.
+        log.warning("Retention clean-up failed: %s", type(error).__name__)
+
+
 def finish_interrupted_evals() -> None:
     """Finish runs a crash left open, so what they recorded shows and counts."""
     eval_runs.finish_interrupted_runs(current_user_id())
@@ -163,6 +180,7 @@ def main() -> None:
     finish_interrupted_evals()
     while True:
         schedule_daily_evals(datetime.now(UTC))
+        daily_clean_up(datetime.now(UTC))
         if not run_once():
             time.sleep(IDLE_SECONDS)
 

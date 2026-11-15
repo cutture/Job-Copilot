@@ -1,6 +1,13 @@
 # Local mode: only the dashboard is published, and only to this machine.
 x-database-url: &database-url postgresql://job_copilot:${POSTGRES_PASSWORD:-job_copilot}@db:5432/job_copilot
 
+# Docker keeps each service's log to 3 files of 10 MB. The app logs IDs only, never text.
+x-rotated-logs: &rotated-logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-backend: &backend
   build: ./backend
   environment:
@@ -9,6 +16,7 @@ x-backend: &backend
 
 services:
   db:
+    logging: *rotated-logs
     image: postgres:17
     environment:
       POSTGRES_USER: job_copilot
@@ -25,6 +33,7 @@ services:
     restart: unless-stopped
 
   api:
+    logging: *rotated-logs
     <<: *backend
     command: sh -c "alembic upgrade head && uvicorn job_copilot.api:app --host 0.0.0.0 --port 8000"
     environment:
@@ -45,6 +54,7 @@ services:
       retries: 20
 
   worker:
+    logging: *rotated-logs
     <<: *backend
     command: python -m job_copilot.worker
     environment:
@@ -62,6 +72,7 @@ services:
         condition: service_healthy
 
   web:
+    logging: *rotated-logs
     build: ./web
     ports:
       - "127.0.0.1:${WEB_PORT:-8765}:80"

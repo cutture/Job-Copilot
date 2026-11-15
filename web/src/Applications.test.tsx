@@ -22,7 +22,13 @@ describe("Applications", () => {
       vi.fn(async () =>
         new Response(
           JSON.stringify([
-            { ...row, id: "a", title: "Applied AI Engineer", status: "ready" },
+            {
+              ...row,
+              id: "a",
+              title: "Applied AI Engineer",
+              status: "ready",
+              deletes_on: new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10),
+            },
             {
               ...row,
               id: "b",
@@ -44,6 +50,7 @@ describe("Applications", () => {
     const rows = screen.getAllByRole("row").map((r) => r.textContent);
     expect(rows[1]).toContain("Ready for review");
     expect(rows[1]).toContain("Not yet");
+    expect(rows[1]).toContain("Its Pack will be deleted in 2 days unless you open it");
     expect(rows[2]).toContain("Greenhouse");
     expect(rows[2]).toContain("No response");
     expect(rows[2]).toContain("$0.0061");

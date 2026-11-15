@@ -12,7 +12,7 @@ import os
 import re
 from collections import Counter
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple, TypedDict, cast, get_args
 from uuid import UUID
@@ -375,6 +375,8 @@ class ApplicationRow(BaseModel):
     submitted_at: datetime | None
     outcome: Outcome | None
     cost_usd: Decimal
+    # When a never-submitted Pack is deleted, unless the Application is opened before then.
+    deletes_on: date | None
 
 
 class Review(BaseModel):
@@ -941,6 +943,10 @@ def pack_failed(user_id: UUID, payload: dict[str, Any]) -> None:
 LATEST_PACK = """(SELECT id FROM application_packs
                   WHERE application_id = a.id AND user_id = a.user_id
                   ORDER BY version DESC LIMIT 1)"""
+# A Pack never submitted is deleted this long after its Application was last opened.
+UNOPENED_PACK_DAYS = 90
+# When Application `a`'s never-submitted Pack is deleted.
+UNOPENED_PACK_DELETES_ON = f"(a.opened_at + interval '{UNOPENED_PACK_DAYS} days')::date"
 # What Application `a` has cost so far.
 COST = """(SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
            WHERE application_id = a.id AND user_id = a.user_id)"""
@@ -1060,6 +1066,12 @@ def apply(new: NewApplication, user_id: UserId, response: Response) -> Applicati
 
 @router.get("/api/applications/{application_id}")
 def get_application(application_id: UUID, user_id: UserId) -> ApplicationView:
+    # Opening it keeps a never-submitted Pack another 90 days.
+    with connect() as conn:
+        conn.execute(
+            "UPDATE applications SET opened_at = now() WHERE id = %s AND user_id = %s",
+            (application_id, user_id),
+        )
     return application_view(user_id, application_id)
 
 
@@ -1086,7 +1098,9 @@ def list_applications(user_id: UserId) -> list[ApplicationRow]:
                        CASE WHEN a.submitted_at IS NOT NULL THEN 'submitted'
                             WHEN pack.id IS NULL THEN 'no_pack'
                             WHEN pack.reviewed_at IS NOT NULL THEN 'reviewed'
-                            ELSE pack.status END AS status
+                            ELSE pack.status END AS status,
+                       CASE WHEN a.submitted_at IS NULL AND pack.id IS NOT NULL
+                            THEN {UNOPENED_PACK_DELETES_ON} END AS deletes_on
                 FROM applications a
                 JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
                 LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}

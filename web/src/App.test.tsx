@@ -112,7 +112,8 @@ describe("pasting a Job Posting", () => {
 
   it("collapses Filtered Postings but shows each one's reason", async () => {
     const passed = { ...posting, id: "2", title: "GenAI Engineer", status: "received", posting_type: "freelance", salary_note: "Slightly below your minimum" };
-    const filtered = { ...posting, id: "3", title: "Entwickler", status: "filtered", filter_reason: "Not written in English" };
+    const inThreeDays = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+    const filtered = { ...posting, id: "3", title: "Entwickler", status: "filtered", filter_reason: "Not written in English", deletes_on: inThreeDays };
     respondWith([[passed, filtered]]);
     render(<App />);
 
@@ -125,6 +126,7 @@ describe("pasting a Job Posting", () => {
 
     expect(screen.getByText("Entwickler")).toBeTruthy();
     expect(screen.getByText("Not written in English")).toBeTruthy();
+    expect(screen.getByText("This posting will be deleted in 3 days")).toBeTruthy();
   });
 
   it("counts postings waiting to be rated and shows postings being rated", async () => {
