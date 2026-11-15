@@ -125,7 +125,7 @@ export function EvalRuns() {
                 {run.tracked_scores.map((score) => (
                   <tr key={score.name}>
                     <td style={cell}>{score.name}</td>
-                    <td style={cell}>{score.value === null ? "No checked cases yet" : `${score.value}%`}</td>
+                    <td style={cell}>{score.value === null ? "No checked cases yet: check its labels in evals/cases.json" : `${score.value}%`}</td>
                     <td style={cell}>{score.target}</td>
                     <td style={cell}>{score.met === null ? "" : score.met ? "Met" : "Missed"}</td>
                   </tr>

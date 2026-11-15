@@ -7,17 +7,26 @@ from typing import Any
 import psycopg
 from fastapi.testclient import TestClient
 
-from job_copilot import evals, rating
-from job_copilot.tracked_scores import CaseScores, requirement_hits, scores_for
+from job_copilot import eval_runs, evals, gateway, rating
+from job_copilot.tracked_scores import (
+    CaseScores,
+    ExtractedRequirement,
+    requirement_hits,
+    scores_for,
+)
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_evals import OWNER, cases_file
 from tests.test_rating import answer, requirement
 
-# The extracted Requirements of one rating: (requirement, quote, result).
+# The extracted Requirements of one rating.
 EXTRACTED = [
-    ("3+ years of Python", "You need 3+ years of Python", "met"),
-    ("Kubernetes in production", "experience running Kubernetes in production", "missing"),
-    ("Retrieval-augmented systems", "building retrieval-augmented systems", "partial"),
+    ExtractedRequirement("3+ years of Python", "You need 3+ years of Python", "met"),
+    ExtractedRequirement(
+        "Kubernetes in production", "experience running Kubernetes in production", "missing"
+    ),
+    ExtractedRequirement(
+        "Retrieval-augmented systems", "building retrieval-augmented systems", "partial"
+    ),
 ]
 
 
@@ -37,6 +46,12 @@ def test_a_requirement_label_counts_when_a_requirement_names_its_phrase_with_tha
 
 def test_a_label_no_extracted_requirement_names_counts_as_wrong() -> None:
     assert requirement_hits({"Rust": "missing"}, EXTRACTED) == (0, 1)
+
+
+def test_a_label_matches_whole_words_only() -> None:
+    extracted = [ExtractedRequirement("MicroPython firmware", "MicroPython firmware", "missing")]
+
+    assert requirement_hits({"Python": "missing"}, extracted) == (0, 1)
 
 
 def test_exact_band_is_the_share_of_checked_band_cases_rated_right() -> None:
@@ -65,7 +80,7 @@ def test_requirement_results_count_only_cases_whose_new_labels_are_checked() -> 
 
 
 def test_wrong_removals_is_the_share_of_supported_claims_removed() -> None:
-    results = [checked(CaseScores(kept_right=8, kept_labelled=10))]
+    results = [checked(CaseScores(wrongly_removed=2, supported_labelled=10))]
 
     score = by_name(results)["Wrong removals"]
     assert (score.value, score.target, score.met) == (20, "10% or less", False)
@@ -100,11 +115,7 @@ def test_a_score_with_nothing_to_count_has_no_value_and_isnt_judged() -> None:
     assert (score.value, score.met) == (None, None)
 
 
-def test_every_scoring_case_has_requirement_labels_waiting_for_the_owners_check(
-    tmp_path: Path,
-) -> None:
-    from job_copilot import eval_runs
-
+def test_every_scoring_case_has_requirement_labels_waiting_for_the_owners_check() -> None:
     for case in eval_runs.load_cases()["cases"]:
         if case["area"] == "scoring":
             assert case["expect"]["requirements"], case["id"]
@@ -139,3 +150,60 @@ def test_a_run_shows_its_tracked_scores_and_new_labels_wait_for_the_owners_check
         100,
         True,
     )
+
+
+def test_reordering_reverses_the_asks_and_the_sentences_after_the_first() -> None:
+    posting = (
+        "AI Engineer at Example Labs. You need 3+ years of Python, experience building "
+        "retrieval-augmented systems, and experience evaluating LLM output. Apply at "
+        "careers@example.com."
+    )
+
+    assert evals.reordered(posting) == (
+        "AI Engineer at Example Labs. Apply at careers@example.com. You need experience "
+        "evaluating LLM output, experience building retrieval-augmented systems, and 3+ years "
+        "of Python."
+    )
+
+
+def test_a_failed_reordering_leaves_the_cases_own_result_alone(
+    client: TestClient, provider: FakeProvider, tmp_path: Path, monkeypatch: Any
+) -> None:
+    provider.answers = {
+        rating.RATING_MODEL: json.dumps(
+            answer(
+                requirement("Python", "Python developer", evidence=[1]),
+                seniority={"level": None, "quote": None},
+            )
+        )
+    }
+    rate = rating.rate_posting
+    calls = iter([None, gateway.ModelUnavailable("down")])
+
+    def second_call_fails(*args: Any) -> Any:
+        error = next(calls)
+        if error:
+            raise error
+        return rate(*args)
+
+    monkeypatch.setattr(rating, "rate_posting", second_call_fails)
+
+    run_id = evals.run(OWNER, cases_file(tmp_path, "scoring-thin-posting"))
+
+    run = client.get(f"/api/eval-runs/{run_id}").json()
+    assert run["results"][0]["status"] == "passed"
+    scores = {s["name"]: s for s in run["tracked_scores"]}
+    assert scores["Exact Band"]["value"] == 100
+    assert scores["Same Band after reordering Requirements"]["value"] is None
+
+
+def test_wrong_removals_count_only_supported_claims_verification_removed() -> None:
+    outcome = evals.Outcome(
+        resume="Wrote evaluation suites with DeepEval",
+        removed_texts=["Cut latency by 30% across every service"],
+    )
+
+    scores = evals.case_scores({"in_pack": ["DeepEval", "30%", "Postgres"]}, outcome)
+
+    # Postgres was never written, which isn't a removal.
+    assert (scores.wrongly_removed, scores.supported_labelled) == (1, 3)

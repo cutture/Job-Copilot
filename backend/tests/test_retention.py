@@ -17,6 +17,11 @@ from tests.test_filter import facts, filter_posting
 from tests.test_my_sections import ready_pack
 
 
+def today() -> date:
+    """Today in UTC, the day the database counts in."""
+    return datetime.now(UTC).date()
+
+
 def age(
     table: str, column: str, days: int, where: str = "true", params: tuple[Any, ...] = ()
 ) -> None:
@@ -54,7 +59,7 @@ def test_filtered_postings_go_after_30_days_with_a_notice_before(
 
     assert posting_ids(client) == {recent["id"]}
     [shown] = client.get("/api/job-postings").json()
-    assert shown["deletes_on"] == str(date.today() + timedelta(days=30))
+    assert shown["deletes_on"] == str(today() + timedelta(days=30))
 
 
 def test_a_posting_with_no_application_goes_90_days_after_it_expires(
@@ -76,7 +81,7 @@ def test_a_pack_never_submitted_goes_90_days_after_it_was_last_opened(
     ready_pack(client, provider)
     age("applications", "opened_at", 84)
     [row] = client.get("/api/applications").json()
-    assert row["deletes_on"] == str(date.today() + timedelta(days=6))
+    assert row["deletes_on"] == str(today() + timedelta(days=6))
 
     age("applications", "opened_at", 91)
     retention.clean_up()
