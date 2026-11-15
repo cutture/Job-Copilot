@@ -1,6 +1,6 @@
 # Job Copilot
 
-A self-hosted job-search assistant for employment and remote freelance work. It finds and rates jobs, prepares application documents backed by Evidence, and tracks progress, while a person reviews everything and submits every application.
+A job-search assistant for one person, run on their own computer, for employment and remote freelance work. It finds and rates jobs, prepares application documents backed by Evidence, and tracks progress, while a person reviews everything and submits every application.
 
 ## Language
 
