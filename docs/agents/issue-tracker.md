@@ -28,6 +28,16 @@ It posts the comment, closes the ticket and adds the map line. If the decision r
 
 **Edit other map sections.** Run `python scripts/map-edit.py 1 "<section heading>" "<line>"`. It re-reads the map just before writing, because other sessions may have changed it.
 
+**Edit a ticket or the spec.** Write a JSON list of `[old, new]` pairs with the Write tool, then run `python scripts/issue_edit.py <n> <edits-file>`. Each old text must appear exactly once, or nothing is written.
+
+**Won't do.** Close with `gh issue close <n> --reason "not planned" --comment "<why>"`, then add the `wontfix` label.
+
+**Remove a blocker.** A blocker is recorded twice: delete its line under the body's `## Blocked by`, and delete the GitHub dependency:
+
+```sh
+gh api -X DELETE repos/cutture/Job-Copilot/issues/<n>/dependencies/blocked_by/$(gh api repos/cutture/Job-Copilot/issues/<blocker> --jq .id)
+```
+
 **Chart.** Before firing research, grill the constraints that would disqualify an answer: risk tolerance, target users, markets.
 
 **Research agents.** This repo is public and findings get pushed, so describe the owner generically in research prompts and keep target cities and other personal details out. Remove your worktree after pushing.

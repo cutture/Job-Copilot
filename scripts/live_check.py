@@ -1,6 +1,6 @@
 """Live check of the running app against the real models, with an invented Job Posting.
 
-    python scripts/live_check.py              # the app at http://127.0.0.1:8765
+    python scripts/live_check.py              # the app at http://127.0.0.1:8765, or WEB_PORT
     python scripts/live_check.py --self-test  # checks this script's own file reading
 
 It pastes an invented posting, waits for Filter and rating, clicks Apply, waits for the
@@ -12,6 +12,7 @@ takes the Match, Application and Pack with it. Nothing is ever marked Submitted.
 import html
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -21,7 +22,8 @@ import zipfile
 from collections import Counter
 from typing import Any
 
-API = "http://127.0.0.1:8765"
+# Follows WEB_PORT, and docker compose follows COMPOSE_PROJECT_NAME, so a branch project works too.
+API = f"http://127.0.0.1:{os.environ.get('WEB_PORT', '8765')}"
 MARKER = "(invented test posting)"
 POSTING = f"""Senior Applied AI Engineer {MARKER}
 Example Labs, fully remote, from anywhere in the world. Employment, full time.
