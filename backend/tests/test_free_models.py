@@ -1,6 +1,7 @@
 """Free models that don't train on the person's data, when there's no paid key or credit."""
 
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -218,3 +219,44 @@ def test_settings_show_free_mode_without_a_key_and_the_zdr_checkbox(
 
     confirm_groq_zdr(client)
     assert client.get("/api/model-settings").json()["personal_work_waits"] is False
+
+
+class RateLimitError(Exception):
+    """Stands in for a provider's per-minute limit."""
+
+
+def test_a_rate_limited_free_model_is_waited_for_and_asked_again(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    confirm_groq_zdr(client)
+    waits: list[float] = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+    limited = iter([RateLimitError(), RateLimitError()])
+
+    def limited_then_answer(model: str, messages: Any, max_tokens: int) -> gateway.ProviderAnswer:
+        provider.received.append({"model": model})
+        error = next(limited, None)
+        if error:
+            raise error
+        return gateway.ProviderAnswer("answer", 10, 5)
+
+    monkeypatch.setattr(gateway, "call_provider", limited_then_answer)
+
+    assert ask() == GROQ_PERSONAL
+    assert models_asked(provider) == [GROQ_PERSONAL] * 3
+    assert waits == [gateway.RATE_LIMIT_WAIT_SECONDS] * 2
+
+
+def test_a_model_still_rate_limited_after_waiting_falls_to_the_next(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "test-account")
+    monkeypatch.setenv("CLOUDFLARE_API_KEY", "test-token")
+    confirm_groq_zdr(client)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    provider.errors = {GROQ_PERSONAL: RateLimitError()}
+
+    assert ask() == CLOUDFLARE_PERSONAL
+    assert models_asked(provider).count(GROQ_PERSONAL) == gateway.RATE_LIMIT_TRIES

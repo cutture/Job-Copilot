@@ -23,6 +23,10 @@ TRACE_TIMEOUT_SECONDS = 5
 PER_TOKEN = Decimal("0.000001")
 CHARS_PER_TOKEN_ESTIMATE = 3
 NOT_RECORDED = "Not recorded: Job Copilot never sends prompt or answer text"
+# Free tiers limit tokens per minute, so a rate-limited model is asked again after waiting,
+# across about a minute, before the next model on the list.
+RATE_LIMIT_TRIES = 3
+RATE_LIMIT_WAIT_SECONDS = 30.0
 
 
 class DataClass(Enum):
@@ -79,10 +83,13 @@ class CapReached(GatewayError):
 
 
 class ModelUnavailable(GatewayError):
-    def __init__(self, message: str, out_of_credit: bool = False) -> None:
+    def __init__(
+        self, message: str, out_of_credit: bool = False, rate_limited: bool = False
+    ) -> None:
         super().__init__(message)
         # The provider refused the key or the account has no credit, so retrying won't help today.
         self.out_of_credit = out_of_credit
+        self.rate_limited = rate_limited
 
 
 @dataclass(frozen=True)
@@ -300,7 +307,9 @@ def complete(
         # Provider errors can quote the request, so only the error's type goes any further.
         # Raising out here keeps the original error off this exception's context too.
         log.warning("Model call failed: step=%s model=%s %s", step, model, failure)
-        raise ModelUnavailable(f"{model} failed: {failure}", out_of_credit)
+        raise ModelUnavailable(
+            f"{model} failed: {failure}", out_of_credit, rate_limited=failure == "RateLimitError"
+        )
 
     cost = _cost(rule, answer.input_tokens, answer.output_tokens)
     settings = trace_settings()
@@ -417,22 +426,32 @@ def complete_first(
     for model in models:
         if _skip(model, data_class, settings):
             continue
-        try:
-            return complete(
-                user_id=user_id,
-                model=model,
-                data_class=data_class,
-                step=step,
-                messages=messages,
-                max_output_tokens=max_output_tokens,
-                application_id=application_id,
-            )
-        except CapReached:
-            if user_id == EVAL_USER_ID:
-                raise
-            failures.append(f"{model}: monthly cap reached")
-        except ModelUnavailable as error:
-            if error.out_of_credit and _is_paid(model):
-                _paid_out_until_tomorrow(user_id)
-            failures.append(str(error))
-    raise ModelUnavailable("; ".join(failures) or "No model is set up for this step")
+        for attempt in range(1, RATE_LIMIT_TRIES + 1):
+            try:
+                return complete(
+                    user_id=user_id,
+                    model=model,
+                    data_class=data_class,
+                    step=step,
+                    messages=messages,
+                    max_output_tokens=max_output_tokens,
+                    application_id=application_id,
+                )
+            except CapReached:
+                if user_id == EVAL_USER_ID:
+                    raise
+                failures.append(f"{model}: monthly cap reached")
+            except ModelUnavailable as error:
+                if error.rate_limited and attempt < RATE_LIMIT_TRIES:
+                    # ponytail: waits in the worker, holding the queue; fine for one person.
+                    time.sleep(RATE_LIMIT_WAIT_SECONDS)
+                    continue
+                if error.out_of_credit and _is_paid(model):
+                    _paid_out_until_tomorrow(user_id)
+                failures.append(str(error))
+            break
+    # Every failure is kept, so a rate limit still reads as one: evals count it as not run.
+    raise ModelUnavailable(
+        "; ".join(failures) or "No model is set up for this step",
+        rate_limited=any("RateLimitError" in failure for failure in failures),
+    )
