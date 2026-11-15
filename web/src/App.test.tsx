@@ -126,7 +126,7 @@ describe("pasting a Job Posting", () => {
 
     expect(screen.getByText("Entwickler")).toBeTruthy();
     expect(screen.getByText("Not written in English")).toBeTruthy();
-    expect(screen.getByText("This posting will be deleted in 3 days")).toBeTruthy();
+    expect(screen.getByText(/This posting will be deleted in 3 days\. Filtered Postings are kept 30 days/)).toBeTruthy();
   });
 
   it("counts postings waiting to be rated and shows postings being rated", async () => {

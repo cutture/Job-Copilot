@@ -1066,7 +1066,7 @@ def apply(new: NewApplication, user_id: UserId, response: Response) -> Applicati
 
 @router.get("/api/applications/{application_id}")
 def get_application(application_id: UUID, user_id: UserId) -> ApplicationView:
-    # Opening it keeps a never-submitted Pack another 90 days.
+    # Opening it keeps a never-submitted Pack another UNOPENED_PACK_DAYS.
     with connect() as conn:
         conn.execute(
             "UPDATE applications SET opened_at = now() WHERE id = %s AND user_id = %s",
@@ -1167,11 +1167,14 @@ def review_pack(application_id: UUID, review: Review, user_id: UserId) -> Applic
 def mark_submitted(application_id: UUID, user_id: UserId) -> ApplicationView:
     """The person says they submitted it themselves; nothing here ever submits."""
     with connect() as conn:
-        check_reviewed(latest_pack(conn, user_id, application_id))
+        pack = latest_pack(conn, user_id, application_id)
+        check_reviewed(pack)
         conn.execute(
-            """UPDATE applications SET submitted_at = COALESCE(submitted_at, now())
+            # The version sent is kept with the Application; the others go later.
+            """UPDATE applications SET submitted_at = COALESCE(submitted_at, now()),
+                                        submitted_pack_id = COALESCE(submitted_pack_id, %s)
                WHERE id = %s AND user_id = %s""",
-            (application_id, user_id),
+            (pack["id"], application_id, user_id),
         )
     return application_view(user_id, application_id)
 

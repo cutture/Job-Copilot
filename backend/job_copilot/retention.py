@@ -11,12 +11,7 @@ from uuid import UUID
 import httpx
 
 from job_copilot import gateway
-from job_copilot.applications import (
-    LATEST_PACK,
-    UNOPENED_PACK_DAYS,
-    delete_packs,
-    drop_queued_work,
-)
+from job_copilot.applications import UNOPENED_PACK_DELETES_ON, delete_packs, drop_queued_work
 from job_copilot.db import connect
 
 log = logging.getLogger(__name__)
@@ -31,22 +26,27 @@ LEDGER_MONTHS = 13
 TRACE_DELETIONS_PER_DAY = 50
 TRACE_TIMEOUT_SECONDS = 10
 
-# When a Filtered Posting goes, for the notice before it does.
+# The day each thing is deleted. Clean-up deletes on that day, the day its notice names.
 FILTERED_DELETES_ON = f"(p.created_at + interval '{FILTERED_DAYS} days')::date"
+EXPIRED_POSTING_DELETES_ON = f"(p.expired_at + interval '{EXPIRED_POSTING_DAYS} days')::date"
+OTHER_VERSIONS_DELETES_ON = f"(a.submitted_at + interval '{OTHER_VERSIONS_DAYS} days')::date"
+EVAL_RUN_DELETES_ON = f"(r.started_at + interval '{EVAL_RUN_MONTHS} months')::date"
+LEDGER_DELETES_ON = f"(created_at + interval '{LEDGER_MONTHS} months')::date"
 
 
-def _delete_postings(conn: Any, user_id: UUID, where: str, days: int) -> None:
-    """Delete the person's postings matching `where` (about posting `p`) with their Matches.
+def _delete_postings(conn: Any, user_id: UUID, deletes_on: str) -> None:
+    """Delete the person's postings whose day `deletes_on` (about posting `p`) has come, with
+    their Matches.
 
     A sourced posting's ID is kept, as when the person deletes one, so a search doesn't add it
-    back. Postings with an Application are never matched: they stay with it.
+    back. Postings with an Application are never deleted here: they stay with it.
     """
     postings = conn.execute(
         f"""SELECT id, source, external_id FROM job_postings p
-            WHERE p.user_id = %s AND {where}
+            WHERE p.user_id = %s AND {deletes_on} <= current_date
               AND NOT EXISTS (SELECT 1 FROM applications a
                               WHERE a.job_posting_id = p.id AND a.user_id = p.user_id)""",
-        (user_id, days),
+        (user_id,),
     ).fetchall()
     ids = [p["id"] for p in postings]
     drop_queued_work(conn, user_id, "job_posting_id", ids)
@@ -64,49 +64,42 @@ def _delete_postings(conn: Any, user_id: UUID, where: str, days: int) -> None:
 
 
 def _clean_up_user(conn: Any, user_id: UUID) -> None:
-    _delete_postings(
-        conn,
-        user_id,
-        "p.status = 'filtered' AND p.created_at < now() - %s * interval '1 day'",
-        FILTERED_DAYS,
-    )
-    _delete_postings(
-        conn, user_id, "p.expired_at < now() - %s * interval '1 day'", EXPIRED_POSTING_DAYS
-    )
+    _delete_postings(conn, user_id, f"p.status = 'filtered' AND {FILTERED_DELETES_ON}")
+    _delete_postings(conn, user_id, EXPIRED_POSTING_DELETES_ON)
     unopened = conn.execute(
-        """SELECT a.id FROM applications a
-           WHERE a.user_id = %s AND a.submitted_at IS NULL
-             AND a.opened_at < now() - %s * interval '1 day'""",
-        (user_id, UNOPENED_PACK_DAYS),
+        f"""SELECT a.id FROM applications a
+            WHERE a.user_id = %s AND a.submitted_at IS NULL
+              AND {UNOPENED_PACK_DELETES_ON} <= current_date""",
+        (user_id,),
     ).fetchall()
     delete_packs(conn, user_id, [a["id"] for a in unopened])
-    others = conn.execute(
+    unsent_versions = conn.execute(
         f"""DELETE FROM application_packs pack USING applications a
             WHERE pack.application_id = a.id AND pack.user_id = a.user_id AND a.user_id = %s
-              AND a.submitted_at < now() - %s * interval '1 day'
-              AND pack.id <> {LATEST_PACK}
+              AND {OTHER_VERSIONS_DELETES_ON} <= current_date
+              AND pack.id IS DISTINCT FROM a.submitted_pack_id
             RETURNING pack.id""",
-        (user_id, OTHER_VERSIONS_DAYS),
+        (user_id,),
     ).fetchall()
-    drop_queued_work(conn, user_id, "pack_id", [p["id"] for p in others])
+    drop_queued_work(conn, user_id, "pack_id", [p["id"] for p in unsent_versions])
     conn.execute(
-        """DELETE FROM eval_results e USING eval_runs r
-           WHERE e.run_id = r.id AND e.user_id = r.user_id AND r.user_id = %s
-             AND r.started_at < now() - %s * interval '1 month'""",
-        (user_id, EVAL_RUN_MONTHS),
+        f"""DELETE FROM eval_results e USING eval_runs r
+            WHERE e.run_id = r.id AND e.user_id = r.user_id AND r.user_id = %s
+              AND {EVAL_RUN_DELETES_ON} <= current_date""",
+        (user_id,),
     )
     conn.execute(
-        "DELETE FROM eval_runs WHERE user_id = %s AND started_at < now() - %s * interval '1 month'",
-        (user_id, EVAL_RUN_MONTHS),
+        f"DELETE FROM eval_runs r WHERE user_id = %s AND {EVAL_RUN_DELETES_ON} <= current_date",
+        (user_id,),
     )
-    old_ledger = "user_id = %s AND created_at < now() - %s * interval '1 month'"
+    ledger_due = f"user_id = %s AND {LEDGER_DELETES_ON} <= current_date"
     conn.execute(
         f"""INSERT INTO trace_deletions (trace_id)
-            SELECT trace_id FROM model_calls WHERE {old_ledger} AND trace_id IS NOT NULL
+            SELECT trace_id FROM model_calls WHERE {ledger_due} AND trace_id IS NOT NULL
             ON CONFLICT DO NOTHING""",
-        (user_id, LEDGER_MONTHS),
+        (user_id,),
     )
-    conn.execute(f"DELETE FROM model_calls WHERE {old_ledger}", (user_id, LEDGER_MONTHS))
+    conn.execute(f"DELETE FROM model_calls WHERE {ledger_due}", (user_id,))
 
 
 def clean_up() -> None:
@@ -120,21 +113,23 @@ def clean_up() -> None:
 
 
 def send_trace_deletions() -> None:
-    """Delete queued traces at Langfuse, at most 50 a day. Without tracing set up, they wait."""
+    """Delete queued traces at Langfuse, at most 50 tries a day. Without tracing set up, they
+    wait; a failed one is tried again another day."""
     settings = gateway.trace_settings()
     if settings is None:
         return
+    today = "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"
     with connect() as conn:
-        # Sent deletions are only kept to count today's.
+        # Sent deletions are only kept to count today's tries.
         conn.execute("DELETE FROM trace_deletions WHERE sent_at < now() - interval '2 days'")
-        sent_today: Any = conn.execute(
-            """SELECT count(*) AS n FROM trace_deletions
-               WHERE sent_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"""
+        tried_today: Any = conn.execute(
+            f"SELECT count(*) AS n FROM trace_deletions WHERE tried_at >= {today}"
         ).fetchone()
         waiting = conn.execute(
-            """SELECT trace_id FROM trace_deletions WHERE sent_at IS NULL
-               ORDER BY queued_at LIMIT %s""",
-            (max(0, TRACE_DELETIONS_PER_DAY - sent_today["n"]),),
+            f"""SELECT trace_id FROM trace_deletions
+                WHERE sent_at IS NULL AND (tried_at IS NULL OR tried_at < {today})
+                ORDER BY queued_at LIMIT %s""",
+            (max(0, TRACE_DELETIONS_PER_DAY - tried_today["n"]),),
         ).fetchall()
     for row in waiting:
         response = httpx.delete(
@@ -143,10 +138,13 @@ def send_trace_deletions() -> None:
             timeout=TRACE_TIMEOUT_SECONDS,
         )
         # Already gone counts as deleted; anything else stays queued for another day.
-        if response.status_code not in (200, 204, 404):
+        sent = response.status_code in (200, 204, 404)
+        if not sent:
             log.warning("Trace deletion failed: HTTP %s", response.status_code)
-            continue
         with connect() as conn:
             conn.execute(
-                "UPDATE trace_deletions SET sent_at = now() WHERE trace_id = %s", (row["trace_id"],)
+                """UPDATE trace_deletions
+                   SET tried_at = now(), sent_at = CASE WHEN %s THEN now() END
+                   WHERE trace_id = %s""",
+                (sent, row["trace_id"]),
             )

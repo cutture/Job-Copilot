@@ -131,6 +131,33 @@ def test_a_submitted_application_keeps_only_the_version_sent_after_30_days(
     assert (sent["status"], sent["version"]) == ("ready", 1)
 
 
+def test_the_version_sent_stays_even_when_a_newer_one_exists(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    pack = ready_pack(client, provider)
+    base = f"/api/applications/{pack['id']}"
+    client.put(f"{base}/review", json={"reviewed": True})
+    client.post(f"{base}/submitted")
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        conn.execute(
+            """INSERT INTO application_packs (user_id, application_id, version, status, resume,
+                                              cover_letter, removed_claims, model)
+               SELECT user_id, application_id, 2, status, resume, cover_letter, removed_claims,
+                      model
+               FROM application_packs WHERE application_id = %s""",
+            (pack["id"],),
+        )
+    age("applications", "submitted_at", 31)
+
+    retention.clean_up()
+
+    with psycopg.connect(TEST_DB) as conn:
+        kept = conn.execute(
+            "SELECT version FROM application_packs WHERE application_id = %s", (pack["id"],)
+        ).fetchall()
+    assert kept == [(1,)]
+
+
 def test_eval_runs_go_after_12_months_and_the_ledger_after_13_with_its_traces_queued(
     client: TestClient, provider: FakeProvider, tmp_path: Any
 ) -> None:
@@ -213,19 +240,43 @@ def test_a_failed_trace_deletion_stays_queued(monkeypatch: pytest.MonkeyPatch) -
     assert count("SELECT count(*) FROM trace_deletions WHERE sent_at IS NULL") == 2
 
 
+def test_failed_trace_deletions_count_towards_the_50_a_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracing_on(monkeypatch)
+    tried: list[str] = []
+
+    def refuse(url: str, **kwargs: Any) -> httpx.Response:
+        tried.append(url)
+        return httpx.Response(500, request=httpx.Request("DELETE", url))
+
+    monkeypatch.setattr(httpx, "delete", refuse)
+    queue_traces(60)
+
+    retention.send_trace_deletions()
+    retention.send_trace_deletions()
+
+    assert len(tried) == 50
+
+
 def test_the_worker_cleans_up_once_a_day(
     client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runs: list[datetime] = []
-    monkeypatch.setattr(retention, "clean_up", lambda: runs.append(datetime.now(UTC)))
-    monkeypatch.setattr(retention, "send_trace_deletions", lambda: None)
+    monkeypatch.setattr(worker, "_cleaned_on", None)
     today = datetime.now(UTC)
+    first = filtered(client, provider)
+    age("job_postings", "created_at", 31, "id = %s", (first["id"],))
 
     worker.daily_clean_up(today)
+    assert first["id"] not in posting_ids(client)
+
+    second = filtered(client, provider)
+    age("job_postings", "created_at", 31, "id = %s", (second["id"],))
     worker.daily_clean_up(today)
+    assert second["id"] in posting_ids(client)
+
     worker.daily_clean_up(today + timedelta(days=1))
-
-    assert len(runs) == 2
+    assert second["id"] not in posting_ids(client)
 
 
 def test_docker_rotates_every_services_logs() -> None:

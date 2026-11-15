@@ -27,6 +27,11 @@ type JobPosting = PostingOrigin & {
 };
 
 function PostingRow({ posting, onDelete }: { posting: JobPosting; onDelete: (posting: JobPosting) => void }) {
+  const notice = deletionNotice(
+    posting.deletes_on,
+    "This posting",
+    ". Filtered Postings are kept 30 days, so there's nothing to do.",
+  );
   return (
     <li>
       <strong>{posting.title}</strong> <Origin posting={posting} />
@@ -47,9 +52,7 @@ function PostingRow({ posting, onDelete }: { posting: JobPosting; onDelete: (pos
       {posting.status === "not_rated" && <em> Our AI model couldn't rate this posting.</em>}
       {posting.rating_state === "rating" && <em> Rating…</em>}
       {posting.filter_reason && <div style={{ fontSize: 13 }}>{posting.filter_reason}</div>}
-      {deletionNotice(posting.deletes_on, "This posting") && (
-        <div style={{ fontSize: 13 }}>{deletionNotice(posting.deletes_on, "This posting")}</div>
-      )}
+      {notice && <div style={{ fontSize: 13 }}>{notice}</div>}
       <div>
         <ConfirmDelete question={deleteQuestion(posting)} onConfirm={() => onDelete(posting)} />
       </div>

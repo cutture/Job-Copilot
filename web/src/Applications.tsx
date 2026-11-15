@@ -25,6 +25,12 @@ const STATUSES = {
 };
 const cell = { textAlign: "left" as const, padding: "4px 8px", borderTop: "1px solid #e4e7eb" };
 
+// A never-submitted Pack's countdown, in its last week.
+function PackDeletionNotice({ deletesOn }: { deletesOn?: string | null }) {
+  const notice = deletionNotice(deletesOn, "Its Pack", " unless you open it");
+  return notice ? <div style={{ fontSize: 13 }}>{notice}</div> : null;
+}
+
 export function Applications({ onOpen }: { onOpen: (id: string) => void }) {
   const [rows, setRows] = useState<ApplicationRow[] | null>(null);
   const [error, setError] = useState("");
@@ -64,9 +70,7 @@ export function Applications({ onOpen }: { onOpen: (id: string) => void }) {
             <td style={cell}>{row.source}</td>
             <td style={cell}>
               {STATUSES[row.status]}
-              {deletionNotice(row.deletes_on, "Its Pack") && (
-                <div style={{ fontSize: 13 }}>{deletionNotice(row.deletes_on, "Its Pack")} unless you open it</div>
-              )}
+              <PackDeletionNotice deletesOn={row.deletes_on} />
             </td>
             <td style={cell}>{row.outcome ? OUTCOMES[row.outcome] : "None yet"}</td>
             <td style={cell}>{row.submitted_at ? new Date(row.submitted_at).toLocaleString() : "Not yet"}</td>

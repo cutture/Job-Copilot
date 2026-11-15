@@ -112,6 +112,7 @@ def schedule_daily_evals(now: datetime) -> None:
 
 
 # The day clean-up last ran, so it runs once a day while the app is running.
+# ponytail: kept in memory, so a restart cleans up again that day; harmless, as it's idempotent.
 _cleaned_on: date | None = None
 
 
