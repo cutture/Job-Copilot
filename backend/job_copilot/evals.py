@@ -34,6 +34,7 @@ from deepeval.test_case import LLMTestCase  # noqa: E402
 
 from job_copilot import applications, bands, eval_runs, filter, gateway, rating  # noqa: E402
 from job_copilot.db import EVAL_USER_ID, connect, current_user_id  # noqa: E402
+from job_copilot.tracked_scores import CaseScores, requirement_hits  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -66,8 +67,41 @@ class Outcome:
     # The rating's own reasons and gaps, so a wrong Band can be traced.
     band_reasons: list[str] = field(default_factory=list)
     missing_hard_blockers: list[str] = field(default_factory=list)
+    # Each extracted Requirement: its words, its quote and its Result.
+    requirements: list[tuple[str, str | None, str]] = field(default_factory=list)
+    # The Band for the same posting with its sentences in reverse order.
+    reordered_band: bands.Band | None = None
     resume: str = ""
     letter: str = ""
+    # How many Claims the writer wrote, and the kind of each one Verification removed.
+    claims_written: int = 0
+    removed_kinds: list[str] = field(default_factory=list)
+
+
+def _reordered(posting: str) -> str:
+    """The posting with every sentence after its first in reverse order."""
+    first, *rest = re.split(r"(?<=\.) ", posting)
+    return " ".join([first, *reversed(rest)])
+
+
+def case_scores(expect: dict[str, Any], outcome: Outcome) -> CaseScores:
+    """What one case counts towards its run's Tracked Scores."""
+    right, labelled = requirement_hits(expect.get("requirements", {}), outcome.requirements)
+    documents = f"{outcome.resume}\n{outcome.letter}"
+    kept = expect.get("in_pack", [])
+    return CaseScores(
+        band_exact=outcome.band == expect["band"] if "band" in expect else None,
+        requirements_right=right,
+        requirements_labelled=labelled,
+        kept_right=sum(_mentions(documents, phrase) for phrase in kept),
+        kept_labelled=len(kept),
+        claims_written=outcome.claims_written,
+        stretched=outcome.removed_kinds.count("stretched"),
+        invented=outcome.removed_kinds.count("invented"),
+        same_band_reordered=(
+            outcome.reordered_band == outcome.band if outcome.reordered_band else None
+        ),
+    )
 
 
 def _mentions(text: str, phrase: str) -> bool:
@@ -185,6 +219,13 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
         for r in match.requirements
         if r.kind == "hard_blocker" and r.result == "missing"
     ]
+    outcome.requirements = [(r.requirement, r.quote, r.result) for r in match.requirements]
+    if case["area"] == "scoring":
+        # Report only: the Band shouldn't depend on the order a posting lists its asks in.
+        reordered = rating.rate_posting(
+            EVAL_USER_ID, _reordered(posting), evidence, profile["facts"]
+        )
+        outcome.reordered_band = reordered.band
     # A case labelled with what a Pack may or must hold goes on to write one.
     if {"not_in_resume", "not_in_pack", "in_pack"} & case["expect"].keys():
         pack_evidence: dict[int, dict[str, Any]] = {
@@ -198,27 +239,31 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
         requirements = [r.model_dump() for r in match.requirements]
         pack = applications.write_pack(EVAL_USER_ID, posting, requirements, pack_evidence)
         outcome.resume, outcome.letter = _documents_text(pack)
+        outcome.removed_kinds = [claim.kind for claim in pack.removed]
+        outcome.claims_written = len(pack.resume.all_claims()) + len(outcome.removed_kinds)
     return outcome
 
 
-def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool, str, str | None]:
-    """Run and judge one case: its status, whether it's a Hard Failure, why, and where to look
-    first to fix it."""
+def _result(
+    case: dict[str, Any], profile: dict[str, Any]
+) -> tuple[Status, bool, str, str | None, CaseScores | None]:
+    """Run and judge one case: its status, whether it's a Hard Failure, why, where to look
+    first to fix it, and what it counts towards the run's Tracked Scores."""
     try:
         outcome = run_case(case, profile)
     except gateway.CapReached:
-        return "did_not_run", False, "Did not run: the eval budget is used up", None
+        return "did_not_run", False, "Did not run: the eval budget is used up", None, None
     except gateway.ModelUnavailable as error:
         if any(kind in str(error) for kind in DID_NOT_RUN):
-            return "did_not_run", False, f"Did not run: {error}", None
-        return "failed", False, f"The model call failed: {error}", FIX_MODEL
+            return "did_not_run", False, f"Did not run: {error}", None, None
+        return "failed", False, f"The model call failed: {error}", FIX_MODEL, None
     except ValueError as error:
         reason = f"The model's answer couldn't be used ({type(error).__name__})"
-        return "failed", False, reason, FIX_ANSWER
+        return "failed", False, reason, FIX_ANSWER, None
     except Exception as error:
         # One case's crash fails only that case; the run goes on to the next.
         log.exception("Eval Case %s crashed", case["id"])
-        return "failed", False, f"The case crashed ({type(error).__name__})", FIX_CRASH
+        return "failed", False, f"The case crashed ({type(error).__name__})", FIX_CRASH, None
     metric = LabelsMetric()
     metric.measure(
         LLMTestCase(
@@ -228,7 +273,13 @@ def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool
         )
     )
     status: Status = "passed" if metric.success else "failed"
-    return status, metric.hard_failure, str(metric.reason), metric.fix_area
+    return (
+        status,
+        metric.hard_failure,
+        str(metric.reason),
+        metric.fix_area,
+        case_scores(case["expect"], outcome),
+    )
 
 
 def _record(owner: UUID, run_id: int, case: dict[str, Any], profile: dict[str, Any]) -> None:

@@ -24,7 +24,15 @@ type EvalCaseResult = {
   // Where to look first to fix a failure.
   fix_area: string | null;
 };
-type EvalRun = EvalRunSummary & { deepeval_version: string; results: EvalCaseResult[] };
+type TrackedScore = {
+  name: string;
+  // A percentage, or null when no checked case counted towards it.
+  value: number | null;
+  target: string;
+  // Null for a report-only score, or one with nothing to count.
+  met: boolean | null;
+};
+type EvalRun = EvalRunSummary & { deepeval_version: string; results: EvalCaseResult[]; tracked_scores: TrackedScore[] };
 
 const STATUS = { passed: "Passed", failed: "Failed", did_not_run: "Did not run" };
 const cell: CSSProperties = { borderBottom: "1px solid #ddd", padding: "4px 8px", textAlign: "left", verticalAlign: "top" };
@@ -99,6 +107,32 @@ export function EvalRuns() {
           <h3>
             Run {run.id}, DeepEval {run.deepeval_version}
           </h3>
+          {run.tracked_scores.length > 0 && (
+            <table style={{ borderCollapse: "collapse", marginBottom: 12, fontSize: 13 }}>
+              <caption style={{ textAlign: "left", fontWeight: "bold" }}>
+                Tracked Scores. A missed target is worth a look; it isn't a Hard Failure.
+              </caption>
+              <thead>
+                <tr>
+                  {["Score", "This run", "Target", "Result"].map((heading) => (
+                    <th key={heading} style={cell}>
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {run.tracked_scores.map((score) => (
+                  <tr key={score.name}>
+                    <td style={cell}>{score.name}</td>
+                    <td style={cell}>{score.value === null ? "No checked cases yet" : `${score.value}%`}</td>
+                    <td style={cell}>{score.target}</td>
+                    <td style={cell}>{score.met === null ? "" : score.met ? "Met" : "Missed"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
           {run.results.length === 0 ? (
             run.finished_at === null ? (
               <p>Running: no case has finished yet. Cases run after your own work, so this can take a while.</p>

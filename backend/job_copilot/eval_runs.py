@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from job_copilot.db import EVAL_USER_ID, UserId, connect
+from job_copilot.tracked_scores import CaseScores, TrackedScore, scores_for
 
 router = APIRouter()
 
@@ -50,14 +51,17 @@ def record_result(
     hard_failure: bool,
     reason: str,
     fix_area: str | None,
+    scores: CaseScores | None = None,
 ) -> None:
     """Store one case's result, unless the run already has one for it."""
     with connect() as conn:
         conn.execute(
             """INSERT INTO eval_results (user_id, run_id, case_id, area, status,
-                                        hard_failure, labels_checked, reason, fix_area)
+                                        hard_failure, labels_checked, reason, fix_area,
+                                        scores, scores_checked)
                SELECT %(owner)s, %(run_id)s, %(case_id)s, %(area)s, %(status)s,
-                      %(hard)s, %(checked)s, %(reason)s, %(fix_area)s
+                      %(hard)s, %(checked)s, %(reason)s, %(fix_area)s,
+                      %(scores)s, %(scores_checked)s
                WHERE NOT EXISTS (SELECT 1 FROM eval_results
                                  WHERE user_id = %(owner)s AND run_id = %(run_id)s
                                    AND case_id = %(case_id)s)""",
@@ -71,6 +75,9 @@ def record_result(
                 "checked": case["labels_checked"],
                 "reason": reason,
                 "fix_area": fix_area,
+                "scores": scores and scores.model_dump_json(),
+                # Only labels added for Tracked Scores wait for the owner's check.
+                "scores_checked": case.get("scores_checked", True),
             },
         )
 
@@ -189,6 +196,8 @@ class EvalCaseResult(BaseModel):
 class EvalRun(EvalRunSummary):
     deepeval_version: str
     results: list[EvalCaseResult]
+    # How well each step did across the run's checked cases, beside its Hard Failures.
+    tracked_scores: list[TrackedScore]
 
 
 class EvalStatus(BaseModel):
@@ -226,11 +235,19 @@ def get_eval_run(run_id: int, user_id: UserId) -> EvalRun:
         if row is None:
             raise HTTPException(404, "Eval Run not found")
         results = conn.execute(
-            """SELECT case_id, area, status, hard_failure, labels_checked, reason, fix_area
+            """SELECT case_id, area, status, hard_failure, labels_checked, reason, fix_area,
+                      scores, scores_checked
                FROM eval_results WHERE run_id = %s AND user_id = %s ORDER BY id""",
             (run_id, user_id),
         ).fetchall()
-    return EvalRun(**row, results=[EvalCaseResult(**r) for r in results])
+    counted = [
+        {**r, "scores": CaseScores.model_validate(r["scores"])} for r in results if r["scores"]
+    ]
+    return EvalRun(
+        **row,
+        results=[EvalCaseResult(**r) for r in results],
+        tracked_scores=scores_for(counted),
+    )
 
 
 def eval_status(conn: Any, user_id: UUID) -> EvalStatus:

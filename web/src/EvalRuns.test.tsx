@@ -49,6 +49,12 @@ const run2 = {
       fix_area: null,
     },
   ],
+  tracked_scores: [
+    { name: "Exact Band", value: 75, target: "80% or more", met: false },
+    { name: "Wrong removals", value: 0, target: "10% or less", met: true },
+    { name: "Stretched Claims", value: 4, target: "Report only", met: null },
+    { name: "Requirement Results", value: null, target: "85% or more", met: null },
+  ],
 };
 
 function serve(routes: Record<string, unknown>) {
@@ -67,7 +73,7 @@ afterEach(() => {
 
 describe("EvalRuns", () => {
   it("lists runs and shows the latest run's failures with their reason and area to fix", async () => {
-    serve({ "/api/eval-runs": runs, "/api/eval-runs/2": run2, "/api/eval-runs/1": { ...runs[1], deepeval_version: "4.3.3", results: [] } });
+    serve({ "/api/eval-runs": runs, "/api/eval-runs/2": run2, "/api/eval-runs/1": { ...runs[1], deepeval_version: "4.3.3", results: [], tracked_scores: [] } });
     render(<EvalRuns />);
 
     const failure = (await screen.findByText("pack-trap-degree")).closest("tr")!;
@@ -77,13 +83,20 @@ describe("EvalRuns", () => {
     const unchecked = screen.getByText("scoring-thin-posting").closest("tr")!;
     expect(within(unchecked).getByText("Labels not checked")).toBeTruthy();
 
+    const missed = screen.getByText("Exact Band").closest("tr")!;
+    expect(within(missed).getByText("75%")).toBeTruthy();
+    expect(within(missed).getByText("Missed")).toBeTruthy();
+    expect(within(screen.getByText("Wrong removals").closest("tr")!).getByText("Met")).toBeTruthy();
+    expect(within(screen.getByText("Stretched Claims").closest("tr")!).getByText("Report only")).toBeTruthy();
+    expect(within(screen.getByText("Requirement Results").closest("tr")!).getByText(/No checked cases/)).toBeTruthy();
+
     fireEvent.click(screen.getByRole("button", { name: /^Run 1 / }));
     expect(await screen.findByText(/No case results: the run stopped/)).toBeTruthy();
   });
 
   it("shows a run as running until its last case finishes", async () => {
     const running = { ...runs[0], id: 3, finished_at: null, cost_usd: null, passed: 0, failed: 0, did_not_run: 0, hard_failures: 0 };
-    serve({ "/api/eval-runs": [running], "/api/eval-runs/3": { ...running, deepeval_version: "4.3.3", results: [] } });
+    serve({ "/api/eval-runs": [running], "/api/eval-runs/3": { ...running, deepeval_version: "4.3.3", results: [], tracked_scores: [] } });
     render(<EvalRuns />);
 
     const row = (await screen.findByRole("button", { name: /^Run 3 / })).closest("li")!;
