@@ -162,7 +162,7 @@ def test_apply_starts_an_application_and_a_verified_pack(
     assert (pack["status"], pack["version"], pack["model"]) == (
         "ready",
         1,
-        "anthropic/claude-haiku-5-5",
+        "Claude Haiku 5.5",
     )
     resume = pack["resume"]
     assert [(s["kind"], s["heading"]) for s in resume["sections"]] == [

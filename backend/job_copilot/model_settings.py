@@ -1,8 +1,7 @@
 """Settings for which models run: whether paid or free models are in use, and why, and
 Groq's Zero Data Retention confirmation."""
 
-from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -12,12 +11,10 @@ from job_copilot.db import UserId, connect
 
 router = APIRouter()
 
-NO_KEY = "No Anthropic key is set, so free models that don't train on your data are in use."
-
 
 class ModelSettings(BaseModel):
     mode: Literal["paid", "free"]
-    # Why free models are in use, when they are.
+    # Why free models are in use, and what to do about it, when they are.
     note: str | None
     groq_zdr_confirmed: bool
     # True when free models are in use and none may receive personal data yet.
@@ -30,22 +27,12 @@ class GroqZdr(BaseModel):
 
 @router.get("/api/model-settings")
 def get_model_settings(user_id: UserId) -> ModelSettings:
-    settings: Any = gateway.model_settings(user_id)
-    until = settings["paid_unavailable_until"]
-    if not gateway.has_keys(gateway.HAIKU):
-        note: str | None = NO_KEY
-    elif until is not None and until > datetime.now(UTC):
-        note = settings["paid_unavailable_reason"]
-    else:
-        note = None
-    free_ready = (
-        gateway.has_keys(gateway.GROQ_PERSONAL) and settings["groq_zdr_confirmed"]
-    ) or gateway.has_keys(gateway.CLOUDFLARE_PERSONAL)
+    status = gateway.model_status(user_id)
     return ModelSettings(
-        mode="free" if note else "paid",
-        note=note,
-        groq_zdr_confirmed=settings["groq_zdr_confirmed"],
-        personal_work_waits=bool(note) and not free_ready,
+        mode="paid" if status.paid else "free",
+        note=status.note,
+        groq_zdr_confirmed=status.groq_zdr_confirmed,
+        personal_work_waits=status.personal_work_waits,
     )
 
 

@@ -37,7 +37,7 @@ from job_copilot.profile import (
     ensure_profile,
     strip_controls,
 )
-from job_copilot.rating import RATING_MODELS, RequirementView
+from job_copilot.rating import RequirementView
 
 # Personal data must never reach LangSmith, whatever the environment says.
 os.environ["LANGSMITH_TRACING"] = "false"
@@ -46,7 +46,7 @@ os.environ["LANGCHAIN_TRACING_V2"] = "false"
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-PACK_MODELS = RATING_MODELS
+PACK_MODELS = gateway.PERSONAL_MODELS
 PACK_MODEL = PACK_MODELS[0]
 WRITE_MAX_OUTPUT_TOKENS = 8000
 VERIFY_MAX_OUTPUT_TOKENS = 8000
@@ -895,7 +895,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
             else None,
         )
     except gateway.GatewayError as error:
-        # Includes the monthly cap: personal-data work waits rather than use another model.
+        # No model on the Fallback List could take the call, so the Pack waits.
         log.warning("Application Pack waiting: %s", type(error).__name__)
         _wait(user_id, pack_id, "model_unavailable")
         return
@@ -995,7 +995,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
             version=row["version"],
             status=row["status"],
             warning=WARNINGS.get(row["failure"], UNKNOWN_FAILURE) if waiting else None,
-            model=row["model"],
+            model=row["model"] and gateway.model_name(row["model"]),
             # Only a verified Pack's documents are ever shown.
             resume=resume,
             cover_letter=CoverLetter(**row["cover_letter"]) if ready else None,

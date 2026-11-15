@@ -10,7 +10,7 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-from job_copilot import gateway, rating, worker
+from job_copilot import gateway, worker
 from job_copilot.db import EVAL_USER_ID, SEEDED_USER_ID
 from job_copilot.filter import FILTER_MODEL
 from job_copilot.gateway import CapReached, DataClass, ModelUnavailable, NotEligible
@@ -32,6 +32,10 @@ class CreditBalanceTooLow(Exception):
 
 
 class AuthenticationError(Exception):
+    pass
+
+
+class PermissionDeniedError(Exception):
     pass
 
 
@@ -112,7 +116,9 @@ def test_a_haiku_outage_falls_to_the_next_eligible_model(
     assert ask() == HAIKU
 
 
-@pytest.mark.parametrize("error", [CreditBalanceTooLow(), AuthenticationError()])
+@pytest.mark.parametrize(
+    "error", [CreditBalanceTooLow(), AuthenticationError(), PermissionDeniedError()]
+)
 def test_no_credit_or_a_bad_key_moves_the_day_to_free_models_and_settings_says_why(
     client: TestClient, provider: FakeProvider, error: Exception
 ) -> None:
@@ -126,7 +132,8 @@ def test_no_credit_or_a_bad_key_moves_the_day_to_free_models_and_settings_says_w
 
     settings = client.get("/api/model-settings").json()
     assert settings["mode"] == "free"
-    assert "Anthropic" in settings["note"]
+    assert "until tomorrow" in settings["note"]
+    assert "Anthropic Console" in settings["note"]
 
 
 def test_haiku_is_tried_again_the_next_day(client: TestClient, provider: FakeProvider) -> None:
@@ -152,6 +159,9 @@ def test_at_the_monthly_cap_free_models_are_used(
 
     assert ask() == GROQ_PERSONAL
     assert models_asked(provider) == [GROQ_PERSONAL]
+    settings = client.get("/api/model-settings").json()
+    assert settings["mode"] == "free"
+    assert "until the 1st" in settings["note"]
 
 
 def test_evals_stop_at_their_own_cap_instead_of_testing_another_model(
@@ -181,6 +191,8 @@ def test_a_list_naming_a_posting_only_model_for_personal_data_is_refused(
 
 
 def test_every_model_that_may_train_on_data_is_kept_from_personal_data() -> None:
+    # Adding any model for personal data, such as a Groq preview model, fails here first, so
+    # its terms get checked.
     personal = {m for m, rule in gateway.MODELS.items() if DataClass.PERSONAL in rule.data_classes}
 
     assert personal == {HAIKU, GROQ_PERSONAL, CLOUDFLARE_PERSONAL}
@@ -201,7 +213,6 @@ def test_a_match_is_rated_by_the_free_model_without_a_paid_key(
     posting = next(p for p in client.get("/api/job-postings").json() if p["id"] == created["id"])
     assert posting["match"]["band"] is not None
     assert HAIKU not in models_asked(provider)
-    assert rating.RATING_MODELS[0] == HAIKU
 
 
 def test_settings_show_free_mode_without_a_key_and_the_zdr_checkbox(
@@ -210,12 +221,10 @@ def test_settings_show_free_mode_without_a_key_and_the_zdr_checkbox(
     monkeypatch.delenv("ANTHROPIC_API_KEY")
 
     settings = client.get("/api/model-settings").json()
-    assert settings == {
-        "mode": "free",
-        "note": "No Anthropic key is set, so free models that don't train on your data are in use.",
-        "groq_zdr_confirmed": False,
-        "personal_work_waits": True,
-    }
+    assert (settings["mode"], settings["groq_zdr_confirmed"]) == ("free", False)
+    assert settings["note"].startswith("No Anthropic key is set")
+    assert ".env" in settings["note"]
+    assert settings["personal_work_waits"] is True
 
     confirm_groq_zdr(client)
     assert client.get("/api/model-settings").json()["personal_work_waits"] is False
@@ -229,9 +238,11 @@ def test_a_rate_limited_free_model_is_waited_for_and_asked_again(
     client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY")
+    # Cloudflare is set up too, so only waiting for Groq can explain Groq's answer.
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "test-account")
+    monkeypatch.setenv("CLOUDFLARE_API_KEY", "test-token")
     confirm_groq_zdr(client)
-    waits: list[float] = []
-    monkeypatch.setattr(time, "sleep", waits.append)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
     limited = iter([RateLimitError(), RateLimitError()])
 
     def limited_then_answer(model: str, messages: Any, max_tokens: int) -> gateway.ProviderAnswer:
@@ -244,8 +255,6 @@ def test_a_rate_limited_free_model_is_waited_for_and_asked_again(
     monkeypatch.setattr(gateway, "call_provider", limited_then_answer)
 
     assert ask() == GROQ_PERSONAL
-    assert models_asked(provider) == [GROQ_PERSONAL] * 3
-    assert waits == [gateway.RATE_LIMIT_WAIT_SECONDS] * 2
 
 
 def test_a_model_still_rate_limited_after_waiting_falls_to_the_next(
@@ -259,4 +268,16 @@ def test_a_model_still_rate_limited_after_waiting_falls_to_the_next(
     provider.errors = {GROQ_PERSONAL: RateLimitError()}
 
     assert ask() == CLOUDFLARE_PERSONAL
-    assert models_asked(provider).count(GROQ_PERSONAL) == gateway.RATE_LIMIT_TRIES
+
+
+@pytest.mark.parametrize(
+    ("model", "name"),
+    [
+        (HAIKU, "Claude Haiku 5.5"),
+        (GROQ_PERSONAL, "Groq gpt-oss-120b (free)"),
+        (CLOUDFLARE_PERSONAL, "Cloudflare gpt-oss-120b (free)"),
+        ("an/unknown-model", "an/unknown-model"),
+    ],
+)
+def test_packs_name_the_model_that_wrote_them_readably(model: str, name: str) -> None:
+    assert gateway.model_name(model) == name

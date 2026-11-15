@@ -44,18 +44,25 @@ class ModelRule:
 HAIKU = "anthropic/claude-haiku-5-5"
 GROQ_PERSONAL = "groq/openai/gpt-oss-120b"
 CLOUDFLARE_PERSONAL = "cloudflare/@cf/openai/gpt-oss-120b"
-BOTH = frozenset({DataClass.POSTING, DataClass.PERSONAL})
+POSTING_AND_PERSONAL = frozenset({DataClass.POSTING, DataClass.PERSONAL})
 
 # Only models listed here can be called. Re-check prices and terms before adding one. Personal
 # data goes only to models whose terms rule out training on it: never add one that may train.
 MODELS = {
     "groq/openai/gpt-oss-20b": ModelRule(frozenset({DataClass.POSTING})),
     "cloudflare/@cf/openai/gpt-oss-20b": ModelRule(frozenset({DataClass.POSTING})),
-    HAIKU: ModelRule(BOTH, Decimal("0.10"), Decimal("0.50")),
+    HAIKU: ModelRule(POSTING_AND_PERSONAL, Decimal("0.10"), Decimal("0.50")),
     # Groq production models with Zero Data Retention on, which the person confirms on Settings.
-    GROQ_PERSONAL: ModelRule(BOTH),
+    GROQ_PERSONAL: ModelRule(POSTING_AND_PERSONAL),
     # Plain Workers AI inference, never through Cloudflare AI Gateway, which can log requests.
-    CLOUDFLARE_PERSONAL: ModelRule(BOTH),
+    CLOUDFLARE_PERSONAL: ModelRule(POSTING_AND_PERSONAL),
+}
+
+# How a Pack names the model that wrote it.
+MODEL_NAMES = {
+    HAIKU: "Claude Haiku 5.5",
+    GROQ_PERSONAL: "Groq gpt-oss-120b (free)",
+    CLOUDFLARE_PERSONAL: "Cloudflare gpt-oss-120b (free)",
 }
 
 # Fallback Lists: each step tries these in order and uses the first that can take the call.
@@ -302,7 +309,10 @@ def complete(
     except Exception as error:
         failure = type(error).__name__
         # Read here and never kept: provider errors can quote the request.
-        out_of_credit = failure == "AuthenticationError" or "credit balance" in str(error).lower()
+        out_of_credit = (
+            failure in ("AuthenticationError", "PermissionDeniedError")
+            or "credit balance" in str(error).lower()
+        )
     if failure:
         # Provider errors can quote the request, so only the error's type goes any further.
         # Raising out here keeps the original error off this exception's context too.
@@ -349,10 +359,33 @@ def complete(
     return Completion(answer.text, cost, trace_id, model)
 
 
-NO_CREDIT = (
-    "Anthropic didn't accept your key or your account is out of credit, so free models that "
-    "don't train on your data are in use until tomorrow."
+FREE_IN_USE = "free models that don't train on your data are in use"
+NO_KEY = (
+    f"No Anthropic key is set, so {FREE_IN_USE}. To use Claude Haiku, add ANTHROPIC_API_KEY "
+    "to your .env file and restart the app."
 )
+NO_CREDIT = (
+    f"Anthropic didn't accept your key or your account is out of credit, so {FREE_IN_USE} "
+    "until tomorrow. Add credit or check your key in the Anthropic Console."
+)
+AT_CAP = (
+    f"You've reached this month's cap, so {FREE_IN_USE} until the 1st. Raise the cap above "
+    "to use Claude Haiku again."
+)
+
+
+@dataclass(frozen=True)
+class ModelStatus:
+    paid: bool
+    # Why free models are in use, and what to do about it, when they are.
+    note: str | None
+    groq_zdr_confirmed: bool
+    # Free models are in use and none may receive personal data yet.
+    personal_work_waits: bool
+
+
+def model_name(model: str) -> str:
+    return MODEL_NAMES.get(model, model)
 
 
 def settings_owner(user_id: UUID) -> UUID:
@@ -389,6 +422,32 @@ def _skip(model: str, data_class: DataClass, settings: Any) -> bool:
     return _is_paid(model) and until is not None and until > datetime.now(UTC)
 
 
+def model_status(user_id: UUID) -> ModelStatus:
+    """Which models personal-data work uses now, by the same rules complete_first follows."""
+    settings = model_settings(user_id)
+    with connect() as conn:
+        cap, spent = cap_and_spent(conn, settings_owner(user_id))
+    if not has_keys(HAIKU):
+        note: str | None = NO_KEY
+    elif _skip(HAIKU, DataClass.PERSONAL, settings):
+        note = settings["paid_unavailable_reason"]
+    elif spent >= cap:
+        note = AT_CAP
+    else:
+        note = None
+    free_ready = any(
+        not _skip(model, DataClass.PERSONAL, settings)
+        for model in PERSONAL_MODELS
+        if not _is_paid(model)
+    )
+    return ModelStatus(
+        paid=note is None,
+        note=note,
+        groq_zdr_confirmed=settings["groq_zdr_confirmed"],
+        personal_work_waits=note is not None and not free_ready,
+    )
+
+
 def _paid_out_until_tomorrow(user_id: UUID) -> None:
     tomorrow = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
         days=1
@@ -423,6 +482,7 @@ def complete_first(
             raise NotEligible(f"{model} may not receive {data_class.value} data")
     settings = model_settings(user_id)
     failures: list[str] = []
+    rate_limited = False
     for model in models:
         if _skip(model, data_class, settings):
             continue
@@ -448,10 +508,10 @@ def complete_first(
                     continue
                 if error.out_of_credit and _is_paid(model):
                     _paid_out_until_tomorrow(user_id)
+                rate_limited = rate_limited or error.rate_limited
                 failures.append(str(error))
             break
-    # Every failure is kept, so a rate limit still reads as one: evals count it as not run.
+    # Every failure's type is kept, so a rate limit still reads as one: evals count it as not run.
     raise ModelUnavailable(
-        "; ".join(failures) or "No model is set up for this step",
-        rate_limited=any("RateLimitError" in failure for failure in failures),
+        "; ".join(failures) or "No model is set up for this step", rate_limited=rate_limited
     )

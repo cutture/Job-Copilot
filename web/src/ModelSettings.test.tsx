@@ -54,4 +54,13 @@ describe("ModelSettings", () => {
 
     expect(await screen.findByText(/Claude Haiku is in use/)).toBeTruthy();
   });
+
+  it("links each provider's data policy", async () => {
+    serve(free);
+    render(<ModelSettings />);
+
+    for (const name of [/Anthropic's data policy/, /Groq's data controls/, /Cloudflare's data policy/]) {
+      expect((await screen.findByRole("link", { name })).getAttribute("href")).toMatch(/^https:\/\//);
+    }
+  });
 });

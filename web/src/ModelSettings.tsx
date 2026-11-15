@@ -49,9 +49,21 @@ export function ModelSettings() {
         />{" "}
         I've turned on Zero Data Retention in Groq, so Groq may receive my data when free models are in use
       </label>{" "}
-      <a href="https://console.groq.com/docs/your-data" target="_blank" rel="noreferrer">
-        Groq's data controls
-      </a>
+      <p>
+        Your data goes only to models that don't train on it:{" "}
+        <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noreferrer">
+          Anthropic's data policy
+        </a>
+        ,{" "}
+        <a href="https://console.groq.com/docs/your-data" target="_blank" rel="noreferrer">
+          Groq's data controls
+        </a>{" "}
+        and{" "}
+        <a href="https://developers.cloudflare.com/workers-ai/platform/privacy/" target="_blank" rel="noreferrer">
+          Cloudflare's data policy
+        </a>
+        .
+      </p>
       {error && <p role="alert">{error}</p>}
     </section>
   );
