@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from job_copilot import (
     applications,
+    challengers,
     deletion,
     documents,
     eval_runs,
@@ -36,6 +37,7 @@ app.include_router(export.router)
 app.include_router(eval_runs.router)
 app.include_router(spending.router)
 app.include_router(model_settings.router)
+app.include_router(challengers.router)
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 

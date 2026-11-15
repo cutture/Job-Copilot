@@ -104,6 +104,21 @@ describe("EvalRuns", () => {
     expect(await screen.findByText(/Running: no case has finished yet/)).toBeTruthy();
   });
 
+  it("labels a Challenger run and shows the model each step used", async () => {
+    const challenger = { ...runs[0], id: 4, challenger_step: "rating", challenger_name: "Groq gpt-oss-120b (free)" };
+    const result = { ...run2.results[1], models: { rating: "Groq gpt-oss-120b (free)", pack: "Claude Haiku 5.5" } };
+    serve({
+      "/api/eval-runs": [challenger],
+      "/api/eval-runs/4": { ...challenger, deepeval_version: "4.3.3", results: [result], tracked_scores: [] },
+    });
+    render(<EvalRuns />);
+
+    const row = (await screen.findByRole("button", { name: /^Run 4 / })).closest("li")!;
+    expect(within(row).getByText(/Challenger: Groq gpt-oss-120b \(free\) for Rating Matches/)).toBeTruthy();
+    const cells = (await screen.findByText("scoring-thin-posting")).closest("tr")!;
+    expect(within(cells).getByText(/Rating Matches: Groq gpt-oss-120b \(free\)/)).toBeTruthy();
+  });
+
   it("says when there are no runs yet", async () => {
     serve({ "/api/eval-runs": [] });
     render(<EvalRuns />);

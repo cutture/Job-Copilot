@@ -273,7 +273,7 @@ def send_trace(settings: TraceSettings, event: dict[str, Any]) -> None:
     ).raise_for_status()
 
 
-def _cost(rule: ModelRule, input_tokens: int, output_tokens: int) -> Decimal:
+def price_of(rule: ModelRule, input_tokens: int, output_tokens: int) -> Decimal:
     return PER_TOKEN * (
         input_tokens * rule.input_usd_per_million + output_tokens * rule.output_usd_per_million
     )
@@ -311,7 +311,7 @@ def _check_cap(
     user_id: UUID, rule: ModelRule, messages: list[dict[str, str]], max_output_tokens: int
 ) -> None:
     chars = sum(len(message["content"]) for message in messages)
-    estimate = _cost(rule, chars // CHARS_PER_TOKEN_ESTIMATE + 1, max_output_tokens)
+    estimate = price_of(rule, chars // CHARS_PER_TOKEN_ESTIMATE + 1, max_output_tokens)
     # ponytail: check then call, so parallel workers could overshoot slightly; reserve spend
     # in a transaction if more than one worker runs paid calls for a user.
     with connect() as conn:
@@ -364,7 +364,7 @@ def complete(
             f"{model} failed: {failure}", out_of_credit, rate_limited=failure == "RateLimitError"
         )
 
-    cost = _cost(rule, answer.input_tokens, answer.output_tokens)
+    cost = price_of(rule, answer.input_tokens, answer.output_tokens)
     settings = trace_settings()
     # A failed send may still have been delivered, so the ID is kept for later deletion.
     trace_id = uuid4().hex if settings else None

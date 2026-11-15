@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { dollars } from "./labels";
+import { Recommendations } from "./Recommendations";
+
+const STEPS: Record<string, string> = {
+  filter: "Filter",
+  evidence: "Reading the resume",
+  rating: "Rating Matches",
+  pack: "Writing Application Packs",
+  verification: "Verification",
+};
 
 type EvalRunSummary = {
   id: number;
@@ -13,6 +22,9 @@ type EvalRunSummary = {
   hard_failures: number;
   // Results of cases whose labels the owner hasn't checked yet.
   unchecked: number;
+  // The step and model a Challenger run tried; absent for the person's own models.
+  challenger_step?: string | null;
+  challenger_name?: string | null;
 };
 type EvalCaseResult = {
   case_id: string;
@@ -23,6 +35,8 @@ type EvalCaseResult = {
   reason: string;
   // Where to look first to fix a failure.
   fix_area: string | null;
+  // The model each step used, by name.
+  models?: Record<string, string> | null;
 };
 type TrackedScore = {
   name: string;
@@ -85,6 +99,7 @@ export function EvalRuns() {
   return (
     <section>
       <h2>Eval Runs</h2>
+      <Recommendations />
       <p style={{ fontSize: 13 }}>
         Every Eval Case runs once a day on invented data. Results of cases whose labels you haven't checked aren't
         trusted yet, and don't turn on the warning.
@@ -95,6 +110,11 @@ export function EvalRuns() {
             <button aria-pressed={run?.id === summary.id} onClick={() => open(summary.id)}>
               Run {summary.id} · {new Date(summary.started_at).toLocaleString()}
             </button>{" "}
+            {summary.challenger_name && summary.challenger_step && (
+              <em>
+                Challenger: {summary.challenger_name} for {STEPS[summary.challenger_step] ?? summary.challenger_step} ·{" "}
+              </em>
+            )}
             {summary.finished_at === null && <>Running · </>}
             {summary.passed} passed, {summary.failed} failed, {summary.did_not_run} did not run
             {summary.hard_failures > 0 && <strong style={{ color: "#8a1c12" }}> · {summary.hard_failures} Hard Failures</strong>}
@@ -143,7 +163,7 @@ export function EvalRuns() {
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
               <thead>
                 <tr>
-                  {["Case", "Area", "Result", "Labels", "Reason", "Look first at"].map((heading) => (
+                  {["Case", "Area", "Result", "Labels", "Reason", "Look first at", "Models"].map((heading) => (
                     <th key={heading} style={cell}>
                       {heading}
                     </th>
@@ -159,6 +179,11 @@ export function EvalRuns() {
                     <td style={cell}>{result.labels_checked ? "Checked" : "Labels not checked"}</td>
                     <td style={cell}>{result.reason}</td>
                     <td style={cell}>{result.fix_area ?? ""}</td>
+                    <td style={cell}>
+                      {Object.entries(result.models ?? {})
+                        .map(([step, model]) => `${STEPS[step] ?? step}: ${model}`)
+                        .join("; ")}
+                    </td>
                   </tr>
                 ))}
               </tbody>

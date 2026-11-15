@@ -146,6 +146,13 @@ def queue_daily_run(owner: UUID, now: datetime, cases_file: Path = CASES_FILE) -
         _queue_cases(conn, owner, start_run(conn, owner)["id"], case_ids)
 
 
+def queue_run_now(owner: UUID, cases_file: Path = CASES_FILE) -> None:
+    """Start an Eval Run on the person's models now, as when a step's model changes."""
+    case_ids = [case["id"] for case in load_cases(cases_file)["cases"]]
+    with connect() as conn:
+        _queue_cases(conn, owner, start_run(conn, owner)["id"], case_ids)
+
+
 def queue_challenger_runs(owner: UUID, now: datetime, cases_file: Path = CASES_FILE) -> None:
     """Start each free Challenger's weekly run, on the cases that use its step.
 
@@ -318,9 +325,6 @@ def get_eval_run(run_id: int, user_id: UserId) -> EvalRun:
                FROM eval_results WHERE run_id = %s AND user_id = %s ORDER BY id""",
             (run_id, user_id),
         ).fetchall()
-    counted = [
-        {**r, "scores": CaseScores.model_validate(r["scores"])} for r in results if r["scores"]
-    ]
     return EvalRun(
         **_named(row),
         results=[
@@ -333,8 +337,25 @@ def get_eval_run(run_id: int, user_id: UserId) -> EvalRun:
             )
             for r in results
         ],
-        tracked_scores=scores_for(counted),
+        tracked_scores=_scores_of(results),
     )
+
+
+def _scores_of(results: list[Any]) -> list[TrackedScore]:
+    counted = [
+        {**r, "scores": CaseScores.model_validate(r["scores"])} for r in results if r["scores"]
+    ]
+    return scores_for(counted)
+
+
+def run_tracked_scores(conn: Any, owner: UUID, run_id: int) -> list[TrackedScore]:
+    """One run's Tracked Scores."""
+    results = conn.execute(
+        """SELECT labels_checked, scores, scores_checked FROM eval_results
+           WHERE run_id = %s AND user_id = %s""",
+        (run_id, owner),
+    ).fetchall()
+    return _scores_of(results)
 
 
 def eval_status(conn: Any, user_id: UUID) -> EvalStatus:

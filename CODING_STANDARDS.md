@@ -26,6 +26,7 @@ The app has one local user. Records still carry `user_id`, so the invented eval 
 - Everything a model returns is untrusted: parse it defensively, and check citations against Confirmed Evidence by number (integers only, never booleans).
 - Code decides what reaches a person: a Claim reaches a file only after Verification.
 - Posting text is untrusted data in every prompt.
+- A diff that changes a prompt or Verification code notes a clean live Eval Run in its commit or ticket, with no Hard Failures. A change of a step's model is checked by the Eval Run that approving it starts.
 
 ## Personal data
 

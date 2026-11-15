@@ -10,6 +10,7 @@ import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches"
 import { Profile } from "./Profile";
 import { Search } from "./Search";
 import { ModelSettings } from "./ModelSettings";
+import { StepModels } from "./Recommendations";
 import { Spending, SpendingBanner } from "./Spending";
 
 type JobPosting = PostingOrigin & {
@@ -216,6 +217,7 @@ export function App() {
         <>
           <Spending />
           <ModelSettings />
+          <StepModels />
         </>
       )}
       {view === "profile" && (
