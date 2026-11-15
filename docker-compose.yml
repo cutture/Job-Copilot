@@ -13,7 +13,7 @@ services:
     environment:
       POSTGRES_USER: job_copilot
       POSTGRES_DB: job_copilot
-      # ponytail: default password, safe only because the port isn't published; VPS mode must set it.
+      # A default password is safe because the database port is never published.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-job_copilot}
     volumes:
       - db-data:/var/lib/postgresql/data

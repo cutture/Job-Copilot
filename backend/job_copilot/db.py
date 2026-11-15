@@ -16,7 +16,7 @@ def connect() -> psycopg.Connection[DictRow]:
 
 
 def current_user_id() -> UUID:
-    # ponytail: local mode has one seeded user; owner login arrives with VPS mode.
+    # The app runs on one computer for one person, so there is no login.
     return SEEDED_USER_ID
 
 

@@ -1,6 +1,6 @@
 # Job-Copilot
 
-A self-hosted job-search assistant. A person reviews everything and submits every application themselves.
+A job-search assistant for one person, run on their own computer. A person reviews everything and submits every application themselves.
 
 ## Run it
 
@@ -10,7 +10,7 @@ Copy `.env.example` to `.env` and add your keys, then:
 docker compose up --build
 ```
 
-Then open http://127.0.0.1:8765, or set `WEB_PORT` to use another port. Local mode has no login and is reachable only from your own machine.
+Then open http://127.0.0.1:8765, or set `WEB_PORT` to use another port. It has no login, because it's reachable only from your own computer. It isn't built to be hosted anywhere else.
 
 ## Develop
 

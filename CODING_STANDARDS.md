@@ -8,11 +8,13 @@ The reviewer applies every rule below to each diff. Tooling already enforces for
 - A term's _Avoid_ words stay out of identifiers and user-facing strings: "Source", not "board"; "Claim", not "statement"; "Job Posting", not "job". "Job" belongs only to queued work in the `jobs` table.
 - A new term gets its `CONTEXT.md` entry in the same change, on a `docs/` branch.
 
-## Tenancy
+## Ownership
+
+The app has one local user. Records still carry `user_id`, so the invented eval person's data never mixes with the person's.
 
 - Every query filters on `user_id`, and so does every join and subquery between a person's tables (`a.user_id = p.user_id`), even when an ownership check ran first.
 - A new table with a `user_id` column joins the Delete everything table lists. A test fails until it does.
-- Eval Runs run as an invented eval person who belongs to the owner. The owner's Monthly cap and spending include that person's spending, through `gateway.spenders`, and no other user's do.
+- Eval Runs run as the invented eval person. The owner's Monthly cap and spending include that person's spending, through `gateway.spenders`.
 
 ## Shortcuts
 
