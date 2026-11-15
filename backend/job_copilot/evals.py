@@ -232,43 +232,24 @@ def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool
 
 
 def _record(owner: UUID, run_id: int, case: dict[str, Any], profile: dict[str, Any]) -> None:
-    status, hard, reason, fix_area = _result(case, profile)
-    with connect() as conn:
-        conn.execute(
-            """INSERT INTO eval_results (user_id, run_id, case_id, area, status,
-                                        hard_failure, labels_checked, reason, fix_area)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (
-                owner,
-                run_id,
-                case["id"],
-                case["area"],
-                status,
-                hard,
-                case["labels_checked"],
-                reason,
-                fix_area,
-            ),
-        )
+    eval_runs.record_result(owner, run_id, case, *_result(case, profile))
 
 
 def run_queued_case(
     owner: UUID, run_id: int, case_id: str, cases_file: Path = eval_runs.CASES_FILE
 ) -> None:
     """Run one queued case of a run, and finish the run after its last case."""
-    loaded = json.loads(cases_file.read_text(encoding="utf-8"))
-    try:
-        # A case removed from the file since the run was queued is skipped.
-        for case in loaded["cases"]:
-            if case["id"] == case_id:
-                _record(owner, run_id, case, loaded["profile"])
-    finally:
-        eval_runs.finish_runs(owner, run_id)
+    loaded = eval_runs.load_cases(cases_file)
+    # A case removed from the file since the run was queued is skipped.
+    for case in loaded["cases"]:
+        if case["id"] == case_id:
+            _record(owner, run_id, case, loaded["profile"])
+    eval_runs.finish_runs(owner, run_id)
 
 
 def run(owner: UUID, cases_file: Path = eval_runs.CASES_FILE) -> int:
     """Run every case now, store the results, and return the Eval Run's ID."""
-    loaded = json.loads(cases_file.read_text(encoding="utf-8"))
+    loaded = eval_runs.load_cases(cases_file)
     with connect() as conn:
         run_id = int(eval_runs.start_run(conn, owner)["id"])
     try:

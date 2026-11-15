@@ -21,8 +21,16 @@ from job_copilot.db import EVAL_USER_ID, UserId, connect
 router = APIRouter()
 
 CASES_FILE = Path(__file__).parent.parent / "evals" / "cases.json"
-# One queued job per Eval Case. The worker takes every other job first.
-EVAL_CASE = "eval_case"
+# The kind of queued job that runs one Eval Case. The worker takes every other job first.
+EVAL_CASE_JOB = "eval_case"
+WORKER_STOPPED = "The worker stopped during this case"
+NOT_RECORDED = "The worker couldn't record this case"
+FIX_WORKER = "The worker: its log names the error"
+
+
+def load_cases(cases_file: Path = CASES_FILE) -> dict[str, Any]:
+    loaded: dict[str, Any] = json.loads(cases_file.read_text(encoding="utf-8"))
+    return loaded
 
 
 def start_run(conn: Any, owner: UUID) -> Any:
@@ -34,9 +42,42 @@ def start_run(conn: Any, owner: UUID) -> Any:
     ).fetchone()
 
 
+def record_result(
+    owner: UUID,
+    run_id: int,
+    case: dict[str, Any],
+    status: str,
+    hard_failure: bool,
+    reason: str,
+    fix_area: str | None,
+) -> None:
+    """Store one case's result, unless the run already has one for it."""
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO eval_results (user_id, run_id, case_id, area, status,
+                                        hard_failure, labels_checked, reason, fix_area)
+               SELECT %(owner)s, %(run_id)s, %(case_id)s, %(area)s, %(status)s,
+                      %(hard)s, %(checked)s, %(reason)s, %(fix_area)s
+               WHERE NOT EXISTS (SELECT 1 FROM eval_results
+                                 WHERE user_id = %(owner)s AND run_id = %(run_id)s
+                                   AND case_id = %(case_id)s)""",
+            {
+                "owner": owner,
+                "run_id": run_id,
+                "case_id": case["id"],
+                "area": case["area"],
+                "status": status,
+                "hard": hard_failure,
+                "checked": case["labels_checked"],
+                "reason": reason,
+                "fix_area": fix_area,
+            },
+        )
+
+
 def queue_daily_run(owner: UUID, now: datetime, cases_file: Path = CASES_FILE) -> None:
     """Start today's Eval Run as one job per case, unless a run already started today."""
-    case_ids = [case["id"] for case in json.loads(cases_file.read_text(encoding="utf-8"))["cases"]]
+    case_ids = [case["id"] for case in load_cases(cases_file)["cases"]]
     with connect() as conn:
         # One run a day, even across restarts: the run's row exists from the moment it's queued.
         conn.execute("SELECT pg_advisory_xact_lock(hashtext('daily eval run'))")
@@ -54,18 +95,46 @@ def queue_daily_run(owner: UUID, now: datetime, cases_file: Path = CASES_FILE) -
             cursor.executemany(
                 "INSERT INTO jobs (user_id, kind, payload) VALUES (%s, %s, %s)",
                 [
-                    (owner, EVAL_CASE, json.dumps({"run_id": run["id"], "case_id": case_id}))
+                    (owner, EVAL_CASE_JOB, json.dumps({"run_id": run["id"], "case_id": case_id}))
                     for case_id in case_ids
                 ],
             )
 
 
-def finish_runs(owner: UUID, run_id: int | None = None) -> None:
-    """Finish the owner's open runs that have no case left queued, or only the one named.
+def case_not_recorded(owner: UUID, run_id: int, case_id: str) -> None:
+    """A case job that failed outside its case still shows in its run, as failed."""
+    try:
+        for case in load_cases()["cases"]:
+            if case["id"] == case_id:
+                record_result(owner, run_id, case, "failed", False, NOT_RECORDED, FIX_WORKER)
+    finally:
+        finish_runs(owner, run_id)
 
-    Unnamed, it's for when the worker starts: an open run started by hand, from the command
-    line, has no queued cases either, and would be finished early while it runs.
+
+def finish_interrupted_runs(owner: UUID, cases_file: Path = CASES_FILE) -> None:
+    """When the worker starts: finish runs a crash left open, each missing case as not run.
+
+    ponytail: a run started by hand, from the command line, is open with no queued cases too,
+    so a worker restart while it runs finishes it early; mark runs started by hand if that bites.
     """
+    with connect() as conn:
+        open_runs = conn.execute(
+            """SELECT r.id FROM eval_runs r
+               WHERE r.user_id = %s AND r.finished_at IS NULL
+                 AND NOT EXISTS (SELECT 1 FROM jobs j
+                                 WHERE j.user_id = r.user_id AND j.kind = %s
+                                   AND (j.payload ->> 'run_id')::bigint = r.id)""",
+            (owner, EVAL_CASE_JOB),
+        ).fetchall()
+    cases = load_cases(cases_file)["cases"]
+    for run in open_runs:
+        for case in cases:
+            record_result(owner, run["id"], case, "did_not_run", False, WORKER_STOPPED, None)
+        finish_runs(owner, run["id"])
+
+
+def finish_runs(owner: UUID, run_id: int) -> None:
+    """Finish the run once no case of it is left queued."""
     with connect() as conn:
         conn.execute(
             # ponytail: a run's cost is all eval spending since it started, so two runs at
@@ -73,12 +142,11 @@ def finish_runs(owner: UUID, run_id: int | None = None) -> None:
             """UPDATE eval_runs r SET finished_at = now(),
                    cost_usd = (SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
                                WHERE user_id = %(eval_user)s AND created_at >= r.started_at)
-               WHERE r.user_id = %(owner)s AND r.finished_at IS NULL
-                 AND (%(run_id)s::bigint IS NULL OR r.id = %(run_id)s)
+               WHERE r.user_id = %(owner)s AND r.id = %(run_id)s AND r.finished_at IS NULL
                  AND NOT EXISTS (SELECT 1 FROM jobs j
                                  WHERE j.user_id = r.user_id AND j.kind = %(kind)s
                                    AND (j.payload ->> 'run_id')::bigint = r.id)""",
-            {"eval_user": EVAL_USER_ID, "owner": owner, "run_id": run_id, "kind": EVAL_CASE},
+            {"eval_user": EVAL_USER_ID, "owner": owner, "run_id": run_id, "kind": EVAL_CASE_JOB},
         )
 
 

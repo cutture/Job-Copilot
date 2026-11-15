@@ -102,8 +102,7 @@ def _run_eval_case(user_id: UUID, payload: dict[str, Any]) -> None:
 
 
 def _eval_case_failed(user_id: UUID, payload: dict[str, Any]) -> None:
-    """The case's result stays missing from its run; the run still finishes after its last case."""
-    eval_runs.finish_runs(user_id, payload["run_id"])
+    eval_runs.case_not_recorded(user_id, payload["run_id"], payload["case_id"])
 
 
 def schedule_daily_evals(now: datetime) -> None:
@@ -114,7 +113,7 @@ def schedule_daily_evals(now: datetime) -> None:
 
 def finish_interrupted_evals() -> None:
     """Finish runs a crash left open, so what they recorded shows and counts."""
-    eval_runs.finish_runs(current_user_id())
+    eval_runs.finish_interrupted_runs(current_user_id())
 
 
 # Each kind of job, and what to record if it fails, so one failure never blocks the queue.
@@ -124,7 +123,7 @@ HANDLERS: dict[str, tuple[Handler, Handler]] = {
     "rate_match": (rating.rate_match, rating.mark_not_rated),
     "search": (search.run_search, search.finish_search),
     "generate_pack": (applications.generate_pack, applications.pack_failed),
-    eval_runs.EVAL_CASE: (_run_eval_case, _eval_case_failed),
+    eval_runs.EVAL_CASE_JOB: (_run_eval_case, _eval_case_failed),
 }
 
 
@@ -151,7 +150,7 @@ def run_once() -> bool:
                    SELECT id FROM jobs ORDER BY kind = %s, id FOR UPDATE SKIP LOCKED LIMIT 1
                ) RETURNING user_id, kind, payload""",
             # Eval Cases wait behind everything else, so the person's own work goes first.
-            (eval_runs.EVAL_CASE,),
+            (eval_runs.EVAL_CASE_JOB,),
         ).fetchone()
     if job is None:
         return False

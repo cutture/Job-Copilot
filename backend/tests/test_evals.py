@@ -17,7 +17,7 @@ from tests.test_filter import facts
 from tests.test_rating import answer, requirement
 
 OWNER = SEEDED_USER_ID
-LOADED = json.loads(eval_runs.CASES_FILE.read_text(encoding="utf-8"))
+LOADED = eval_runs.load_cases()
 CASES = {case["id"]: case for case in LOADED["cases"]}
 
 

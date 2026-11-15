@@ -3,12 +3,15 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import psycopg
+import pytest
 from fastapi.testclient import TestClient
 
-from job_copilot import evals, worker
+from job_copilot import eval_runs, evals, worker
 from job_copilot.api import app
+from job_copilot.db import EVAL_USER_ID
 from job_copilot.filter import FILTER_MODEL
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_application_pack import apply, rated_match, run_worker
@@ -30,15 +33,34 @@ def filter_run(provider: FakeProvider, tmp_path: Path, passes: bool, checked: bo
     return evals.run(OWNER, cases_file(tmp_path, "filter-remote-pay-fits", unchecked=unchecked))
 
 
-def counts() -> tuple[int, int]:
+class Counts(NamedTuple):
+    runs: int
+    case_jobs: int
+
+
+def counts() -> Counts:
     """Eval Runs started, and Eval Case jobs still queued."""
     with psycopg.connect(TEST_DB) as conn:
         row = conn.execute(
             """SELECT (SELECT count(*) FROM eval_runs),
-                      (SELECT count(*) FROM jobs WHERE kind = 'eval_case')"""
+                      (SELECT count(*) FROM jobs WHERE kind = %s)""",
+            (eval_runs.EVAL_CASE_JOB,),
         ).fetchone()
     assert row is not None
-    return int(row[0]), int(row[1])
+    return Counts(runs=int(row[0]), case_jobs=int(row[1]))
+
+
+def queue_todays_run() -> None:
+    worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
+
+
+def statuses(client: TestClient) -> list[tuple[str, str]]:
+    [run] = client.get("/api/eval-runs").json()
+    assert run["finished_at"] is not None
+    return [
+        (r["status"], r["reason"])
+        for r in client.get(f"/api/eval-runs/{run['id']}").json()["results"]
+    ]
 
 
 def test_the_set_has_4_filter_8_scoring_8_pack_and_4_injection_cases() -> None:
@@ -72,7 +94,7 @@ def test_no_second_run_is_queued_on_a_day_that_already_had_one(
 ) -> None:
     filter_run(provider, tmp_path, passes=True)
 
-    worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
+    queue_todays_run()
 
     assert counts() == (1, 0)
 
@@ -80,7 +102,7 @@ def test_no_second_run_is_queued_on_a_day_that_already_had_one(
 def test_the_queued_run_runs_every_case_and_finishes_after_the_last(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
+    queue_todays_run()
 
     worker.run_once()
     [running] = client.get("/api/eval-runs").json()
@@ -99,7 +121,7 @@ def test_a_pack_queued_mid_run_goes_before_the_next_eval_case(
 ) -> None:
     posting_id, ids = rated_match(client, provider)
     write_sections(provider, ids)
-    worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
+    queue_todays_run()
     worker.run_once()
 
     application = apply(client, posting_id)
@@ -110,20 +132,51 @@ def test_a_pack_queued_mid_run_goes_before_the_next_eval_case(
     assert counts() == (1, 23)
 
 
-def test_a_run_left_open_by_a_worker_crash_is_finished_when_the_worker_starts_again(
+def test_a_case_the_worker_was_running_when_it_died_shows_as_not_run(
     client: TestClient, provider: FakeProvider
 ) -> None:
-    worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
-    worker.run_once()
-    # The worker died mid-case: its job was claimed, so no case job remains to finish the run.
+    queue_todays_run()
+    while counts().case_jobs > 1:
+        worker.run_once()
+    # The worker claimed the last case, which deletes its job, and then died.
     with psycopg.connect(TEST_DB) as conn:
-        conn.execute("DELETE FROM jobs WHERE kind = 'eval_case'")
+        conn.execute("DELETE FROM jobs WHERE kind = %s", (eval_runs.EVAL_CASE_JOB,))
 
     worker.finish_interrupted_evals()
 
-    [run] = client.get("/api/eval-runs").json()
-    assert run["finished_at"] is not None
-    assert counts() == (1, 0)
+    results = statuses(client)
+    assert len(results) == 24
+    assert results.count(("did_not_run", "The worker stopped during this case")) == 1
+
+
+def test_a_case_whose_result_cant_be_saved_is_still_recorded_as_failed(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def cant_save(*args: object) -> None:
+        raise psycopg.OperationalError("lost connection")
+
+    monkeypatch.setattr(evals, "_record", cant_save)
+    queue_todays_run()
+
+    run_worker()
+
+    assert set(statuses(client)) == {("failed", "The worker couldn't record this case")}
+
+
+def test_queued_cases_stop_at_the_eval_cap(client: TestClient, provider: FakeProvider) -> None:
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        conn.execute("UPDATE users SET monthly_cap_usd = 0 WHERE id = %s", (EVAL_USER_ID,))
+    try:
+        queue_todays_run()
+        run_worker()
+    finally:
+        with psycopg.connect(TEST_DB, autocommit=True) as conn:
+            conn.execute("UPDATE users SET monthly_cap_usd = 3 WHERE id = %s", (EVAL_USER_ID,))
+
+    # Filter's free model isn't capped, so only the 19 cases that reach a paid step stop.
+    results = statuses(client)
+    assert len(results) == 24
+    assert results.count(("did_not_run", "Did not run: the eval budget is used up")) == 19
 
 
 def test_a_case_that_crashes_fails_alone_and_the_run_still_finishes(
