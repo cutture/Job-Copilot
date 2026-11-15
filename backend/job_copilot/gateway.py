@@ -510,6 +510,11 @@ def model_status(user_id: UUID) -> ModelStatus:
     )
 
 
+def can_take_personal(user_id: UUID, model: str) -> bool:
+    """Whether this model may receive personal-data work for the person now."""
+    return not _skip(model, DataClass.PERSONAL, model_settings(user_id))
+
+
 def _paid_out_until_tomorrow(user_id: UUID) -> None:
     tomorrow = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
         days=1

@@ -109,6 +109,7 @@ def schedule_daily_evals(now: datetime) -> None:
     """Queue today's Eval Run for the owner, once, after EVAL_HOUR_UTC."""
     if now.hour >= EVAL_HOUR_UTC:
         eval_runs.queue_daily_run(current_user_id(), now)
+        eval_runs.queue_challenger_runs(current_user_id(), now)
 
 
 # The day clean-up last ran, so it runs once a day while the app is running.

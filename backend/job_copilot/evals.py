@@ -16,6 +16,8 @@ import logging
 import os
 import re
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
@@ -323,7 +325,19 @@ def _result(case: dict[str, Any], profile: dict[str, Any]) -> CaseResult:
 
 
 def _record(owner: UUID, run_id: int, case: dict[str, Any], profile: dict[str, Any]) -> None:
-    eval_runs.record_result(owner, run_id, case, *_result(case, profile))
+    with gateway.recording_models() as used:
+        result = _result(case, profile)
+    eval_runs.record_result(owner, run_id, case, *result, models=used)
+
+
+@contextmanager
+def _as(challenger: eval_runs.Challenger | None) -> Iterator[None]:
+    """Run as a Challenger run, or on the person's own models."""
+    if challenger is None:
+        yield
+        return
+    with gateway.challenging(*challenger):
+        yield
 
 
 def run_queued_case(
@@ -332,20 +346,28 @@ def run_queued_case(
     """Run one queued case of a run, and finish the run after its last case."""
     loaded = eval_runs.load_cases(cases_file)
     # A case removed from the file since the run was queued is skipped.
-    for case in loaded["cases"]:
-        if case["id"] == case_id:
-            _record(owner, run_id, case, loaded["profile"])
+    with _as(eval_runs.challenger_of(owner, run_id)):
+        for case in loaded["cases"]:
+            if case["id"] == case_id:
+                _record(owner, run_id, case, loaded["profile"])
     eval_runs.finish_runs(owner, run_id)
 
 
-def run(owner: UUID, cases_file: Path = eval_runs.CASES_FILE) -> int:
-    """Run every case now, store the results, and return the Eval Run's ID."""
+def run(
+    owner: UUID,
+    cases_file: Path = eval_runs.CASES_FILE,
+    challenger: eval_runs.Challenger | None = None,
+) -> int:
+    """Run every case now, or a Challenger's on the cases that use its step, store the
+    results, and return the Eval Run's ID."""
     loaded = eval_runs.load_cases(cases_file)
+    cases = [c for c in loaded["cases"] if not challenger or eval_runs.uses_step(c, challenger[0])]
     with connect() as conn:
-        run_id = int(eval_runs.start_run(conn, owner)["id"])
+        run_id = int(eval_runs.start_run(conn, owner, challenger)["id"])
     try:
-        for case in loaded["cases"]:
-            _record(owner, run_id, case, loaded["profile"])
+        with _as(challenger):
+            for case in cases:
+                _record(owner, run_id, case, loaded["profile"])
     finally:
         # Even a run that stopped early is finished, so what it recorded shows and counts.
         eval_runs.finish_runs(owner, run_id)
@@ -384,9 +406,18 @@ def table(owner: UUID, run_id: int | None = None) -> str:
 
 
 def main() -> None:
+    """`show` prints the latest run; `challenger <step> <model>` runs a Challenger, such as
+    `challenger rating anthropic/claude-sonnet-5-5`; nothing else runs every case now."""
     owner = current_user_id()
-    if sys.argv[1:] != ["show"]:
-        run(owner)
+    match sys.argv[1:]:
+        case ["show"]:
+            pass
+        case ["challenger", step, model] if step in ("rating", "pack") and model in gateway.MODELS:
+            run(owner, challenger=(step, model))
+        case []:
+            run(owner)
+        case _:
+            sys.exit(main.__doc__)
     print(table(owner))
 
 

@@ -16,6 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from job_copilot import gateway
 from job_copilot.db import EVAL_USER_ID, UserId, connect
 from job_copilot.tracked_scores import CaseScores, TrackedScore, scores_for
 
@@ -34,13 +35,55 @@ def load_cases(cases_file: Path = CASES_FILE) -> dict[str, Any]:
     return loaded
 
 
-def start_run(conn: Any, owner: UUID) -> Any:
+# Free Challengers tried weekly on each step; a paid one runs only when the owner starts it.
+CHALLENGERS = (("rating", gateway.GROQ_PERSONAL), ("pack", gateway.GROQ_PERSONAL))
+CHALLENGER_EVERY_DAYS = 7
+# Labels on a case that writes a Pack.
+PACK_LABELS = {"not_in_resume", "not_in_pack", "in_pack"}
+Challenger = tuple[str, str]
+
+
+def uses_step(case: dict[str, Any], step: str) -> bool:
+    """Whether a case reaches this model step: Filter-only cases never rate, and only cases
+    labelled with what a Pack may hold write one."""
+    if step == "rating":
+        return "passes" not in case["expect"]
+    return bool(PACK_LABELS & case["expect"].keys())
+
+
+def start_run(conn: Any, owner: UUID, challenger: Challenger | None = None) -> Any:
     """A new Eval Run's row, with its id and started_at."""
+    step, model = challenger or (None, None)
     return conn.execute(
-        """INSERT INTO eval_runs (user_id, deepeval_version) VALUES (%s, %s)
-           RETURNING id, started_at""",
-        (owner, version("deepeval")),
+        """INSERT INTO eval_runs (user_id, deepeval_version, challenger_step, challenger_model)
+           VALUES (%s, %s, %s, %s) RETURNING id, started_at""",
+        (owner, version("deepeval"), step, model),
     ).fetchone()
+
+
+def challenger_of(owner: UUID, run_id: int) -> Challenger | None:
+    with connect() as conn:
+        row: Any = conn.execute(
+            """SELECT challenger_step, challenger_model FROM eval_runs
+               WHERE id = %s AND user_id = %s""",
+            (run_id, owner),
+        ).fetchone()
+    return (
+        (row["challenger_step"], row["challenger_model"])
+        if row and row["challenger_step"]
+        else None
+    )
+
+
+def _queue_cases(conn: Any, owner: UUID, run_id: int, case_ids: list[str]) -> None:
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            "INSERT INTO jobs (user_id, kind, payload) VALUES (%s, %s, %s)",
+            [
+                (owner, EVAL_CASE_JOB, json.dumps({"run_id": run_id, "case_id": case_id}))
+                for case_id in case_ids
+            ],
+        )
 
 
 def record_result(
@@ -52,16 +95,17 @@ def record_result(
     reason: str,
     fix_area: str | None,
     scores: CaseScores | None = None,
+    models: dict[str, str] | None = None,
 ) -> None:
     """Store one case's result, unless the run already has one for it."""
     with connect() as conn:
         conn.execute(
             """INSERT INTO eval_results (user_id, run_id, case_id, area, status,
                                         hard_failure, labels_checked, reason, fix_area,
-                                        scores, scores_checked)
+                                        scores, scores_checked, models)
                SELECT %(owner)s, %(run_id)s, %(case_id)s, %(area)s, %(status)s,
                       %(hard)s, %(checked)s, %(reason)s, %(fix_area)s,
-                      %(scores)s, %(scores_checked)s
+                      %(scores)s, %(scores_checked)s, %(models)s
                WHERE NOT EXISTS (SELECT 1 FROM eval_results
                                  WHERE user_id = %(owner)s AND run_id = %(run_id)s
                                    AND case_id = %(case_id)s)""",
@@ -78,6 +122,7 @@ def record_result(
                 "scores": scores and scores.model_dump_json(),
                 # Only labels added for Tracked Scores wait for the owner's check.
                 "scores_checked": case.get("scores_checked", True),
+                "models": json.dumps(models) if models else None,
             },
         )
 
@@ -91,21 +136,40 @@ def queue_daily_run(owner: UUID, now: datetime, cases_file: Path = CASES_FILE) -
         started_today = conn.execute(
             # The day starts at midnight UTC, whatever the database's time zone.
             """SELECT 1 FROM eval_runs WHERE user_id = %(owner)s
+               AND challenger_model IS NULL
                AND started_at >= date_trunc('day', %(now)s::timestamptz AT TIME ZONE 'UTC')
                                  AT TIME ZONE 'UTC'""",
             {"owner": owner, "now": now},
         ).fetchone()
         if started_today:
             return
-        run = start_run(conn, owner)
-        with conn.cursor() as cursor:
-            cursor.executemany(
-                "INSERT INTO jobs (user_id, kind, payload) VALUES (%s, %s, %s)",
-                [
-                    (owner, EVAL_CASE_JOB, json.dumps({"run_id": run["id"], "case_id": case_id}))
-                    for case_id in case_ids
-                ],
-            )
+        _queue_cases(conn, owner, start_run(conn, owner)["id"], case_ids)
+
+
+def queue_challenger_runs(owner: UUID, now: datetime, cases_file: Path = CASES_FILE) -> None:
+    """Start each free Challenger's weekly run, on the cases that use its step.
+
+    A Challenger already approved for its step, or one that may not take the step's data yet,
+    such as Groq before Zero Data Retention is confirmed, isn't run.
+    """
+    cases = load_cases(cases_file)["cases"]
+    for step, model in CHALLENGERS:
+        if gateway.approved_model(owner, step) == model or not gateway.can_take_personal(
+            owner, model
+        ):
+            continue
+        with connect() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext('challenger run'))")
+            recent = conn.execute(
+                """SELECT 1 FROM eval_runs WHERE user_id = %s
+                   AND challenger_step = %s AND challenger_model = %s
+                   AND started_at > %s::timestamptz - %s * interval '1 day'""",
+                (owner, step, model, now, CHALLENGER_EVERY_DAYS),
+            ).fetchone()
+            if recent:
+                continue
+            run = start_run(conn, owner, (step, model))
+            _queue_cases(conn, owner, run["id"], [c["id"] for c in cases if uses_step(c, step)])
 
 
 def case_not_recorded(owner: UUID, run_id: int, case_id: str) -> None:
@@ -165,6 +229,8 @@ RUN_VERDICTS = """
     FROM eval_runs r
     LEFT JOIN eval_results e ON e.run_id = r.id AND e.user_id = r.user_id
     WHERE r.user_id = %(user_id)s AND r.finished_at IS NOT NULL
+      -- A Challenger's results never turn on the banner or Extra care.
+      AND r.challenger_model IS NULL
     GROUP BY r.id, r.finished_at
 """
 
@@ -180,6 +246,9 @@ class EvalRunSummary(BaseModel):
     hard_failures: int
     # Results of cases whose labels the owner hasn't checked yet.
     unchecked: int
+    # The step and model a Challenger run tried; None for the person's own models.
+    challenger_step: str | None = None
+    challenger_name: str | None = None
 
 
 class EvalCaseResult(BaseModel):
@@ -191,6 +260,8 @@ class EvalCaseResult(BaseModel):
     reason: str
     # Where to look first to fix a failure.
     fix_area: str | None
+    # The model each step used, by name.
+    models: dict[str, str] | None = None
 
 
 class EvalRun(EvalRunSummary):
@@ -208,6 +279,7 @@ class EvalStatus(BaseModel):
 
 SUMMARY = """
     SELECT r.id, r.started_at, r.finished_at, r.cost_usd, r.deepeval_version,
+           r.challenger_step, r.challenger_model,
            count(*) FILTER (WHERE e.status = 'passed') AS passed,
            count(*) FILTER (WHERE e.status = 'failed') AS failed,
            count(*) FILTER (WHERE e.status = 'did_not_run') AS did_not_run,
@@ -225,7 +297,13 @@ SUMMARY = """
 def list_eval_runs(user_id: UserId) -> list[EvalRunSummary]:
     with connect() as conn:
         rows = conn.execute(SUMMARY + " LIMIT 60", {"user_id": user_id, "run_id": None}).fetchall()
-    return [EvalRunSummary(**row) for row in rows]
+    return [EvalRunSummary(**_named(row)) for row in rows]
+
+
+def _named(row: Any) -> dict[str, Any]:
+    """A run's row with its Challenger's model named readably."""
+    model = row["challenger_model"]
+    return {**row, "challenger_name": model and gateway.model_name(model)}
 
 
 @router.get("/api/eval-runs/{run_id}")
@@ -236,7 +314,7 @@ def get_eval_run(run_id: int, user_id: UserId) -> EvalRun:
             raise HTTPException(404, "Eval Run not found")
         results = conn.execute(
             """SELECT case_id, area, status, hard_failure, labels_checked, reason, fix_area,
-                      scores, scores_checked
+                      scores, scores_checked, models
                FROM eval_results WHERE run_id = %s AND user_id = %s ORDER BY id""",
             (run_id, user_id),
         ).fetchall()
@@ -244,8 +322,17 @@ def get_eval_run(run_id: int, user_id: UserId) -> EvalRun:
         {**r, "scores": CaseScores.model_validate(r["scores"])} for r in results if r["scores"]
     ]
     return EvalRun(
-        **row,
-        results=[EvalCaseResult(**r) for r in results],
+        **_named(row),
+        results=[
+            EvalCaseResult(
+                **{
+                    **r,
+                    "models": r["models"]
+                    and {step: gateway.model_name(m) for step, m in r["models"].items()},
+                }
+            )
+            for r in results
+        ],
         tracked_scores=scores_for(counted),
     )
 
