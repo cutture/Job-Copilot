@@ -42,7 +42,7 @@
       "id": "scoring-strong-match",
       "area": "scoring",
       "labels_checked": true,
-      "scores_checked": false,
+      "scores_checked": true,
       "about": "Every must-have is covered by Evidence, so the Band is High.",
       "posting": "AI Engineer at Example Labs, fully remote. You need 3+ years of Python, experience building retrieval-augmented systems, and experience evaluating LLM output. Postgres is a plus. This is a Mid-level role. Apply at careers@example.com.",
       "expect": { "band": "High", "requirements": {"Python": "met", "retrieval-augmented": "met", "evaluating LLM output": "met", "Postgres": "met"} }
@@ -51,7 +51,7 @@
       "id": "scoring-hard-blocker",
       "area": "scoring",
       "labels_checked": true,
-      "scores_checked": false,
+      "scores_checked": true,
       "about": "The posting requires work authorization the Profile says the person lacks, so it is a Hard Blocker and the Band is Low.",
       "posting": "LLM Engineer at Example Corp, remote within Canada. You must be authorised to work in Canada without visa sponsorship. You need 3+ years of Python and experience building retrieval-augmented systems. This is a Mid-level role. Apply at talent@example.com.",
       "expect": { "band": "Low", "hard_blocker": true, "requirements": {"visa sponsorship": "missing", "Python": "met", "retrieval-augmented": "met"} }
@@ -108,7 +108,7 @@
       "id": "scoring-one-must-have-missing",
       "area": "scoring",
       "labels_checked": true,
-      "scores_checked": false,
+      "scores_checked": true,
       "about": "Three must-haves are backed by Evidence and one, Kubernetes, has none, so the Band is Medium.",
       "posting": "AI Engineer at Example Labs, fully remote. You need 3+ years of Python, experience building retrieval-augmented systems, experience evaluating LLM output, and experience running Kubernetes in production. This is a Mid-level role. Apply at careers@example.com.",
       "expect": { "band": "Medium", "requirements": {"Python": "met", "retrieval-augmented": "met", "evaluating LLM output": "met", "Kubernetes": "missing"} }
@@ -117,7 +117,7 @@
       "id": "scoring-two-must-haves-missing",
       "area": "scoring",
       "labels_checked": true,
-      "scores_checked": false,
+      "scores_checked": true,
       "about": "Two must-haves, Rust and Kubernetes, have no Evidence, so the Band is Low.",
       "posting": "Backend Engineer at Example Systems, fully remote. You need 3+ years of Python, 3+ years of Rust, and experience running Kubernetes in production. This is a Mid-level role. Apply at careers@example.com.",
       "expect": { "band": "Low", "requirements": {"Python": "met", "Rust": "missing", "Kubernetes": "missing"} }
@@ -126,7 +126,7 @@
       "id": "scoring-thin-posting",
       "area": "scoring",
       "labels_checked": true,
-      "scores_checked": false,
+      "scores_checked": true,
       "about": "A posting naming only one Requirement has fewer than three clear Requirements, so the Band is Medium.",
       "posting": "Python developer wanted at Example Studio. Fully remote. Apply at hello@example.com.",
       "expect": { "band": "Medium", "requirements": {"Python": "met"} }
@@ -135,7 +135,7 @@
       "id": "scoring-firm-seniority-minimum",
       "area": "scoring",
       "labels_checked": true,
-      "scores_checked": false,
+      "scores_checked": true,
       "about": "The posting firmly requires Staff level and the person is Mid, two levels below, so the Band is Low.",
       "posting": "Staff AI Engineer at Example Labs, fully remote. This role is strictly Staff level or above, with no exceptions. You need 3+ years of Python, experience building retrieval-augmented systems, and experience evaluating LLM output. Apply at careers@example.com.",
       "expect": { "band": "Low", "requirements": {"Python": "met", "retrieval-augmented": "met", "evaluating LLM output": "met"} }
@@ -144,7 +144,7 @@
       "id": "scoring-two-partials",
       "area": "scoring",
       "labels_checked": true,
-      "scores_checked": false,
+      "scores_checked": true,
       "about": "Two must-haves are only partly backed: leading a team (the Evidence shows membership) and Postgres administration (the Evidence shows Postgres use), so the Band is Medium.",
       "posting": "AI Engineer at Example Labs, fully remote. You need 3+ years of Python, experience leading an engineering team, and experience administering Postgres databases in production. This is a Mid-level role. Apply at careers@example.com.",
       "expect": { "band": "Medium", "requirements": {"Python": "met", "leading an engineering team": "partial", "administering Postgres": "partial"} }
@@ -153,7 +153,7 @@
       "id": "scoring-role-offers-arent-requirements",
       "area": "scoring",
       "labels_checked": true,
-      "scores_checked": false,
+      "scores_checked": true,
       "about": "Every must-have is backed; the posting's remote work, salary and health insurance are what the role offers, not Requirements, so the Band is High.",
       "posting": "AI Engineer at Example Labs. Fully remote, with a competitive salary and health insurance. You need 3+ years of Python, experience building retrieval-augmented systems, and experience evaluating LLM output. This is a Mid-level role. Apply at careers@example.com.",
       "expect": { "band": "High", "requirements": {"Python": "met", "retrieval-augmented": "met", "evaluating LLM output": "met"} }

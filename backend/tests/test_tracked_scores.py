@@ -136,7 +136,12 @@ def test_a_run_shows_its_tracked_scores_and_new_labels_wait_for_the_owners_check
         )
     }
 
-    run_id = evals.run(OWNER, cases_file(tmp_path, "scoring-thin-posting"))
+    path = cases_file(tmp_path, "scoring-thin-posting")
+    unchecked = json.loads(path.read_text(encoding="utf-8"))
+    unchecked["cases"][0]["scores_checked"] = False
+    path.write_text(json.dumps(unchecked), encoding="utf-8")
+
+    run_id = evals.run(OWNER, path)
 
     scores = {s["name"]: s for s in client.get(f"/api/eval-runs/{run_id}").json()["tracked_scores"]}
     assert scores["Same Band after reordering Requirements"]["value"] == 100
