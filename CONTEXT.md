@@ -233,8 +233,16 @@ A model evaluated against the one currently used for a step, which replaces it o
 _Avoid_: Candidate, alternative
 
 **Fallback List**:
-The ordered models a step may use when its usual model is unavailable, limited by what data the step handles.
+The ordered models a step tries, using the first that can take the call: the paid model when there's a key with credit and the cap isn't reached, then Free models. Limited by what data the step handles.
 _Avoid_: Backup chain, failover
+
+**Free models**:
+Models with no charge that may receive personal data because their terms rule out training on it: Groq once Zero Data Retention is confirmed, and Cloudflare Workers AI. Free models whose terms allow training get posting text and invented eval data only.
+_Avoid_: Backup models, free mode
+
+**Zero Data Retention**:
+Groq's setting that keeps no copy of requests. The person turns it on in Groq's console and confirms it on Settings before Groq may receive their data.
+_Avoid_: ZDR in anything a person reads
 
 **Retrospective**:
 A written review of eval results, failures, fixes, costs and totals, containing no personal or employer details.
