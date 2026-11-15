@@ -9,7 +9,7 @@ from typing import Any
 import psycopg
 from fastapi.testclient import TestClient
 
-from job_copilot import evals, rating
+from job_copilot import eval_runs, evals, rating
 from job_copilot.db import EVAL_USER_ID, SEEDED_USER_ID
 from job_copilot.filter import FILTER_MODEL
 from tests.conftest import TEST_DB, FakeProvider
@@ -17,7 +17,7 @@ from tests.test_filter import facts
 from tests.test_rating import answer, requirement
 
 OWNER = SEEDED_USER_ID
-LOADED = json.loads(evals.CASES_FILE.read_text(encoding="utf-8"))
+LOADED = json.loads(eval_runs.CASES_FILE.read_text(encoding="utf-8"))
 CASES = {case["id"]: case for case in LOADED["cases"]}
 
 

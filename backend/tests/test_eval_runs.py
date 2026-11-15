@@ -11,10 +11,11 @@ from job_copilot import evals, worker
 from job_copilot.api import app
 from job_copilot.filter import FILTER_MODEL
 from tests.conftest import TEST_DB, FakeProvider
+from tests.test_application_pack import apply, rated_match, run_worker
 from tests.test_deletion import as_other_person
 from tests.test_evals import LOADED, OWNER, cases_file
 from tests.test_filter import facts
-from tests.test_my_sections import ready_pack
+from tests.test_my_sections import ready_pack, write_sections
 
 
 def filter_run(provider: FakeProvider, tmp_path: Path, passes: bool, checked: bool = True) -> int:
@@ -29,10 +30,15 @@ def filter_run(provider: FakeProvider, tmp_path: Path, passes: bool, checked: bo
     return evals.run(OWNER, cases_file(tmp_path, "filter-remote-pay-fits", unchecked=unchecked))
 
 
-def queued_eval_runs() -> int:
+def counts() -> tuple[int, int]:
+    """Eval Runs started, and Eval Case jobs still queued."""
     with psycopg.connect(TEST_DB) as conn:
-        row = conn.execute("SELECT count(*) FROM jobs WHERE kind = 'eval_run'").fetchone()
-    return int(row[0]) if row else 0
+        row = conn.execute(
+            """SELECT (SELECT count(*) FROM eval_runs),
+                      (SELECT count(*) FROM jobs WHERE kind = 'eval_case')"""
+        ).fetchone()
+    assert row is not None
+    return int(row[0]), int(row[1])
 
 
 def test_the_set_has_4_filter_8_scoring_8_pack_and_4_injection_cases() -> None:
@@ -47,17 +53,18 @@ def test_the_set_has_4_filter_8_scoring_8_pack_and_4_injection_cases() -> None:
     assert len({case["id"] for case in LOADED["cases"]}) == 24
 
 
-def test_an_eval_run_is_queued_once_a_day_after_its_hour(
+def test_an_eval_run_is_queued_once_a_day_after_its_hour_as_one_job_per_case(
     provider: FakeProvider, tmp_path: Path
 ) -> None:
     morning = datetime(2026, 11, 8, worker.EVAL_HOUR_UTC - 1, tzinfo=UTC)
     later = datetime(2026, 11, 8, worker.EVAL_HOUR_UTC, tzinfo=UTC)
 
     worker.schedule_daily_evals(morning)
-    assert queued_eval_runs() == 0
+    assert counts() == (0, 0)
     worker.schedule_daily_evals(later)
+    # As after a restart: the run is already queued, so nothing more is.
     worker.schedule_daily_evals(later)
-    assert queued_eval_runs() == 1
+    assert counts() == (1, 24)
 
 
 def test_no_second_run_is_queued_on_a_day_that_already_had_one(
@@ -67,19 +74,56 @@ def test_no_second_run_is_queued_on_a_day_that_already_had_one(
 
     worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
 
-    assert queued_eval_runs() == 0
+    assert counts() == (1, 0)
 
 
-def test_the_queued_run_runs_every_case_from_the_worker(provider: FakeProvider) -> None:
+def test_the_queued_run_runs_every_case_and_finishes_after_the_last(
+    client: TestClient, provider: FakeProvider
+) -> None:
     worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
 
     worker.run_once()
+    [running] = client.get("/api/eval-runs").json()
+    assert running["finished_at"] is None
+    assert client.get("/api/evals/status").json()["failing"] is False
 
+    run_worker()
+
+    [run] = client.get("/api/eval-runs").json()
+    assert run["finished_at"] is not None
+    assert run["passed"] + run["failed"] + run["did_not_run"] == 24
+
+
+def test_a_pack_queued_mid_run_goes_before_the_next_eval_case(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting_id, ids = rated_match(client, provider)
+    write_sections(provider, ids)
+    worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
+    worker.run_once()
+
+    application = apply(client, posting_id)
+    worker.run_once()
+
+    pack = client.get(f"/api/applications/{application['id']}").json()["pack"]
+    assert pack["status"] == "ready"
+    assert counts() == (1, 23)
+
+
+def test_a_run_left_open_by_a_worker_crash_is_finished_when_the_worker_starts_again(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
+    worker.run_once()
+    # The worker died mid-case: its job was claimed, so no case job remains to finish the run.
     with psycopg.connect(TEST_DB) as conn:
-        runs = conn.execute("SELECT id, finished_at FROM eval_runs").fetchall()
-        results = conn.execute("SELECT count(*) FROM eval_results").fetchone()
-    assert len(runs) == 1 and runs[0][1] is not None
-    assert results == (24,)
+        conn.execute("DELETE FROM jobs WHERE kind = 'eval_case'")
+
+    worker.finish_interrupted_evals()
+
+    [run] = client.get("/api/eval-runs").json()
+    assert run["finished_at"] is not None
+    assert counts() == (1, 0)
 
 
 def test_a_case_that_crashes_fails_alone_and_the_run_still_finishes(

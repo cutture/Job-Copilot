@@ -1,21 +1,86 @@
-"""The Eval Runs page, and whether evals are failing.
+"""The Eval Runs page, whether evals are failing, and starting and finishing each run.
 
-It only reads stored results, so it doesn't import DeepEval. A run fails when a case whose
+It never runs a case, so it doesn't import DeepEval. A run fails when a case whose
 labels the owner has checked fails; unchecked cases show but aren't trusted yet. A run where
 nothing checked passed or failed, as when the budget is used up, changes nothing.
 """
 
+import json
 from datetime import datetime
 from decimal import Decimal
+from importlib.metadata import version
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from job_copilot.db import UserId, connect
+from job_copilot.db import EVAL_USER_ID, UserId, connect
 
 router = APIRouter()
+
+CASES_FILE = Path(__file__).parent.parent / "evals" / "cases.json"
+# One queued job per Eval Case. The worker takes every other job first.
+EVAL_CASE = "eval_case"
+
+
+def start_run(conn: Any, owner: UUID) -> Any:
+    """A new Eval Run's row, with its id and started_at."""
+    return conn.execute(
+        """INSERT INTO eval_runs (user_id, deepeval_version) VALUES (%s, %s)
+           RETURNING id, started_at""",
+        (owner, version("deepeval")),
+    ).fetchone()
+
+
+def queue_daily_run(owner: UUID, now: datetime, cases_file: Path = CASES_FILE) -> None:
+    """Start today's Eval Run as one job per case, unless a run already started today."""
+    case_ids = [case["id"] for case in json.loads(cases_file.read_text(encoding="utf-8"))["cases"]]
+    with connect() as conn:
+        # One run a day, even across restarts: the run's row exists from the moment it's queued.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext('daily eval run'))")
+        started_today = conn.execute(
+            # The day starts at midnight UTC, whatever the database's time zone.
+            """SELECT 1 FROM eval_runs WHERE user_id = %(owner)s
+               AND started_at >= date_trunc('day', %(now)s::timestamptz AT TIME ZONE 'UTC')
+                                 AT TIME ZONE 'UTC'""",
+            {"owner": owner, "now": now},
+        ).fetchone()
+        if started_today:
+            return
+        run = start_run(conn, owner)
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO jobs (user_id, kind, payload) VALUES (%s, %s, %s)",
+                [
+                    (owner, EVAL_CASE, json.dumps({"run_id": run["id"], "case_id": case_id}))
+                    for case_id in case_ids
+                ],
+            )
+
+
+def finish_runs(owner: UUID, run_id: int | None = None) -> None:
+    """Finish the owner's open runs that have no case left queued, or only the one named.
+
+    Unnamed, it's for when the worker starts: an open run started by hand, from the command
+    line, has no queued cases either, and would be finished early while it runs.
+    """
+    with connect() as conn:
+        conn.execute(
+            # ponytail: a run's cost is all eval spending since it started, so two runs at
+            # once would count each other's; tag model calls with their run if they overlap.
+            """UPDATE eval_runs r SET finished_at = now(),
+                   cost_usd = (SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
+                               WHERE user_id = %(eval_user)s AND created_at >= r.started_at)
+               WHERE r.user_id = %(owner)s AND r.finished_at IS NULL
+                 AND (%(run_id)s::bigint IS NULL OR r.id = %(run_id)s)
+                 AND NOT EXISTS (SELECT 1 FROM jobs j
+                                 WHERE j.user_id = r.user_id AND j.kind = %(kind)s
+                                   AND (j.payload ->> 'run_id')::bigint = r.id)""",
+            {"eval_user": EVAL_USER_ID, "owner": owner, "run_id": run_id, "kind": EVAL_CASE},
+        )
+
 
 # Each finished run's verdict: failing, passing, or neither when nothing checked was judged.
 RUN_VERDICTS = """

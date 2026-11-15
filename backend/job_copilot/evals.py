@@ -1,6 +1,7 @@
 """Eval Runs: invented Eval Cases through the real Filter, rating and Pack steps.
 
-The worker runs every case once a day, after EVAL_HOUR_UTC; the owner can also run them by hand:
+The worker runs every case once a day, after EVAL_HOUR_UTC, each case as its own job behind
+the person's own work. The owner can also run them all at once by hand:
 
     docker compose exec worker python -m job_copilot.evals          # run every case now
     docker compose exec worker python -m job_copilot.evals show     # the latest results
@@ -16,7 +17,6 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 from uuid import UUID
@@ -32,12 +32,11 @@ os.environ.pop("CONFIDENT_API_KEY", None)
 from deepeval.metrics import BaseMetric  # noqa: E402
 from deepeval.test_case import LLMTestCase  # noqa: E402
 
-from job_copilot import applications, bands, filter, gateway, rating  # noqa: E402
+from job_copilot import applications, bands, eval_runs, filter, gateway, rating  # noqa: E402
 from job_copilot.db import EVAL_USER_ID, connect, current_user_id  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-CASES_FILE = Path(__file__).parent.parent / "evals" / "cases.json"
 # Provider trouble that means a case didn't run, as opposed to an answer that failed it.
 DID_NOT_RUN = ("Timeout", "RateLimit")
 Status = Literal["passed", "failed", "did_not_run"]
@@ -232,48 +231,53 @@ def _result(case: dict[str, Any], profile: dict[str, Any]) -> tuple[Status, bool
     return status, metric.hard_failure, str(metric.reason), metric.fix_area
 
 
-def run(owner: UUID, cases_file: Path = CASES_FILE) -> int:
-    """Run every case, store the results, and return the Eval Run's ID."""
+def _record(owner: UUID, run_id: int, case: dict[str, Any], profile: dict[str, Any]) -> None:
+    status, hard, reason, fix_area = _result(case, profile)
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO eval_results (user_id, run_id, case_id, area, status,
+                                        hard_failure, labels_checked, reason, fix_area)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (
+                owner,
+                run_id,
+                case["id"],
+                case["area"],
+                status,
+                hard,
+                case["labels_checked"],
+                reason,
+                fix_area,
+            ),
+        )
+
+
+def run_queued_case(
+    owner: UUID, run_id: int, case_id: str, cases_file: Path = eval_runs.CASES_FILE
+) -> None:
+    """Run one queued case of a run, and finish the run after its last case."""
+    loaded = json.loads(cases_file.read_text(encoding="utf-8"))
+    try:
+        # A case removed from the file since the run was queued is skipped.
+        for case in loaded["cases"]:
+            if case["id"] == case_id:
+                _record(owner, run_id, case, loaded["profile"])
+    finally:
+        eval_runs.finish_runs(owner, run_id)
+
+
+def run(owner: UUID, cases_file: Path = eval_runs.CASES_FILE) -> int:
+    """Run every case now, store the results, and return the Eval Run's ID."""
     loaded = json.loads(cases_file.read_text(encoding="utf-8"))
     with connect() as conn:
-        run_row: Any = conn.execute(
-            """INSERT INTO eval_runs (user_id, deepeval_version) VALUES (%s, %s)
-               RETURNING id, started_at""",
-            (owner, version("deepeval")),
-        ).fetchone()
+        run_id = int(eval_runs.start_run(conn, owner)["id"])
     try:
         for case in loaded["cases"]:
-            status, hard, reason, fix_area = _result(case, loaded["profile"])
-            with connect() as conn:
-                conn.execute(
-                    """INSERT INTO eval_results (user_id, run_id, case_id, area, status,
-                                                hard_failure, labels_checked, reason, fix_area)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (
-                        owner,
-                        run_row["id"],
-                        case["id"],
-                        case["area"],
-                        status,
-                        hard,
-                        case["labels_checked"],
-                        reason,
-                        fix_area,
-                    ),
-                )
+            _record(owner, run_id, case, loaded["profile"])
     finally:
         # Even a run that stopped early is finished, so what it recorded shows and counts.
-        with connect() as conn:
-            conn.execute(
-                # ponytail: a run's cost is all eval spending since it started, so two runs at
-                # once would count each other's; tag model calls with their run if they overlap.
-                """UPDATE eval_runs SET finished_at = now(),
-                       cost_usd = (SELECT COALESCE(sum(cost_usd), 0) FROM model_calls
-                                   WHERE user_id = %s AND created_at >= %s)
-                   WHERE id = %s AND user_id = %s""",
-                (EVAL_USER_ID, run_row["started_at"], run_row["id"], owner),
-            )
-    return int(run_row["id"])
+        eval_runs.finish_runs(owner, run_id)
+    return run_id
 
 
 def table(owner: UUID, run_id: int | None = None) -> str:

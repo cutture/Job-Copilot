@@ -87,6 +87,7 @@ export function EvalRuns() {
             <button aria-pressed={run?.id === summary.id} onClick={() => open(summary.id)}>
               Run {summary.id} · {new Date(summary.started_at).toLocaleString()}
             </button>{" "}
+            {summary.finished_at === null && <>Running · </>}
             {summary.passed} passed, {summary.failed} failed, {summary.did_not_run} did not run
             {summary.hard_failures > 0 && <strong style={{ color: "#8a1c12" }}> · {summary.hard_failures} Hard Failures</strong>}
             {summary.cost_usd && <> · {dollars(summary.cost_usd)}</>}
@@ -99,7 +100,11 @@ export function EvalRuns() {
             Run {run.id}, DeepEval {run.deepeval_version}
           </h3>
           {run.results.length === 0 ? (
-            <p>No case results: the run stopped before any case finished. The next daily run tries again.</p>
+            run.finished_at === null ? (
+              <p>Running: no case has finished yet. Cases run after your own work, so this can take a while.</p>
+            ) : (
+              <p>No case results: the run stopped before any case finished. The next daily run tries again.</p>
+            )
           ) : (
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
               <thead>

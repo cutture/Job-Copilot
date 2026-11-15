@@ -81,6 +81,16 @@ describe("EvalRuns", () => {
     expect(await screen.findByText(/No case results: the run stopped/)).toBeTruthy();
   });
 
+  it("shows a run as running until its last case finishes", async () => {
+    const running = { ...runs[0], id: 3, finished_at: null, cost_usd: null, passed: 0, failed: 0, did_not_run: 0, hard_failures: 0 };
+    serve({ "/api/eval-runs": [running], "/api/eval-runs/3": { ...running, deepeval_version: "4.3.3", results: [] } });
+    render(<EvalRuns />);
+
+    const row = (await screen.findByRole("button", { name: /^Run 3 / })).closest("li")!;
+    expect(within(row).getByText(/Running/)).toBeTruthy();
+    expect(await screen.findByText(/Running: no case has finished yet/)).toBeTruthy();
+  });
+
   it("says when there are no runs yet", async () => {
     serve({ "/api/eval-runs": [] });
     render(<EvalRuns />);

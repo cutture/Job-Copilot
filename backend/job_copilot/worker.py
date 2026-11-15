@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from job_copilot import applications, filter, profile, rating, search
+from job_copilot import applications, eval_runs, filter, profile, rating, search
 from job_copilot.db import connect, current_user_id
 
 log = logging.getLogger(__name__)
@@ -94,37 +94,27 @@ def _posting_failed(user_id: UUID, payload: dict[str, Any]) -> None:
 Handler = Callable[[UUID, dict[str, Any]], None]
 
 
-def _run_evals(user_id: UUID, payload: dict[str, Any]) -> None:
+def _run_eval_case(user_id: UUID, payload: dict[str, Any]) -> None:
     # Imported here, so only the worker loads DeepEval, and only when evals run.
-    # ponytail: the run holds the one worker for a few minutes a day; give evals their own
-    # worker if postings ever wait too long behind it.
     from job_copilot import evals
 
-    evals.run(user_id)
+    evals.run_queued_case(user_id, payload["run_id"], payload["case_id"])
 
 
-def _keep_partial_results(user_id: UUID, payload: dict[str, Any]) -> None:
-    """A failed Eval Run leaves its partial results, which show on the Eval Runs page."""
+def _eval_case_failed(user_id: UUID, payload: dict[str, Any]) -> None:
+    """The case's result stays missing from its run; the run still finishes after its last case."""
+    eval_runs.finish_runs(user_id, payload["run_id"])
 
 
 def schedule_daily_evals(now: datetime) -> None:
     """Queue today's Eval Run for the owner, once, after EVAL_HOUR_UTC."""
-    if now.hour < EVAL_HOUR_UTC:
-        return
-    owner = current_user_id()
-    with connect() as conn:
-        conn.execute(
-            """INSERT INTO jobs (user_id, kind, payload)
-               SELECT %(owner)s, 'eval_run', '{}'::jsonb
-               WHERE NOT EXISTS (SELECT 1 FROM jobs
-                                 WHERE kind = 'eval_run' AND user_id = %(owner)s)
-                 -- The day starts at midnight UTC, whatever the database's time zone.
-                 AND NOT EXISTS (
-                     SELECT 1 FROM eval_runs WHERE user_id = %(owner)s
-                     AND started_at >= date_trunc('day', %(now)s::timestamptz AT TIME ZONE 'UTC')
-                                       AT TIME ZONE 'UTC')""",
-            {"owner": owner, "now": now},
-        )
+    if now.hour >= EVAL_HOUR_UTC:
+        eval_runs.queue_daily_run(current_user_id(), now)
+
+
+def finish_interrupted_evals() -> None:
+    """Finish runs a crash left open, so what they recorded shows and counts."""
+    eval_runs.finish_runs(current_user_id())
 
 
 # Each kind of job, and what to record if it fails, so one failure never blocks the queue.
@@ -134,7 +124,7 @@ HANDLERS: dict[str, tuple[Handler, Handler]] = {
     "rate_match": (rating.rate_match, rating.mark_not_rated),
     "search": (search.run_search, search.finish_search),
     "generate_pack": (applications.generate_pack, applications.pack_failed),
-    "eval_run": (_run_evals, _keep_partial_results),
+    eval_runs.EVAL_CASE: (_run_eval_case, _eval_case_failed),
 }
 
 
@@ -158,8 +148,10 @@ def run_once() -> bool:
     with connect() as conn:
         job = conn.execute(
             """DELETE FROM jobs WHERE id = (
-                   SELECT id FROM jobs ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
-               ) RETURNING user_id, kind, payload"""
+                   SELECT id FROM jobs ORDER BY kind = %s, id FOR UPDATE SKIP LOCKED LIMIT 1
+               ) RETURNING user_id, kind, payload""",
+            # Eval Cases wait behind everything else, so the person's own work goes first.
+            (eval_runs.EVAL_CASE,),
         ).fetchone()
     if job is None:
         return False
@@ -169,6 +161,7 @@ def run_once() -> bool:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    finish_interrupted_evals()
     while True:
         schedule_daily_evals(datetime.now(UTC))
         if not run_once():
