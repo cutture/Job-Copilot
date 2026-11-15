@@ -23,7 +23,8 @@ from job_copilot.photo import MAX_PHOTO_BYTES, checked_photo, photo_in_resume
 MAX_UPLOAD_BYTES = 5_000_000
 MAX_DOCX_UNPACKED_BYTES = 20_000_000
 MAX_RESUME_CHARS = 100_000
-EXTRACTION_MODEL = "anthropic/claude-haiku-5-5"
+EXTRACTION_MODELS = gateway.PERSONAL_MODELS
+EXTRACTION_MODEL = EXTRACTION_MODELS[0]
 MAX_ITEMS = 150
 MAX_ITEM_LENGTH = 300
 EXTRACTION_PROMPT = (
@@ -251,9 +252,9 @@ def extract_evidence(user_id: UUID, payload: dict[str, Any]) -> None:
         ).fetchone()
     if profile is None or not profile["resume_text"] or profile["resume_version"] != version:
         return
-    completion = gateway.complete(
+    completion = gateway.complete_first(
         user_id=user_id,
-        model=EXTRACTION_MODEL,
+        models=EXTRACTION_MODELS,
         data_class=DataClass.PERSONAL,
         step="resume_evidence",
         messages=[

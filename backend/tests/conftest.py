@@ -36,13 +36,26 @@ def migrated() -> None:
 
 @pytest.fixture(autouse=True)
 def clean(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+    for name in (
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_HOST",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_KEY",
+    ):
         monkeypatch.delenv(name, raising=False)
+    # Invented keys, so every provider counts as set up; tests remove one to go without it.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
         conn.execute(
             "TRUNCATE jobs, application_packs, applications, matches, deleted_postings, "
             "job_postings, watchlist, searches, model_calls, evidence, profiles, trace_deletions, "
             "eval_results, eval_runs"
+        )
+        conn.execute(
+            """UPDATE users SET groq_zdr_confirmed = false, paid_unavailable_until = NULL,
+                                paid_unavailable_reason = NULL"""
         )
 
 
@@ -54,6 +67,8 @@ class FakeProvider:
     input_tokens: int = 10
     output_tokens: int = 5
     error: Exception | None = None
+    # Errors for particular models only.
+    errors: dict[str, Exception] = field(default_factory=dict)
     received: list[dict[str, Any]] = field(default_factory=list)
     # Answers for particular models; any other model gets `text`.
     answers: dict[str, str] = field(default_factory=dict)
@@ -69,6 +84,8 @@ def provider(monkeypatch: pytest.MonkeyPatch) -> FakeProvider:
         fake.received.append({"model": model, "messages": messages, "max_tokens": max_tokens})
         if fake.error:
             raise fake.error
+        if model in fake.errors:
+            raise fake.errors[model]
         text = fake.answers.get(model, fake.text)
         try:
             task = json.loads(messages[-1]["content"]).get("task")

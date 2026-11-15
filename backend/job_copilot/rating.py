@@ -23,7 +23,8 @@ from job_copilot.profile import (
     strip_controls,
 )
 
-RATING_MODEL = "anthropic/claude-haiku-5-5"
+RATING_MODELS = gateway.PERSONAL_MODELS
+RATING_MODEL = RATING_MODELS[0]
 # Long postings with many Requirements need over 6000 tokens of answer.
 RATING_MAX_OUTPUT_TOKENS = 16000
 # ponytail: a starting judgement on cost; revisit once real costs are measured.
@@ -285,9 +286,9 @@ def rate_posting(
         "evidence": [{"number": n, "text": text} for n, text in evidence.items()],
         "facts": {name: facts[name] for name in FACT_NAMES},
     }
-    completion = gateway.complete(
+    completion = gateway.complete_first(
         user_id=user_id,
-        model=RATING_MODEL,
+        models=RATING_MODELS,
         data_class=DataClass.PERSONAL,
         step="rating",
         messages=[

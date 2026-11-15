@@ -4,7 +4,9 @@ import json
 import logging
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -35,12 +37,32 @@ class ModelRule:
     output_usd_per_million: Decimal = Decimal(0)
 
 
-# Only models listed here can be called. Re-check prices and terms before adding one.
+HAIKU = "anthropic/claude-haiku-5-5"
+GROQ_PERSONAL = "groq/openai/gpt-oss-120b"
+CLOUDFLARE_PERSONAL = "cloudflare/@cf/openai/gpt-oss-120b"
+BOTH = frozenset({DataClass.POSTING, DataClass.PERSONAL})
+
+# Only models listed here can be called. Re-check prices and terms before adding one. Personal
+# data goes only to models whose terms rule out training on it: never add one that may train.
 MODELS = {
     "groq/openai/gpt-oss-20b": ModelRule(frozenset({DataClass.POSTING})),
-    "anthropic/claude-haiku-5-5": ModelRule(
-        frozenset({DataClass.POSTING, DataClass.PERSONAL}), Decimal("0.10"), Decimal("0.50")
-    ),
+    "cloudflare/@cf/openai/gpt-oss-20b": ModelRule(frozenset({DataClass.POSTING})),
+    HAIKU: ModelRule(BOTH, Decimal("0.10"), Decimal("0.50")),
+    # Groq production models with Zero Data Retention on, which the person confirms on Settings.
+    GROQ_PERSONAL: ModelRule(BOTH),
+    # Plain Workers AI inference, never through Cloudflare AI Gateway, which can log requests.
+    CLOUDFLARE_PERSONAL: ModelRule(BOTH),
+}
+
+# Fallback Lists: each step tries these in order and uses the first that can take the call.
+PERSONAL_MODELS = (HAIKU, GROQ_PERSONAL, CLOUDFLARE_PERSONAL)
+POSTING_MODELS = ("groq/openai/gpt-oss-20b", "cloudflare/@cf/openai/gpt-oss-20b")
+
+# The settings each provider needs; a provider without them is skipped.
+PROVIDER_KEYS = {
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "groq": ("GROQ_API_KEY",),
+    "cloudflare": ("CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_KEY"),
 }
 
 
@@ -57,7 +79,10 @@ class CapReached(GatewayError):
 
 
 class ModelUnavailable(GatewayError):
-    pass
+    def __init__(self, message: str, out_of_credit: bool = False) -> None:
+        super().__init__(message)
+        # The provider refused the key or the account has no credit, so retrying won't help today.
+        self.out_of_credit = out_of_credit
 
 
 @dataclass(frozen=True)
@@ -105,8 +130,22 @@ def call_provider(model: str, messages: list[dict[str, str]], max_tokens: int) -
     litellm.suppress_debug_info = True
     litellm.telemetry = False
     logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
+    options: dict[str, Any] = {}
+    if model.startswith("cloudflare/"):
+        # Workers AI's OpenAI-compatible endpoint.
+        # ponytail: unverified until a Cloudflare key is first used; check it with live_check.
+        account = os.environ["CLOUDFLARE_ACCOUNT_ID"]
+        model = "openai/" + model.removeprefix("cloudflare/")
+        options = {
+            "api_base": f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1",
+            "api_key": os.environ["CLOUDFLARE_API_KEY"],
+        }
     response: Any = litellm.completion(
-        model=model, messages=messages, max_tokens=max_tokens, timeout=CALL_TIMEOUT_SECONDS
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        timeout=CALL_TIMEOUT_SECONDS,
+        **options,
     )
     return ProviderAnswer(
         response.choices[0].message.content or "",
@@ -250,15 +289,18 @@ def complete(
 
     started = time.monotonic()
     failure = ""
+    out_of_credit = False
     try:
         answer = call_provider(model, messages, max_output_tokens)
     except Exception as error:
         failure = type(error).__name__
+        # Read here and never kept: provider errors can quote the request.
+        out_of_credit = failure == "AuthenticationError" or "credit balance" in str(error).lower()
     if failure:
         # Provider errors can quote the request, so only the error's type goes any further.
         # Raising out here keeps the original error off this exception's context too.
         log.warning("Model call failed: step=%s model=%s %s", step, model, failure)
-        raise ModelUnavailable(f"{model} failed: {failure}")
+        raise ModelUnavailable(f"{model} failed: {failure}", out_of_credit)
 
     cost = _cost(rule, answer.input_tokens, answer.output_tokens)
     settings = trace_settings()
@@ -296,3 +338,101 @@ def complete(
         )
     log.info("Model call done: step=%s model=%s trace=%s", step, model, trace_id)
     return Completion(answer.text, cost, trace_id, model)
+
+
+NO_CREDIT = (
+    "Anthropic didn't accept your key or your account is out of credit, so free models that "
+    "don't train on your data are in use until tomorrow."
+)
+
+
+def settings_owner(user_id: UUID) -> UUID:
+    """Whose keys and model settings a call uses: evals use the owner's."""
+    return SEEDED_USER_ID if user_id == EVAL_USER_ID else user_id
+
+
+def has_keys(model: str) -> bool:
+    provider = model.split("/", 1)[0]
+    return all(os.environ.get(name) for name in PROVIDER_KEYS[provider])
+
+
+def _is_paid(model: str) -> bool:
+    rule = MODELS[model]
+    return bool(rule.input_usd_per_million or rule.output_usd_per_million)
+
+
+def model_settings(user_id: UUID) -> Any:
+    """Whether Groq's Zero Data Retention is confirmed, and until when paid models are out."""
+    with connect() as conn:
+        return conn.execute(
+            """SELECT groq_zdr_confirmed, paid_unavailable_until, paid_unavailable_reason
+               FROM users WHERE id = %s""",
+            (settings_owner(user_id),),
+        ).fetchone()
+
+
+def _skip(model: str, data_class: DataClass, settings: Any) -> bool:
+    if not has_keys(model):
+        return True
+    if model.startswith("groq/") and data_class is DataClass.PERSONAL:
+        return not settings["groq_zdr_confirmed"]
+    until = settings["paid_unavailable_until"]
+    return _is_paid(model) and until is not None and until > datetime.now(UTC)
+
+
+def _paid_out_until_tomorrow(user_id: UUID) -> None:
+    tomorrow = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
+        days=1
+    )
+    with connect() as conn:
+        conn.execute(
+            """UPDATE users SET paid_unavailable_until = %s, paid_unavailable_reason = %s
+               WHERE id = %s""",
+            (tomorrow, NO_CREDIT, settings_owner(user_id)),
+        )
+
+
+def complete_first(
+    *,
+    user_id: UUID,
+    models: Sequence[str],
+    data_class: DataClass,
+    step: str,
+    messages: list[dict[str, str]],
+    max_output_tokens: int,
+    application_id: UUID | None = None,
+) -> Completion:
+    """Call the first model on a Fallback List that can take the call.
+
+    A model is passed over without its keys, for Groq with personal data until Zero Data
+    Retention is confirmed, and for a paid model at the cap or when its credit ran out today.
+    Eval Cases stop at their own cap instead, so they never test a model the person isn't using.
+    """
+    for model in models:
+        rule = MODELS.get(model)
+        if rule is None or data_class not in rule.data_classes:
+            raise NotEligible(f"{model} may not receive {data_class.value} data")
+    settings = model_settings(user_id)
+    failures: list[str] = []
+    for model in models:
+        if _skip(model, data_class, settings):
+            continue
+        try:
+            return complete(
+                user_id=user_id,
+                model=model,
+                data_class=data_class,
+                step=step,
+                messages=messages,
+                max_output_tokens=max_output_tokens,
+                application_id=application_id,
+            )
+        except CapReached:
+            if user_id == EVAL_USER_ID:
+                raise
+            failures.append(f"{model}: monthly cap reached")
+        except ModelUnavailable as error:
+            if error.out_of_credit and _is_paid(model):
+                _paid_out_until_tomorrow(user_id)
+            failures.append(str(error))
+    raise ModelUnavailable("; ".join(failures) or "No model is set up for this step")

@@ -8,6 +8,7 @@ import { Matches, Origin, deleteQuestion } from "./Matches";
 import type { Match, PostingOrigin, RatedPosting, RatingState } from "./Matches";
 import { Profile } from "./Profile";
 import { Search } from "./Search";
+import { ModelSettings } from "./ModelSettings";
 import { Spending, SpendingBanner } from "./Spending";
 
 type JobPosting = PostingOrigin & {
@@ -202,7 +203,12 @@ export function App() {
       </nav>
       {view === "applications" && <Applications onOpen={setApplicationId} />}
       {view === "evals" && <EvalRuns />}
-      {view === "spending" && <Spending />}
+      {view === "spending" && (
+        <>
+          <Spending />
+          <ModelSettings />
+        </>
+      )}
       {view === "profile" && (
         <Profile key={evidenceDraft} draft={evidenceDraft} onEverythingDeleted={() => setPostings([])} />
       )}

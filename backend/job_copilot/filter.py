@@ -16,7 +16,8 @@ from job_copilot.db import connect
 from job_copilot.gateway import DataClass
 from job_copilot.profile import FILTER_FIELDS, ensure_profile, strip_controls
 
-FILTER_MODEL = "groq/openai/gpt-oss-20b"
+FILTER_MODELS = gateway.POSTING_MODELS
+FILTER_MODEL = FILTER_MODELS[0]
 # Reasoning models spend output tokens before the visible answer, so small limits return nothing.
 FILTER_MAX_OUTPUT_TOKENS = 1500
 SALARY_TOLERANCE = 0.9
@@ -272,9 +273,9 @@ def stated_arrangement(text: str) -> WorkArrangement | None:
 
 
 def read_facts(user_id: UUID, posting_text: str) -> PostingFacts:
-    completion = gateway.complete(
+    completion = gateway.complete_first(
         user_id=user_id,
-        model=FILTER_MODEL,
+        models=FILTER_MODELS,
         data_class=DataClass.POSTING,
         step="filter",
         messages=[

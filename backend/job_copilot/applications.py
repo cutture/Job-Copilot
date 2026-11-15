@@ -37,7 +37,7 @@ from job_copilot.profile import (
     ensure_profile,
     strip_controls,
 )
-from job_copilot.rating import RATING_MODEL, RequirementView
+from job_copilot.rating import RATING_MODELS, RequirementView
 
 # Personal data must never reach LangSmith, whatever the environment says.
 os.environ["LANGSMITH_TRACING"] = "false"
@@ -46,7 +46,8 @@ os.environ["LANGCHAIN_TRACING_V2"] = "false"
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-PACK_MODEL = RATING_MODEL
+PACK_MODELS = RATING_MODELS
+PACK_MODEL = PACK_MODELS[0]
 WRITE_MAX_OUTPUT_TOKENS = 8000
 VERIFY_MAX_OUTPUT_TOKENS = 8000
 # A longer Claim is listed as too long to check, never cut, since a cut can change its meaning.
@@ -395,9 +396,9 @@ def _ask(
     state: PackState, step: str, prompt: str, task: dict[str, Any], tokens: int
 ) -> tuple[Any, str]:
     """The model's parsed answer, and the model that gave it."""
-    completion = gateway.complete(
+    completion = gateway.complete_first(
         user_id=state["user_id"],
-        model=PACK_MODEL,
+        models=PACK_MODELS,
         data_class=DataClass.PERSONAL,
         step=step,
         messages=[

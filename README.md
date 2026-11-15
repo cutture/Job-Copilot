@@ -4,7 +4,7 @@ A job-search assistant for one person, run on their own computer. A person revie
 
 ## Run it
 
-Copy `.env.example` to `.env` and add your keys, then:
+Copy `.env.example` to `.env` and add your keys, then run the command below. A free Groq key is enough: without an Anthropic key, it uses free models that don't train on your data, once you turn on Zero Data Retention in Groq and tick the box on Settings.
 
 ```sh
 docker compose up --build

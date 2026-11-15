@@ -13,6 +13,7 @@ from job_copilot import (
     documents,
     eval_runs,
     export,
+    model_settings,
     profile,
     rating,
     search,
@@ -33,6 +34,7 @@ app.include_router(deletion.router)
 app.include_router(export.router)
 app.include_router(eval_runs.router)
 app.include_router(spending.router)
+app.include_router(model_settings.router)
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
