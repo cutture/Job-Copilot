@@ -4,7 +4,9 @@ import json
 import logging
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -42,6 +44,7 @@ class ModelRule:
 
 
 HAIKU = "anthropic/claude-haiku-5-5"
+SONNET = "anthropic/claude-sonnet-5-5"
 GROQ_PERSONAL = "groq/openai/gpt-oss-120b"
 CLOUDFLARE_PERSONAL = "cloudflare/@cf/openai/gpt-oss-120b"
 POSTING_AND_PERSONAL = frozenset({DataClass.POSTING, DataClass.PERSONAL})
@@ -52,6 +55,8 @@ MODELS = {
     "groq/openai/gpt-oss-20b": ModelRule(frozenset({DataClass.POSTING})),
     "cloudflare/@cf/openai/gpt-oss-20b": ModelRule(frozenset({DataClass.POSTING})),
     HAIKU: ModelRule(POSTING_AND_PERSONAL, Decimal("0.10"), Decimal("0.50")),
+    # A Challenger the owner runs by hand: 20 times Haiku's price.
+    SONNET: ModelRule(POSTING_AND_PERSONAL, Decimal("2.00"), Decimal("10.00")),
     # Groq production models with Zero Data Retention on, which the person confirms on Settings.
     GROQ_PERSONAL: ModelRule(POSTING_AND_PERSONAL),
     # Plain Workers AI inference, never through Cloudflare AI Gateway, which can log requests.
@@ -61,6 +66,7 @@ MODELS = {
 # How a Pack names the model that wrote it.
 MODEL_NAMES = {
     HAIKU: "Claude Haiku 5.5",
+    SONNET: "Claude Sonnet 5.5",
     GROQ_PERSONAL: "Groq gpt-oss-120b (free)",
     CLOUDFLARE_PERSONAL: "Cloudflare gpt-oss-120b (free)",
 }
@@ -68,6 +74,43 @@ MODEL_NAMES = {
 # Fallback Lists: each step tries these in order and uses the first that can take the call.
 PERSONAL_MODELS = (HAIKU, GROQ_PERSONAL, CLOUDFLARE_PERSONAL)
 POSTING_MODELS = ("groq/openai/gpt-oss-20b", "cloudflare/@cf/openai/gpt-oss-20b")
+
+# Which model step each call belongs to: a step's model is approved, and challenged, as one.
+STEP_OF = {
+    "filter": "filter",
+    "resume_evidence": "evidence",
+    "rating": "rating",
+    "pack_resume": "pack",
+    "pack_cover_letter": "pack",
+    "pack_verification": "verification",
+}
+
+# The Challenger a run is trying, as (step, model); calls for that step use it alone.
+_challenger: ContextVar[tuple[str, str] | None] = ContextVar("challenger", default=None)
+# Where calls record the model each step used, while an Eval Case runs.
+_used: ContextVar[dict[str, str] | None] = ContextVar("used", default=None)
+
+
+@contextmanager
+def challenging(step: str, model: str) -> Iterator[None]:
+    """Run one step on one model, with no Fallback List, as a Challenger run does."""
+    token = _challenger.set((step, model))
+    try:
+        yield
+    finally:
+        _challenger.reset(token)
+
+
+@contextmanager
+def recording_models() -> Iterator[dict[str, str]]:
+    """Record the model each step used for the calls made inside."""
+    used: dict[str, str] = {}
+    token = _used.set(used)
+    try:
+        yield used
+    finally:
+        _used.reset(token)
+
 
 # The settings each provider needs; a provider without them is skipped.
 PROVIDER_KEYS = {
@@ -403,6 +446,25 @@ def _is_paid(model: str) -> bool:
     return bool(rule.input_usd_per_million or rule.output_usd_per_million)
 
 
+def approved_model(user_id: UUID, step: str) -> str | None:
+    """The model the owner approved for this model step, if any."""
+    with connect() as conn:
+        row: Any = conn.execute(
+            "SELECT model FROM step_models WHERE user_id = %s AND step = %s",
+            (settings_owner(user_id), step),
+        ).fetchone()
+    return row["model"] if row else None
+
+
+def _ordered(user_id: UUID, step: str, models: Sequence[str]) -> Sequence[str]:
+    """The Fallback List for this call: a Challenger alone, or the approved model first."""
+    challenger = _challenger.get()
+    if challenger and challenger[0] == step:
+        return (challenger[1],)
+    approved = approved_model(user_id, step)
+    return (approved, *(m for m in models if m != approved)) if approved else models
+
+
 def model_settings(user_id: UUID) -> Any:
     """Whether Groq's Zero Data Retention is confirmed, and until when paid models are out."""
     with connect() as conn:
@@ -476,6 +538,8 @@ def complete_first(
     Retention is confirmed, and for a paid model at the cap or when its credit ran out today.
     Eval Cases stop at their own cap instead, so they never test a model the person isn't using.
     """
+    group = STEP_OF.get(step, step)
+    models = _ordered(user_id, group, models)
     for model in models:
         rule = MODELS.get(model)
         if rule is None or data_class not in rule.data_classes:
@@ -488,7 +552,7 @@ def complete_first(
             continue
         for attempt in range(1, RATE_LIMIT_TRIES + 1):
             try:
-                return complete(
+                completion = complete(
                     user_id=user_id,
                     model=model,
                     data_class=data_class,
@@ -497,6 +561,10 @@ def complete_first(
                     max_output_tokens=max_output_tokens,
                     application_id=application_id,
                 )
+                used = _used.get()
+                if used is not None:
+                    used[group] = completion.model
+                return completion
             except CapReached:
                 if user_id == EVAL_USER_ID:
                     raise

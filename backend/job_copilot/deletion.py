@@ -29,6 +29,8 @@ USER_TABLES = {
     "watchlist": "Watchlist employers",
     "searches": "Searches",
     "model_calls": "Spending ledger entries",
+    "step_models": "Approved models",
+    "dismissed_recommendations": "Dismissed model recommendations",
     "evidence": "Evidence items",
     "profiles": "Profile",
 }

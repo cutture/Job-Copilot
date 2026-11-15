@@ -195,8 +195,9 @@ def test_every_model_that_may_train_on_data_is_kept_from_personal_data() -> None
     # its terms get checked.
     personal = {m for m, rule in gateway.MODELS.items() if DataClass.PERSONAL in rule.data_classes}
 
-    assert personal == {HAIKU, GROQ_PERSONAL, CLOUDFLARE_PERSONAL}
-    assert set(gateway.PERSONAL_MODELS) == personal
+    # Sonnet is under the same Anthropic terms as Haiku; it runs only as a Challenger.
+    assert personal == {HAIKU, GROQ_PERSONAL, CLOUDFLARE_PERSONAL, gateway.SONNET}
+    assert set(gateway.PERSONAL_MODELS) == personal - {gateway.SONNET}
 
 
 def test_a_match_is_rated_by_the_free_model_without_a_paid_key(
