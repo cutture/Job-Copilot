@@ -88,6 +88,8 @@ STEP_OF = {
     "pack_resume": "pack",
     "pack_cover_letter": "pack",
     "pack_verification": "verification",
+    # Check again on one Removed Claim: Verification's model, counted apart from writing Packs.
+    "pack_check_again": "verification",
 }
 
 # How each model step is named to the person.

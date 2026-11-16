@@ -71,6 +71,7 @@ function application(
       change_requests: [],
       has_previous: false,
       estimate_usd: ready ? "0.0061" : null,
+      change_request_limit: 500,
       requirements: ready
         ? [
             { requirement: "Python", kind: "must_have", result: "met", evidence_ids: [1] },

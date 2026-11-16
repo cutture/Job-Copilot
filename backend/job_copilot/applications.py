@@ -252,6 +252,8 @@ class PackState(TypedDict, total=False):
     evidence: dict[int, dict[str, Any]]
     # The person's Change Requests for this version, oldest first.
     change_requests: list[str]
+    # Set for Check again, whose Verification call is counted apart from writing Packs.
+    check_again: bool
     resume: list[DraftSection]
     cover_letter: list[list[DraftClaim]]
     # The model that wrote the Pack.
@@ -394,8 +396,11 @@ class PackView(BaseModel):
     change_requests: list[str] = []
     # Whether there's an earlier version to go back to.
     has_previous: bool = False
-    # What a new version should cost: this Application's Pack calls so far, per version.
+    # What a new version should cost: what writing this Application's versions has cost so far,
+    # per version written, deleted ones included.
     estimate_usd: Decimal | None = None
+    # The longest Change Request, in characters.
+    change_request_limit: int = 0
 
 
 class ApplicationView(BaseModel):
@@ -668,7 +673,7 @@ def _judgements(
     evidence = state["evidence"]
     answer, _ = _ask(
         state,
-        "pack_verification",
+        "pack_check_again" if state.get("check_again") else "pack_verification",
         VERIFY_PROMPT,
         {"task": "verify", "evidence": _numbered(evidence), "statements": statements},
         VERIFY_MAX_OUTPUT_TOKENS,
@@ -1003,6 +1008,13 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
         _wait(user_id, pack_id, "unusable_answer")
         return
     with connect() as conn:
+        # Back to previous version may have deleted this version meanwhile; then nothing's saved.
+        if not conn.execute(
+            """SELECT 1 FROM application_packs
+               WHERE id = %s AND user_id = %s AND status = 'generating' FOR UPDATE""",
+            (pack_id, user_id),
+        ).fetchone():
+            return
         # Evidence deleted while the Pack was being written leaves it like any other deletion.
         still = {
             row["id"]
@@ -1013,22 +1025,11 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
         for number, item in evidence.items():
             if item["id"] is not None and number not in still:
                 removed += take_out_evidence(resume, letter, item["id"], item["text"], False)[1]
-        earlier: Any = conn.execute(
-            """SELECT removed_claims FROM application_packs
-               WHERE application_id = %s AND user_id = %s AND version < %s
-               ORDER BY version DESC LIMIT 1""",
-            (row["id"], user_id, row["version"]),
-        ).fetchone()
+        earlier = _version_before(conn, user_id, row["id"], row["version"])
         if earlier:
-            kept = [RemovedClaim(**r) for r in earlier["removed_claims"] if r.get("kept")]
+            kept = [RemovedClaim(**r) for r in earlier["removed_claims"] or [] if r.get("kept")]
             resume, letter, carried = _carry_kept(SavedPack(resume, letter, removed, draft), kept)
-            _record(
-                conn,
-                user_id,
-                {"application_id": row["id"], "version": row["version"]},
-                carried,
-                True,
-            )
+            _record(conn, user_id, row["id"], row["version"], carried, True)
         conn.execute(
             """UPDATE application_packs SET status = 'ready', resume = %s, cover_letter = %s,
                    removed_claims = %s, model = %s, draft = %s
@@ -1088,7 +1089,12 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        pack.cover_letter, pack.removed_claims, pack.draft, a.requirements,
                        pack.created_at AS pack_created_at, pack.change_requests,
                        (SELECT count(*) FROM application_packs v
-                        WHERE v.application_id = a.id AND v.user_id = a.user_id) AS versions
+                        WHERE v.application_id = a.id AND v.user_id = a.user_id) AS versions,
+                       a.versions_written,
+                       (SELECT sum(cost_usd) FROM model_calls
+                        WHERE application_id = a.id AND user_id = a.user_id
+                          AND step IN ('pack_resume', 'pack_cover_letter', 'pack_verification'))
+                         AS writing_cost
                 FROM applications a
                 JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
                 LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
@@ -1126,7 +1132,10 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
             extra_care=extra_care,
             change_requests=row["change_requests"],
             has_previous=row["versions"] > 1,
-            estimate_usd=row["cost_usd"] / row["version"] if row["cost_usd"] else None,
+            estimate_usd=row["writing_cost"] / row["versions_written"]
+            if row["writing_cost"]
+            else None,
+            change_request_limit=MAX_CHANGE_REQUEST_LENGTH,
         )
     )
     return ApplicationView(
@@ -1256,6 +1265,7 @@ def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
 
 UNSAVED_DRAFT = "This Pack was written before Claims could be kept. Write a new Pack to keep it."
 NOT_KEPT = "This Claim isn't kept."
+KEEPS_SENT_PACK = "A Submitted Application keeps the Pack you sent."
 NOT_LISTED = "This Claim is no longer listed. Refresh the page to see the Pack as it is now."
 PACK_CHANGED = "This Application Pack changed meanwhile. Look again, then try again."
 NOT_CHECKED = (
@@ -1313,7 +1323,7 @@ class SavedPack(NamedTuple):
                 "None of the skills under this heading are in the Pack, so it has nothing to head."
             )
         heading = _heading_of(self.draft, entry.id)
-        if heading and heading not in self.placed():
+        if heading and heading not in self.present():
             return "Keep its job heading, or bring it back, first."
         return None
 
@@ -1369,7 +1379,7 @@ def _changeable(conn: Any, user_id: UUID, application_id: UUID) -> Any:
     pack = latest_pack(conn, user_id, application_id)
     _check_ready(pack)
     if pack["submitted_at"] is not None:
-        raise HTTPException(409, "A Submitted Application keeps the Pack you sent.")
+        raise HTTPException(409, KEEPS_SENT_PACK)
     return pack
 
 
@@ -1382,12 +1392,19 @@ def _unkeep_absent(removed: list[RemovedClaim], placed: set[str]) -> list[str]:
     return [r.id for r in gone if r.id]
 
 
-def _record(conn: Any, user_id: UUID, pack: Any, claim_ids: list[str], kept: bool) -> None:
+def _record(
+    conn: Any,
+    user_id: UUID,
+    application_id: UUID,
+    version: int,
+    claim_ids: list[str],
+    kept: bool,
+) -> None:
     for claim_id in claim_ids:
         conn.execute(
             """INSERT INTO keep_decisions (user_id, application_id, version, claim_id, kept)
                VALUES (%s, %s, %s, %s, %s)""",
-            (user_id, pack["application_id"], pack["version"], claim_id, kept),
+            (user_id, application_id, version, claim_id, kept),
         )
 
 
@@ -1429,11 +1446,46 @@ def _carry_kept(
     for entry in saved.removed:
         if entry.id and _comparable(entry.text) in wanted and saved.cant_keep(entry) is None:
             entry.kept = True
-            assert saved.draft is not None
-            resume, letter = _placed(saved.draft, saved.present())
-            saved = saved._replace(resume=resume, letter=letter)
             carried.append(entry.id)
-    return saved.resume, saved.letter, carried
+    if not carried or saved.draft is None:
+        return saved.resume, saved.letter, []
+    resume, letter = _placed(saved.draft, saved.present())
+    return resume, letter, carried
+
+
+def _version_before(conn: Any, user_id: UUID, application_id: UUID, version: int) -> Any:
+    """The Pack version just before this one, if there is one."""
+    return conn.execute(
+        """SELECT id, removed_claims FROM application_packs
+           WHERE application_id = %s AND user_id = %s AND version < %s
+           ORDER BY version DESC LIMIT 1""",
+        (application_id, user_id, version),
+    ).fetchone()
+
+
+def _next_version(conn: Any, user_id: UUID, application_id: UUID) -> int:
+    """The number for a new Pack version: one never used before for this Application."""
+    row: Any = conn.execute(
+        """UPDATE applications SET versions_written = versions_written + 1
+           WHERE id = %s AND user_id = %s RETURNING versions_written""",
+        (application_id, user_id),
+    ).fetchone()
+    version: int = row["versions_written"]
+    return version
+
+
+def _without_signature(text: str, name: str | None, contact: str | None) -> str:
+    """A Change Request with the person's name and contact line masked: neither goes to any
+    model, so a request that names them can't send them."""
+    parts = [(p, "[your contact line]") for p in re.split(r"\s*[|,;·•]\s*", contact or "")]
+    parts += [(contact or "", "[your contact line]")]
+    parts += [(word, "[your name]") for word in (name or "").split()]
+    parts += [(name or "", "[your name]")]
+    # Longest first, so a whole contact line is masked before its parts.
+    for value, mask in sorted(parts, key=lambda pair: -len(pair[0])):
+        if len(value.strip()) >= 2:
+            text = re.sub(rf"(?<!\w){re.escape(value.strip())}(?!\w)", mask, text, flags=re.I)
+    return text
 
 
 def _decide(application_id: UUID, claim_id: str, user_id: UUID, kept: bool) -> ApplicationView:
@@ -1451,9 +1503,9 @@ def _decide(application_id: UUID, claim_id: str, user_id: UUID, kept: bool) -> A
         if entry.kept != kept:
             entry.kept = kept
             gone = _save_placed(conn, user_id, pack, saved.present(), saved.removed)
-            _record(conn, user_id, pack, [claim_id], kept)
+            _record(conn, user_id, application_id, pack["version"], [claim_id], kept)
             # Lines kept under a job heading that's no longer kept go with it.
-            _record(conn, user_id, pack, gone, False)
+            _record(conn, user_id, application_id, pack["version"], gone, False)
     return application_view(user_id, application_id)
 
 
@@ -1505,6 +1557,7 @@ def check_again(application_id: UUID, claim_id: str, user_id: UserId) -> Applica
                 evidence=evidence,
                 resume=[] if in_letter else [alone],
                 cover_letter=[[candidate]] if in_letter else [],
+                check_again=True,
             )
         )
     except (gateway.GatewayError, ValueError, KeyError, TypeError) as error:
@@ -1557,7 +1610,8 @@ def request_changes(
     """Write a new Pack version with this Change Request and every earlier one."""
     with connect() as conn:
         pack = _changeable(conn, user_id, application_id)
-        asked = [*pack["change_requests"], change.request]
+        request = _without_signature(change.request, pack["name"], pack["contact"])
+        asked = [*pack["change_requests"], request]
         if len(asked) > MAX_CHANGE_REQUESTS:
             raise HTTPException(
                 409,
@@ -1567,7 +1621,7 @@ def request_changes(
         new: Any = conn.execute(
             """INSERT INTO application_packs (user_id, application_id, version, change_requests)
                VALUES (%s, %s, %s, %s) RETURNING id""",
-            (user_id, application_id, pack["version"] + 1, Jsonb(asked)),
+            (user_id, application_id, _next_version(conn, user_id, application_id), Jsonb(asked)),
         ).fetchone()
         queue_pack(conn, user_id, new["id"])
     return application_view(user_id, application_id)
@@ -1582,13 +1636,8 @@ def previous_version(application_id: UUID, user_id: UserId) -> ApplicationView:
         if pack["id"] is None:
             raise HTTPException(409, NO_PACK)
         if pack["submitted_at"] is not None:
-            raise HTTPException(409, "A Submitted Application keeps the Pack you sent.")
-        earlier: Any = conn.execute(
-            """SELECT id FROM application_packs
-               WHERE application_id = %s AND user_id = %s AND version < %s
-               ORDER BY version DESC LIMIT 1""",
-            (application_id, user_id, pack["version"]),
-        ).fetchone()
+            raise HTTPException(409, KEEPS_SENT_PACK)
+        earlier = _version_before(conn, user_id, application_id, pack["version"])
         if earlier is None:
             raise HTTPException(409, "This is the Pack's first version, so there's none before it.")
         conn.execute(
@@ -1736,9 +1785,8 @@ def write_new_pack(application_id: UUID, user_id: UserId) -> ApplicationView:
             raise HTTPException(409, "This Application already has an Application Pack.")
         pack: Any = conn.execute(
             """INSERT INTO application_packs (user_id, application_id, version)
-               SELECT %s, %s, COALESCE(max(version), 0) + 1 FROM application_packs
-               WHERE application_id = %s AND user_id = %s RETURNING id""",
-            (user_id, application_id, application_id, user_id),
+               VALUES (%s, %s, %s) RETURNING id""",
+            (user_id, application_id, _next_version(conn, user_id, application_id)),
         ).fetchone()
         queue_pack(conn, user_id, pack["id"])
     return application_view(user_id, application_id)

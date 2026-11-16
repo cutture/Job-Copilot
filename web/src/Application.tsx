@@ -76,6 +76,8 @@ type Pack = {
   has_previous: boolean;
   // What a new version should cost, from this Application's versions so far.
   estimate_usd: string | null;
+  // The longest Change Request, in characters.
+  change_request_limit: number;
 };
 export type ApplicationData = {
   id: string;
@@ -565,6 +567,11 @@ function RemovedClaims({ removed, submitted, onKeep, onUnkeep, onCheck, onAddToP
   );
 }
 
+// Shown wherever a version can be undone: ready, still being written, or waiting.
+function BackButton({ pack, onPrevious }: { pack: Pack; onPrevious: () => void }) {
+  return pack.has_previous ? <button onClick={onPrevious}>Back to previous version</button> : null;
+}
+
 // Below the documents, so it never covers them: ask for a new version, or go back one.
 function ChangeRequestBox({
   pack,
@@ -586,7 +593,7 @@ function ChangeRequestBox({
       <textarea
         id="change-request"
         rows={2}
-        maxLength={500}
+        maxLength={pack.change_request_limit}
         style={{ width: "100%", boxSizing: "border-box" }}
         placeholder="Lead with my evaluation work and shorten the cover letter."
         value={request}
@@ -604,7 +611,7 @@ function ChangeRequestBox({
       >
         {sending ? "Regenerating…" : `Regenerate${estimate}`}
       </button>{" "}
-      {pack.has_previous && <button onClick={onPrevious}>Back to previous version</button>}
+      <BackButton pack={pack} onPrevious={onPrevious} />
       <div style={{ fontSize: 13 }}>
         Version {pack.version}. Tone, order, emphasis and length change directly. New facts go through Verification
         and never count as Evidence.
@@ -839,14 +846,14 @@ export function Application({
       {pack?.status === "generating" && (
         <p>
           Writing and checking your Application Pack…{" "}
-          {pack.has_previous && <button onClick={previous}>Back to previous version</button>}
+          <BackButton pack={pack} onPrevious={previous} />
         </p>
       )}
       {application && pack?.status === "waiting" && (
         <div role="alert" style={{ ...card, background: "#fdecea" }}>
           <p style={{ marginTop: 0 }}>{pack.warning}</p>
           <button onClick={retry}>Retry</button> <button onClick={onOpenSettings}>Check model settings</button>{" "}
-          {pack.has_previous && <button onClick={previous}>Back to previous version</button>}{" "}
+          <BackButton pack={pack} onPrevious={previous} />{" "}
           <OwnResume applyUrl={application.apply_url} onSubmitted={submitted} />
         </div>
       )}

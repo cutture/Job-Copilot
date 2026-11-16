@@ -147,3 +147,75 @@ def test_change_requests_are_checked_and_stop_once_submitted(
     client.post(f"/api/applications/{application_id}/submitted")
     assert ask(client, application_id, SHORTER).status_code == 409
     assert client.post(f"/api/applications/{application_id}/previous").status_code == 409
+
+
+def test_a_request_never_sends_the_name_or_contact_line_to_a_model(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    application_id = ready_pack(client, provider)
+
+    ask(client, application_id, "Put Sam Rivera and sam@example.com at the top.")
+    run_worker()
+
+    pack = client.get(f"/api/applications/{application_id}").json()["pack"]
+    assert pack["change_requests"] == ["Put [your name] and [your contact line] at the top."]
+    sent = json.dumps([r["messages"] for r in provider.received])
+    assert "Rivera" not in sent and "sam@example.com" not in sent
+
+
+def test_a_version_number_is_never_reused_and_the_estimate_counts_every_version(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    application_id = ready_pack(client, provider)
+    ask(client, application_id, SHORTER)
+    run_worker()
+    estimate = client.get(f"/api/applications/{application_id}").json()["pack"]["estimate_usd"]
+    client.post(f"/api/applications/{application_id}/previous")
+
+    after = client.get(f"/api/applications/{application_id}").json()["pack"]
+    assert after["estimate_usd"] == estimate
+    ask(client, application_id, "Make the summary warmer.")
+    run_worker()
+    assert client.get(f"/api/applications/{application_id}").json()["pack"]["version"] == 3
+
+
+def test_a_version_deleted_while_being_written_saves_and_records_nothing(
+    client: TestClient, provider: FakeProvider, monkeypatch: Any
+) -> None:
+    from job_copilot import applications
+
+    application_id = ready_pack(client, provider)
+    client.post(f"{removed(client, application_id, LED)}/keep")
+    ask(client, application_id, SHORTER)
+    written = applications.write_pack
+
+    def then_go_back(*args: Any, **kwargs: Any) -> Any:
+        pack = written(*args, **kwargs)
+        # The person goes back while the worker is still writing.
+        with psycopg.connect(TEST_DB, autocommit=True) as conn:
+            conn.execute("DELETE FROM application_packs WHERE version = 2")
+        return pack
+
+    monkeypatch.setattr(applications, "write_pack", then_go_back)
+    run_worker()
+
+    with psycopg.connect(TEST_DB) as conn:
+        assert conn.execute("SELECT count(*) FROM keep_decisions WHERE version = 2").fetchone() == (
+            0,
+        )
+        assert conn.execute("SELECT count(*) FROM application_packs").fetchone() == (1,)
+
+
+def test_the_export_holds_each_versions_change_requests(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    import io
+    import zipfile
+
+    application_id = ready_pack(client, provider)
+    ask(client, application_id, SHORTER)
+    run_worker()
+
+    with zipfile.ZipFile(io.BytesIO(client.get("/api/export").content)) as export:
+        [name] = [n for n in export.namelist() if n.endswith("pack-v2.json")]
+        assert json.loads(export.read(name))["change_requests"] == [SHORTER]

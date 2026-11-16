@@ -103,7 +103,7 @@ def export(user_id: UserId) -> Response:
         packs: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
         for pack in conn.execute(
             """SELECT application_id, version, status, failure, model, resume, cover_letter,
-                      removed_claims, reviewed_at, created_at
+                      removed_claims, change_requests, reviewed_at, created_at
                FROM application_packs WHERE user_id = %s ORDER BY version""",
             (user_id,),
         ).fetchall():
