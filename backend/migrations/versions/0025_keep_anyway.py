@@ -19,6 +19,8 @@ def upgrade() -> None:
             id bigserial PRIMARY KEY,
             user_id uuid NOT NULL REFERENCES users (id),
             application_id uuid NOT NULL REFERENCES applications (id) ON DELETE CASCADE,
+            -- The Pack version it was made on: a number, so it outlives that version.
+            version integer NOT NULL,
             claim_id text NOT NULL,
             kept boolean NOT NULL,
             created_at timestamptz NOT NULL DEFAULT now()

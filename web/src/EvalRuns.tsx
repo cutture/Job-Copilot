@@ -77,7 +77,7 @@ function KeptClaims() {
   const perApplication = (counts.kept / counts.applications).toFixed(1);
   return (
     <p style={{ fontSize: 13 }}>
-      <b>Kept Claims per Application: {perApplication}</b> ({counts.kept} kept across {counts.applications}{" "}
+      <b>Kept Claims: {perApplication} per Application</b> ({counts.kept} kept across {counts.applications}{" "}
       {counts.applications === 1 ? "Application" : "Applications"}). It shows how often you keep a Claim without
       Evidence, from your real Applications; it has no pass or fail.
     </p>

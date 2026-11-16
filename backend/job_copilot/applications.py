@@ -784,7 +784,8 @@ def _regroup(
     return kept, loose
 
 
-# Gives a draft Claim's Claim, or None; a Removal says why it can't be placed.
+# Gives a draft Claim's Claim, or None. A forced removal, such as losing its job heading, says
+# it can't be placed whatever else is true of it.
 Verified = Callable[[DraftClaim, Removal | None], Claim | None]
 
 
@@ -832,9 +833,9 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
     evidence, supported, removed = state["evidence"], state["supported"], state["removed"]
     taken_out: list[RemovedClaim] = []
 
-    def verified(draft: DraftClaim, removal: Removal | None) -> Claim | None:
+    def verified(draft: DraftClaim, forced_removal: Removal | None) -> Claim | None:
         """The Claim with its Evidence, or None after listing it as removed."""
-        removal = removal or removed.get(draft["id"])
+        removal = forced_removal or removed.get(draft["id"])
         if removal or draft["id"] not in supported:
             text = draft["text"]
             shown = text if len(text) <= MAX_CLAIM_LENGTH else text[:MAX_CLAIM_LENGTH] + "…"
@@ -1209,6 +1210,7 @@ def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
 
 UNSAVED_DRAFT = "This Pack was written before Claims could be kept. Write a new Pack to keep it."
 NOT_KEPT = "This Claim isn't kept."
+NOT_LISTED = "This Claim is no longer listed. Refresh the page to see the Pack as it is now."
 PACK_CHANGED = "This Application Pack changed meanwhile. Look again, then try again."
 NOT_CHECKED = (
     "Verification couldn't run: our AI models aren't responding right now. Your Application "
@@ -1216,22 +1218,70 @@ NOT_CHECKED = (
 )
 
 
-def _present(resume: Resume, letter: CoverLetter, removed: list[RemovedClaim]) -> dict[str, Claim]:
-    """The Claims a Pack's documents should hold, by draft ID: its verified ones and kept ones."""
-    claims = [*resume.all_claims(), *(c for paragraph in letter.paragraphs for c in paragraph)]
-    found = {c.id: c for c in claims if c.id and not c.kept}
-    kept = [r for r in removed if r.kept and r.id]
-    return found | {r.id: Claim(text=r.text, evidence=[], id=r.id, kept=True) for r in kept if r.id}
+def _claims(resume: Resume, letter: CoverLetter) -> list[Claim]:
+    """Every Claim in a Pack's documents, the resume's first."""
+    return [*resume.all_claims(), *(c for paragraph in letter.paragraphs for c in paragraph)]
 
 
-def _placed(draft: dict[str, Any], present: dict[str, Claim]) -> tuple[Resume, CoverLetter]:
-    """The documents again from the Pack's draft, with each Claim present in its place."""
-    return _assemble(
-        draft["resume"],
-        draft["cover_letter"],
-        lambda d, removal: None if removal else present.get(d["id"]),
-        lambda heading: None,
-    )
+class SavedPack(NamedTuple):
+    """A ready Pack's documents, Removed Claims and draft, as saved."""
+
+    resume: Resume
+    letter: CoverLetter
+    removed: list[RemovedClaim]
+    # None for Packs written before drafts were saved.
+    draft: dict[str, Any] | None
+
+    @classmethod
+    def of(cls, row: Any) -> "SavedPack":
+        return cls(
+            Resume(**row["resume"]),
+            CoverLetter(**row["cover_letter"]),
+            [RemovedClaim(**r) for r in row["removed_claims"]],
+            row["draft"],
+        )
+
+    def placed(self) -> set[str]:
+        """The draft IDs of the Claims in the documents."""
+        return {c.id for c in _claims(self.resume, self.letter) if c.id}
+
+    def present(self) -> dict[str, Claim]:
+        """The Claims the documents should hold, by draft ID: verified ones and kept ones."""
+        found = {c.id: c for c in _claims(self.resume, self.letter) if c.id and not c.kept}
+        return found | {
+            r.id: Claim(text=r.text, evidence=[], id=r.id, kept=True)
+            for r in self.removed
+            if r.kept and r.id
+        }
+
+    def cant_keep(self, entry: RemovedClaim) -> str | None:
+        """Why Keep Anyway isn't offered for this Removed Claim, or None when it is."""
+        if self.draft is None or entry.id is None:
+            return UNSAVED_DRAFT
+        if entry.kind == "evidence_deleted":
+            return "You deleted its Evidence. Add Evidence for it again, then Check again."
+        if entry.reason == TOO_LONG.reason:
+            return "It's too long to keep. Leave it out, or add a shorter version to your Profile."
+        if entry.reason == EMPTY_GROUP.reason:
+            return (
+                "None of the skills under this heading are in the Pack, so it has nothing to head."
+            )
+        heading = _heading_of(self.draft, entry.id)
+        if heading and heading not in self.placed():
+            return "Keep its job heading, or bring it back, first."
+        return None
+
+    def can_check(self, entry: RemovedClaim) -> bool:
+        """Whether Check again could bring it back, once the person has added Evidence."""
+        cant = self.cant_keep(entry)
+        return not entry.kept and (cant is None or entry.kind == "evidence_deleted")
+
+    def entry(self, claim_id: str) -> int:
+        """Where a Removed Claim is listed, by its draft ID."""
+        for index, entry in enumerate(self.removed):
+            if entry.id == claim_id:
+                return index
+        raise HTTPException(409, NOT_LISTED)
 
 
 def _heading_of(draft: dict[str, Any], claim_id: str) -> str | None:
@@ -1244,41 +1294,27 @@ def _heading_of(draft: dict[str, Any], claim_id: str) -> str | None:
     return None
 
 
-def _cant_keep(entry: RemovedClaim, draft: dict[str, Any] | None, present: set[str]) -> str | None:
-    """Why Keep Anyway isn't offered for this Removed Claim, or None when it is."""
-    if draft is None or entry.id is None:
-        return UNSAVED_DRAFT
-    if entry.kind == "evidence_deleted":
-        return "You deleted its Evidence. Add Evidence for it again, then Check again."
-    if entry.reason == TOO_LONG.reason:
-        return "It's too long to keep. Leave it out, or add a shorter version to your Profile."
-    if entry.reason == EMPTY_GROUP.reason:
-        return "None of the skills under this heading are in the Pack, so it has nothing to head."
-    heading = _heading_of(draft, entry.id)
-    if heading and heading not in present:
-        return "Keep its job heading, or bring it back, first."
-    return None
-
-
-def _can_check(entry: RemovedClaim, draft: dict[str, Any] | None, present: set[str]) -> bool:
-    cant = _cant_keep(entry, draft, present)
-    return not entry.kept and (cant is None or entry.kind == "evidence_deleted")
+def _placed(draft: dict[str, Any], present: dict[str, Claim]) -> tuple[Resume, CoverLetter]:
+    """The documents again from the Pack's draft, with each Claim present in its place."""
+    return _assemble(
+        draft["resume"],
+        draft["cover_letter"],
+        lambda d, forced_removal: None if forced_removal else present.get(d["id"]),
+        lambda heading: None,
+    )
 
 
 def _listed(row: Any) -> list[ListedClaim]:
-    removed = [RemovedClaim(**r) for r in row["removed_claims"]]
-    resume, letter = Resume(**row["resume"]), CoverLetter(**row["cover_letter"])
-    placed = {c.id for c in [*resume.all_claims(), *(c for p in letter.paragraphs for c in p)]}
-    present = {i for i in placed if i}
+    saved = SavedPack.of(row)
+    placed = saved.placed()
     return [
         ListedClaim(
             **r.model_dump(exclude={"kept"}),
-            # Kept only while it's in the documents: a kept line goes with its job heading.
-            kept=r.kept and r.id in present,
-            cant_keep=None if r.kept else _cant_keep(r, row["draft"], present),
-            can_check=_can_check(r, row["draft"], present),
+            kept=r.kept and r.id in placed,
+            cant_keep=None if r.kept else saved.cant_keep(r),
+            can_check=saved.can_check(r),
         )
-        for r in removed
+        for r in saved.removed
     ]
 
 
@@ -1291,22 +1327,33 @@ def _changeable(conn: Any, user_id: UUID, application_id: UUID) -> Any:
     return pack
 
 
-def _entry(pack: Any, index: int) -> tuple[list[RemovedClaim], RemovedClaim]:
-    removed = [RemovedClaim(**r) for r in pack["removed_claims"]]
-    if not 0 <= index < len(removed):
-        raise HTTPException(404, "Removed Claim not found")
-    return removed, removed[index]
+def _unkeep_absent(removed: list[RemovedClaim], placed: set[str]) -> list[str]:
+    """Stop keeping Claims no longer in the documents, as a line whose job heading went, and
+    return their draft IDs."""
+    gone = [r for r in removed if r.kept and r.id not in placed]
+    for r in gone:
+        r.kept = False
+    return [r.id for r in gone if r.id]
+
+
+def _record(conn: Any, user_id: UUID, pack: Any, claim_ids: list[str], kept: bool) -> None:
+    for claim_id in claim_ids:
+        conn.execute(
+            """INSERT INTO keep_decisions (user_id, application_id, version, claim_id, kept)
+               VALUES (%s, %s, %s, %s, %s)""",
+            (user_id, pack["application_id"], pack["version"], claim_id, kept),
+        )
 
 
 def _save_placed(
     conn: Any, user_id: UUID, pack: Any, present: dict[str, Claim], removed: list[RemovedClaim]
-) -> None:
-    """Place the documents again and save them; changed documents need reviewing again."""
+) -> list[str]:
+    """Place the documents again and save them; changed documents need reviewing again.
+
+    Returns the draft IDs of kept Claims that left with their job heading.
+    """
     resume, letter = _placed(pack["draft"], present)
-    placed = {c.id for c in [*resume.all_claims(), *(c for p in letter.paragraphs for c in p)]}
-    for r in removed:
-        # A kept line can't stay once its job heading has gone.
-        r.kept = r.kept and r.id in placed
+    gone = _unkeep_absent(removed, {c.id for c in _claims(resume, letter) if c.id})
     conn.execute(
         """UPDATE application_packs SET resume = %s, cover_letter = %s, removed_claims = %s,
                reviewed_at = NULL
@@ -1319,54 +1366,54 @@ def _save_placed(
             user_id,
         ),
     )
+    return gone
 
 
-def _decide(application_id: UUID, index: int, user_id: UUID, kept: bool) -> ApplicationView:
+def _decide(application_id: UUID, claim_id: str, user_id: UUID, kept: bool) -> ApplicationView:
     """Record a Keep Anyway decision, or undoing one, and place the documents again."""
     with connect() as conn:
         pack = _changeable(conn, user_id, application_id)
-        removed, entry = _entry(pack, index)
-        resume, letter = Resume(**pack["resume"]), CoverLetter(**pack["cover_letter"])
-        present = _present(resume, letter, removed)
+        saved = SavedPack.of(pack)
+        entry = saved.removed[saved.entry(claim_id)]
         if kept and not entry.kept:
-            cant = _cant_keep(entry, pack["draft"], set(present))
+            cant = saved.cant_keep(entry)
             if cant:
                 raise HTTPException(409, cant)
         if not kept and not entry.kept:
             raise HTTPException(409, NOT_KEPT)
         if entry.kept != kept:
             entry.kept = kept
-            _save_placed(conn, user_id, pack, _present(resume, letter, removed), removed)
-            conn.execute(
-                """INSERT INTO keep_decisions (user_id, application_id, claim_id, kept)
-                   VALUES (%s, %s, %s, %s)""",
-                (user_id, application_id, entry.id, kept),
-            )
+            gone = _save_placed(conn, user_id, pack, saved.present(), saved.removed)
+            _record(conn, user_id, pack, [claim_id], kept)
+            # Lines kept under a job heading that's no longer kept go with it.
+            _record(conn, user_id, pack, gone, False)
     return application_view(user_id, application_id)
 
 
-@router.post("/api/applications/{application_id}/removed/{index}/keep")
-def keep_anyway(application_id: UUID, index: int, user_id: UserId) -> ApplicationView:
+@router.post("/api/applications/{application_id}/removed/{claim_id}/keep")
+def keep_anyway(application_id: UUID, claim_id: str, user_id: UserId) -> ApplicationView:
     """Keep a Removed Claim after the warning, which the person confirmed in the app."""
-    return _decide(application_id, index, user_id, kept=True)
+    return _decide(application_id, claim_id, user_id, kept=True)
 
 
-@router.delete("/api/applications/{application_id}/removed/{index}/keep")
-def stop_keeping(application_id: UUID, index: int, user_id: UserId) -> ApplicationView:
-    return _decide(application_id, index, user_id, kept=False)
+@router.delete("/api/applications/{application_id}/removed/{claim_id}/keep")
+def stop_keeping(application_id: UUID, claim_id: str, user_id: UserId) -> ApplicationView:
+    return _decide(application_id, claim_id, user_id, kept=False)
 
 
 def _draft_claim(draft: dict[str, Any], claim_id: str) -> tuple[DraftClaim, bool]:
     """A Claim in the draft, and whether it's in the cover letter."""
-    letter = [d for paragraph in draft["cover_letter"] for d in paragraph]
-    for found in letter:
+    for found in (d for paragraph in draft["cover_letter"] for d in paragraph):
         if found["id"] == claim_id:
             return found, True
-    return next(d for d in _resume_drafts(draft["resume"]) if d["id"] == claim_id), False
+    for found in _resume_drafts(draft["resume"]):
+        if found["id"] == claim_id:
+            return found, False
+    raise HTTPException(409, NOT_LISTED)
 
 
-@router.post("/api/applications/{application_id}/removed/{index}/check")
-def check_again(application_id: UUID, index: int, user_id: UserId) -> ApplicationView:
+@router.post("/api/applications/{application_id}/removed/{claim_id}/check")
+def check_again(application_id: UUID, claim_id: str, user_id: UserId) -> ApplicationView:
     """Verify one Removed Claim again against the person's Evidence now.
 
     It comes back, with that Evidence, only if Verification passes; otherwise its reason is
@@ -1374,13 +1421,13 @@ def check_again(application_id: UUID, index: int, user_id: UserId) -> Applicatio
     """
     with connect() as conn:
         pack = _changeable(conn, user_id, application_id)
-        removed, entry = _entry(pack, index)
-        present = _present(Resume(**pack["resume"]), CoverLetter(**pack["cover_letter"]), removed)
-        if not _can_check(entry, pack["draft"], set(present)):
-            raise HTTPException(409, _cant_keep(entry, pack["draft"], set(present)) or NOT_KEPT)
-        assert entry.id is not None
-        drafted, in_letter = _draft_claim(pack["draft"], entry.id)
-    candidate = DraftClaim(id=entry.id, text=drafted["text"], evidence=[])
+        saved = SavedPack.of(pack)
+        entry = saved.removed[saved.entry(claim_id)]
+        if not saved.can_check(entry):
+            raise HTTPException(409, saved.cant_keep(entry) or NOT_KEPT)
+        assert saved.draft is not None
+        drafted, in_letter = _draft_claim(saved.draft, claim_id)
+    candidate = DraftClaim(id=claim_id, text=drafted["text"], evidence=[])
     evidence = _evidence(user_id)
     alone = DraftSection(kind="custom", heading="Claim", claims=[candidate], groups=[], roles=[])
     try:
@@ -1398,24 +1445,24 @@ def check_again(application_id: UUID, index: int, user_id: UserId) -> Applicatio
         raise HTTPException(503, NOT_CHECKED) from error
     with connect() as conn:
         latest = _changeable(conn, user_id, application_id)
-        removed, now = _entry(latest, index)
-        if latest["id"] != pack["id"] or now.id != entry.id:
+        if latest["id"] != pack["id"]:
             raise HTTPException(409, PACK_CHANGED)
-        supported = result["supported"].get(entry.id)
+        now = SavedPack.of(latest)
+        index = now.entry(claim_id)
+        supported = result["supported"].get(claim_id)
         if supported is None:
-            removed[index] = listed(now.text, result["removed"].get(entry.id, UNCHECKED), now.id)
+            removal = result["removed"].get(claim_id, UNCHECKED)
+            now.removed[index] = listed(now.removed[index].text, removal, claim_id)
             conn.execute(
                 "UPDATE application_packs SET removed_claims = %s WHERE id = %s AND user_id = %s",
-                (Jsonb([r.model_dump() for r in removed]), latest["id"], user_id),
+                (Jsonb([r.model_dump() for r in now.removed]), latest["id"], user_id),
             )
         else:
-            removed.pop(index)
-            present = _present(
-                Resume(**latest["resume"]), CoverLetter(**latest["cover_letter"]), removed
-            )
+            now.removed.pop(index)
+            present = now.present()
             refs = [EvidenceRef.model_validate(evidence[n]) for n in supported]
-            present[entry.id] = Claim(text=drafted["text"], evidence=refs, id=entry.id)
-            _save_placed(conn, user_id, latest, present, removed)
+            present[claim_id] = Claim(text=drafted["text"], evidence=refs, id=claim_id)
+            _save_placed(conn, user_id, latest, present, now.removed)
     return application_view(user_id, application_id)
 
 
@@ -1638,7 +1685,7 @@ def forget_evidence(conn: Any, user_id: UUID, evidence_id: int, text: str) -> No
         (user_id, Jsonb([evidence_id]), text),
     )
     packs = conn.execute(
-        """SELECT pack.id, pack.resume, pack.cover_letter,
+        """SELECT pack.id, pack.resume, pack.cover_letter, pack.removed_claims,
                   a.submitted_at IS NOT NULL AS submitted
            FROM application_packs pack
            JOIN applications a ON a.id = pack.application_id AND a.user_id = pack.user_id
@@ -1651,16 +1698,19 @@ def forget_evidence(conn: Any, user_id: UUID, evidence_id: int, text: str) -> No
         changed, removed = take_out_evidence(resume, letter, evidence_id, text, pack["submitted"])
         if not changed:
             continue
+        listing = [RemovedClaim(**r) for r in pack["removed_claims"]]
+        # A kept line that left with its job heading isn't kept any more.
+        _unkeep_absent(listing, {c.id for c in _claims(resume, letter) if c.id})
         conn.execute(
             # Changed documents need reviewing again; a Submitted Pack's review stays.
             """UPDATE application_packs SET resume = %s, cover_letter = %s,
-                   removed_claims = removed_claims || %s,
+                   removed_claims = %s,
                    reviewed_at = CASE WHEN %s THEN reviewed_at END
                WHERE id = %s AND user_id = %s""",
             (
                 Jsonb(resume.model_dump()),
                 Jsonb(letter.model_dump()),
-                Jsonb([r.model_dump() for r in removed]),
+                Jsonb([r.model_dump() for r in listing + removed]),
                 pack["submitted"],
                 pack["id"],
                 user_id,

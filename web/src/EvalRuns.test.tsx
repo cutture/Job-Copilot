@@ -127,7 +127,7 @@ describe("EvalRuns", () => {
     });
     render(<EvalRuns />);
 
-    const figure = await screen.findByText(/Kept Claims per Application: 0\.8/);
+    const figure = await screen.findByText(/Kept Claims: 0\.8 per Application/);
     expect(figure.parentElement!.textContent).toContain("3 kept across 4 Applications");
     expect(figure.parentElement!.textContent).toContain("it has no pass or fail");
   });

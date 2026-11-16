@@ -28,6 +28,8 @@ type RemovedClaim = {
   kind: "stretched" | "invented" | "unchecked" | "with_heading" | "evidence_deleted";
   reason: string;
   next_step: string;
+  // Its draft ID, which its actions use; null on Packs written before drafts were saved.
+  id: string | null;
   // Kept with Keep Anyway, so it's in the documents too.
   kept: boolean;
   // Why Keep Anyway isn't offered, or null when it is.
@@ -482,22 +484,23 @@ function EvidencePanel({ pack, onAddToProfile }: { pack: Pack; onAddToProfile?: 
 type RemovedClaimsProps = {
   removed: RemovedClaim[];
   submitted: boolean;
-  onKeep: (index: number) => Promise<void>;
-  onUnkeep: (index: number) => Promise<void>;
-  onCheck: (index: number) => Promise<void>;
+  onKeep: (claimId: string) => Promise<void>;
+  onUnkeep: (claimId: string) => Promise<void>;
+  onCheck: (claimId: string) => Promise<void>;
   onAddToProfile?: (draft: string) => void;
 };
 
 // Claims Verification took out, and what the person can do about each: add Evidence and check
 // again, or keep it anyway after a warning, one Claim at a time.
 function RemovedClaims({ removed, submitted, onKeep, onUnkeep, onCheck, onAddToProfile }: RemovedClaimsProps) {
-  const [confirming, setConfirming] = useState<number | null>(null);
-  const [checking, setChecking] = useState<number | null>(null);
+  // Draft IDs, so a list that changes meanwhile never confirms or checks a different Claim.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [checking, setChecking] = useState<string | null>(null);
   return (
     <div style={card}>
       <h3 style={{ marginTop: 0 }}>Claims without Evidence</h3>
       {removed.map((claim, index) => (
-        <div key={index} style={{ borderTop: "1px solid #e4e7eb", padding: "6px 0" }}>
+        <div key={claim.id ?? index} style={{ borderTop: "1px solid #e4e7eb", padding: "6px 0" }}>
           {claim.kept ? (
             <Kept text={claim.text} />
           ) : (
@@ -510,8 +513,8 @@ function RemovedClaims({ removed, submitted, onKeep, onUnkeep, onCheck, onAddToP
           {!submitted && (
             <div style={{ marginTop: 4 }}>
               {claim.kept ? (
-                <button onClick={() => onUnkeep(index)}>Remove</button>
-              ) : confirming === index ? (
+                <button onClick={() => onUnkeep(claim.id!)}>Stop keeping</button>
+              ) : confirming !== null && confirming === claim.id ? (
                 <div role="alertdialog" aria-label="Keep this Claim?" style={{ background: "#fdecea", padding: "4px 8px" }}>
                   <b>Keep this?</b> We found no Evidence for it in your resume or Profile. Keep it only if it's true:
                   it goes in your files without any Evidence behind it.
@@ -519,7 +522,7 @@ function RemovedClaims({ removed, submitted, onKeep, onUnkeep, onCheck, onAddToP
                     <button
                       onClick={() => {
                         setConfirming(null);
-                        void onKeep(index);
+                        void onKeep(claim.id!);
                       }}
                     >
                       Keep it, it's true
@@ -534,15 +537,15 @@ function RemovedClaims({ removed, submitted, onKeep, onUnkeep, onCheck, onAddToP
                     <button
                       disabled={checking !== null}
                       onClick={() => {
-                        setChecking(index);
-                        onCheck(index).finally(() => setChecking(null));
+                        setChecking(claim.id);
+                        onCheck(claim.id!).finally(() => setChecking(null));
                       }}
                     >
-                      {checking === index ? "Checking…" : "Check again"}
+                      {checking !== null && checking === claim.id ? "Checking…" : "Check again"}
                     </button>
                   )}{" "}
                   {claim.cant_keep === null ? (
-                    <button onClick={() => setConfirming(index)}>Keep anyway</button>
+                    <button onClick={() => setConfirming(claim.id)}>Keep anyway</button>
                   ) : (
                     <span style={{ fontSize: 13 }}>{claim.cant_keep}</span>
                   )}
@@ -791,13 +794,13 @@ export function Application({
             <RemovedClaims
               removed={pack.removed_claims!}
               submitted={!!application?.submitted_at}
-              onKeep={(index) => update(`removed/${index}/keep`, "POST", "We couldn't keep this Claim. Try again.")}
-              onUnkeep={(index) =>
-                update(`removed/${index}/keep`, "DELETE", "We couldn't remove this Claim. Try again.")
+              onKeep={(claimId) => update(`removed/${claimId}/keep`, "POST", "We couldn't keep this Claim. Try again.")}
+              onUnkeep={(claimId) =>
+                update(`removed/${claimId}/keep`, "DELETE", "We couldn't stop keeping this Claim. Try again.")
               }
-              onCheck={(index) =>
+              onCheck={(claimId) =>
                 update(
-                  `removed/${index}/check`,
+                  `removed/${claimId}/check`,
                   "POST",
                   "We couldn't check this Claim again. Your Pack is unchanged, so try again later.",
                 )

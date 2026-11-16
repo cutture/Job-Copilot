@@ -28,8 +28,10 @@ def index_of(pack: dict[str, Any], text: str) -> int:
 
 
 def removed(client: TestClient, application_id: str, text: str) -> str:
+    """A Removed Claim's path, by its draft ID."""
     pack = view(client, application_id)["pack"]
-    return f"/api/applications/{application_id}/removed/{index_of(pack, text)}"
+    claim_id = pack["removed_claims"][index_of(pack, text)]["id"]
+    return f"/api/applications/{application_id}/removed/{claim_id}"
 
 
 def lines(pack: dict[str, Any], role: int = 0) -> list[dict[str, Any]]:
@@ -41,7 +43,10 @@ def decisions() -> list[tuple[str, bool]]:
     with psycopg.connect(TEST_DB) as conn:
         return [
             (row[0], row[1])
-            for row in conn.execute("SELECT claim_id, kept FROM keep_decisions ORDER BY id")
+            for row in conn.execute(
+                # Every decision is on version 1 here.
+                "SELECT claim_id, kept FROM keep_decisions WHERE version = 1 ORDER BY id"
+            )
         ]
 
 
@@ -167,3 +172,50 @@ def test_kept_claims_per_application_counts_totals_only(
     client.post(f"{removed(client, application_id, LED)}/keep")
 
     assert client.get("/api/kept-claims").json() == {"kept": 1, "applications": 1}
+
+
+def test_a_claim_no_longer_listed_is_never_mistaken_for_another(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    application_id = ready_pack(client, provider)
+    stale = removed(client, application_id, LED)
+    new = add_evidence(client, "Ran Kubernetes clusters for Example Co's retrieval services")
+    provider.tasks["verify"] = json.dumps({"statements": [judgement("e0b1", "reworded", new)]})
+    client.post(f"{stale}/check")
+
+    response = client.post(f"{stale}/keep")
+
+    assert response.status_code == 409
+    assert "no longer listed" in response.json()["detail"]
+    assert decisions() == []
+
+
+def test_stopping_keeping_a_job_heading_records_its_kept_lines_going_too(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    application_id = ready_pack(client, provider)
+    heading = "Staff Engineer, Example Corp, 2010 to 2012"
+    client.post(f"{removed(client, application_id, heading)}/keep")
+    client.post(f"{removed(client, application_id, 'Worked in a team of six engineers')}/keep")
+
+    pack = client.delete(f"{removed(client, application_id, heading)}/keep").json()["pack"]
+
+    assert not any(r["kept"] for r in pack["removed_claims"])
+    assert decisions() == [("e1", True), ("e1b0", True), ("e1", False), ("e1b0", False)]
+
+
+def test_deleting_a_job_headings_evidence_stops_keeping_its_lines(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    application_id = ready_pack(client, provider)
+    client.post(f"{removed(client, application_id, LED)}/keep")
+    python = next(
+        e for e in client.get("/api/profile").json()["evidence"] if e["text"].startswith("Python")
+    )
+
+    client.delete(f"/api/evidence/{python['id']}")
+
+    pack = view(client, application_id)["pack"]
+    entry = pack["removed_claims"][index_of(pack, LED)]
+    assert entry["kept"] is False and "job heading" in entry["cant_keep"]
+    assert client.get("/api/kept-claims").json()["kept"] == 0

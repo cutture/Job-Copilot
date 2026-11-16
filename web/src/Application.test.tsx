@@ -60,6 +60,7 @@ function application(
               kind: "stretched",
               reason: "It goes beyond what your Evidence says: “Member of a team”",
               next_step: "If it's true, add Evidence for it to your Profile, then Check again.",
+              id: "e0b1",
               kept: false,
               cant_keep: null,
               can_check: true,
@@ -202,7 +203,7 @@ describe("Application", () => {
     kept.pack!.resume!.sections[0].claims.push({ text: "Led a team of six engineers", evidence: [], kept: true });
     const calls = serve({
       "GET /api/applications/a": () => application("ready"),
-      "POST /api/applications/a/removed/0/keep": () => kept,
+      "POST /api/applications/a/removed/e0b1/keep": () => kept,
     });
     render(<Application id="a" onBack={() => {}} />);
 
@@ -211,35 +212,35 @@ describe("Application", () => {
     expect(warning.textContent).toContain("We found no Evidence for it in your resume or Profile");
     expect(screen.queryByRole("button", { name: /keep all/i })).toBeNull();
     fireEvent.click(within(warning).getByRole("button", { name: "Cancel" }));
-    expect(calls).not.toContain("POST /api/applications/a/removed/0/keep");
+    expect(calls).not.toContain("POST /api/applications/a/removed/e0b1/keep");
 
     fireEvent.click(screen.getByRole("button", { name: "Keep anyway" }));
     fireEvent.click(screen.getByRole("button", { name: "Keep it, it's true" }));
 
-    // Labelled in the documents and the list, with Remove to undo it.
-    expect(await screen.findByRole("button", { name: "Remove" })).toBeTruthy();
-    expect(calls).toContain("POST /api/applications/a/removed/0/keep");
+    // Labelled in the documents and the list, with Stop keeping to undo it.
+    expect(await screen.findByRole("button", { name: "Stop keeping" })).toBeTruthy();
+    expect(calls).toContain("POST /api/applications/a/removed/e0b1/keep");
     expect(within(screen.getByLabelText("Resume")).getByText("Kept by you")).toBeTruthy();
   });
 
-  it("removes a kept Claim, checks a Claim again and adds Evidence for one", async () => {
+  it("stops keeping a Claim, checks a Claim again and adds Evidence for one", async () => {
     const kept = application("ready");
     kept.pack!.removed_claims![0].kept = true;
     const calls = serve({
       "GET /api/applications/a": () => kept,
-      "DELETE /api/applications/a/removed/0/keep": () => application("ready"),
-      "POST /api/applications/a/removed/0/check": () => application("ready"),
+      "DELETE /api/applications/a/removed/e0b1/keep": () => application("ready"),
+      "POST /api/applications/a/removed/e0b1/check": () => application("ready"),
     });
     const added: string[] = [];
     render(<Application id="a" onBack={() => {}} onAddToProfile={(draft) => added.push(draft)} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop keeping" }));
     fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
     fireEvent.click(screen.getByRole("button", { name: "Add Evidence" }));
 
     await screen.findByRole("button", { name: "Check again" });
-    expect(calls).toContain("DELETE /api/applications/a/removed/0/keep");
-    expect(calls).toContain("POST /api/applications/a/removed/0/check");
+    expect(calls).toContain("DELETE /api/applications/a/removed/e0b1/keep");
+    expect(calls).toContain("POST /api/applications/a/removed/e0b1/check");
     expect(added).toEqual(["Led a team of six engineers"]);
   });
 
