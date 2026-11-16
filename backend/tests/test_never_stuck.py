@@ -52,7 +52,7 @@ def test_an_application_with_a_waiting_pack_can_be_submitted_with_your_own_resum
     view = response.json()
     assert (view["submitted_at"] is not None, view["pack"]) == (True, None)
     listed = row(client, application_id)
-    assert (listed["status"], listed["no_pack"]) == ("submitted", True)
+    assert (listed["status"], listed["own_resume"]) == ("submitted", True)
 
 
 def test_an_application_with_no_pack_can_be_submitted(
@@ -62,7 +62,7 @@ def test_an_application_with_no_pack_can_be_submitted(
     client.delete(f"/api/applications/{application_id}/pack")
 
     assert client.post(f"/api/applications/{application_id}/submitted").status_code == 200
-    assert row(client, application_id)["no_pack"] is True
+    assert row(client, application_id)["own_resume"] is True
 
 
 def test_a_ready_pack_still_needs_its_review_before_submitting(
@@ -75,4 +75,4 @@ def test_a_ready_pack_still_needs_its_review_before_submitting(
     assert client.post(f"/api/applications/{application_id}/submitted").status_code == 409
     client.put(f"/api/applications/{application_id}/review", json={"reviewed": True})
     assert client.post(f"/api/applications/{application_id}/submitted").status_code == 200
-    assert row(client, application_id)["no_pack"] is False
+    assert row(client, application_id)["own_resume"] is False

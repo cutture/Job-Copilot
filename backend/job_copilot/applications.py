@@ -397,7 +397,7 @@ class ApplicationRow(BaseModel):
     status: Literal["generating", "waiting", "ready", "reviewed", "submitted", "no_pack"]
     submitted_at: datetime | None
     # Submitted with the person's own resume, with no Application Pack.
-    no_pack: bool
+    own_resume: bool
     outcome: Outcome | None
     cost_usd: Decimal
     # When a never-submitted Pack is deleted, unless the Application is opened before then.
@@ -1121,7 +1121,7 @@ def list_applications(user_id: UserId) -> list[ApplicationRow]:
     with connect() as conn:
         rows = conn.execute(
             f"""SELECT a.id, p.title, p.employer, a.source, a.submitted_at, a.outcome,
-                       a.submitted_at IS NOT NULL AND a.submitted_pack_id IS NULL AS no_pack,
+                       a.submitted_at IS NOT NULL AND a.submitted_pack_id IS NULL AS own_resume,
                        {COST} AS cost_usd,
                        CASE WHEN a.submitted_at IS NOT NULL THEN 'submitted'
                             WHEN pack.id IS NULL THEN 'no_pack'

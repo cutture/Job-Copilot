@@ -10,7 +10,8 @@ type ApplicationRow = {
   status: "generating" | "waiting" | "ready" | "reviewed" | "submitted" | "no_pack";
   submitted_at: string | null;
   // Submitted with the person's own resume, with no Application Pack.
-  no_pack?: boolean;
+  // Submitted with the person's own resume, with no Application Pack.
+  own_resume: boolean;
   outcome: Outcome | null;
   cost_usd: string;
   // When a never-submitted Pack is deleted, unless the Application is opened first.
@@ -71,7 +72,7 @@ export function Applications({ onOpen }: { onOpen: (id: string) => void }) {
             </td>
             <td style={cell}>{row.source}</td>
             <td style={cell}>
-              {row.no_pack ? "Submitted, no Pack" : STATUSES[row.status]}
+              {row.own_resume ? "Submitted, no Pack" : STATUSES[row.status]}
               <PackDeletionNotice deletesOn={row.deletes_on} />
             </td>
             <td style={cell}>{row.outcome ? OUTCOMES[row.outcome] : "None yet"}</td>

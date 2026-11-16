@@ -149,3 +149,4 @@ def test_the_listings_say_which_step_is_paused_and_until_when(
 
     assert paused["label"] == "Rating Matches"
     assert paused["until"] is not None
+    assert paused["can_retry"] is True

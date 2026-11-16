@@ -48,13 +48,13 @@ describe("pasting a Job Posting", () => {
     );
     expect(notice.compareDocumentPosition(field)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(notice.nextElementSibling).toBe(field);
-    await screen.findByText("No jobs yet");
+    await screen.findByText("No Job Postings yet");
   });
 
   it("sends the text and lists the new posting with its Source", async () => {
     const fetchMock = respondWith([[], [posting]]);
     render(<App />);
-    await screen.findByText("No jobs yet");
+    await screen.findByText("No Job Postings yet");
 
     fireEvent.change(screen.getByLabelText("Paste a Job Posting"), {
       target: { value: "Senior GenAI Engineer" },
@@ -73,7 +73,7 @@ describe("pasting a Job Posting", () => {
     const processed = { ...posting, title: "GenAI Developer at Northwind Labs", status: "received" };
     const fetchMock = respondWith([[], [posting], [processed]]);
     render(<App />);
-    await screen.findByText("No jobs yet");
+    await screen.findByText("No Job Postings yet");
 
     fireEvent.change(screen.getByLabelText("Paste a Job Posting"), {
       target: { value: "Senior GenAI Engineer" },
@@ -103,7 +103,7 @@ describe("pasting a Job Posting", () => {
       }),
     );
     render(<App />);
-    await screen.findByText("No jobs yet");
+    await screen.findByText("No Job Postings yet");
     const field = screen.getByLabelText<HTMLTextAreaElement>("Paste a Job Posting");
 
     fireEvent.change(field, { target: { value: "Saved once" } });
@@ -114,11 +114,12 @@ describe("pasting a Job Posting", () => {
   });
 
   it("says when a step is paused and when it tries again", async () => {
-    paused = [{ label: "Rating Matches", until: "2026-11-16T14:30:00Z" }];
+    paused = [{ label: "Rating Matches", until: "2026-11-16T14:30:00Z", can_retry: true }];
     respondWith([[]]);
     render(<App />);
 
-    expect(await screen.findByText(/Rating Matches is paused after failing three times in a row/)).toBeTruthy();
+    expect(await screen.findByText(/Rating Matches is paused because its models kept failing/)).toBeTruthy();
+    expect(screen.getByText(/or use Retry to try now/)).toBeTruthy();
     paused = [];
   });
 
@@ -126,8 +127,10 @@ describe("pasting a Job Posting", () => {
     respondWith([[]]);
     render(<App />);
 
-    expect(await screen.findByText("No jobs yet")).toBeTruthy();
+    expect(await screen.findByText("No Job Postings yet")).toBeTruthy();
     expect(screen.getByText(/Add employers you like, then search/)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Add a job source" })[1]);
+    expect(await screen.findByLabelText("Add employer by careers page URL")).toBeTruthy();
   });
 
   it("says when every posting was filtered out", async () => {
@@ -137,9 +140,11 @@ describe("pasting a Job Posting", () => {
 
     expect(await screen.findByText("No Matches this time")).toBeTruthy();
     expect(screen.getByText(/2 postings were filtered out/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View filtered postings" }));
+    expect(await screen.findAllByText("Entwickler")).toHaveLength(2);
   });
 
-  it("says how many open Matches may be out of date after a Profile change", async () => {
+  it("says how many open Matches show Profile changed", async () => {
     const stale = {
       ...posting,
       id: "7",
@@ -150,7 +155,7 @@ describe("pasting a Job Posting", () => {
     respondWith([[stale]]);
     render(<App />);
 
-    expect(await screen.findByText(/1 open Match may be out of date\. Nothing rescores automatically\./)).toBeTruthy();
+    expect(await screen.findByText(/1 open Match shows Profile changed\. Nothing rescores automatically\./)).toBeTruthy();
   });
 
   it("retries rating a posting that couldn't be rated", async () => {
@@ -226,7 +231,7 @@ describe("pasting a Job Posting", () => {
       ),
     );
     render(<App />);
-    await screen.findByText("No jobs yet");
+    await screen.findByText("No Job Postings yet");
     const field = screen.getByLabelText<HTMLTextAreaElement>("Paste a Job Posting");
 
     fireEvent.change(field, { target: { value: "Keep me" } });

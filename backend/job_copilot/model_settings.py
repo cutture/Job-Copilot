@@ -50,11 +50,17 @@ class PausedStep(BaseModel):
     label: str
     # When the step tries again by itself; Retry starts it sooner.
     until: datetime
+    # Pack writing and rating have a Retry button; other steps wait out the pause.
+    can_retry: bool
 
 
 @router.get("/api/paused-steps")
 def get_paused_steps(user_id: UserId) -> list[PausedStep]:
     return [
-        PausedStep(label=gateway.STEP_LABELS.get(step, step), until=until)
+        PausedStep(
+            label=gateway.STEP_LABELS.get(step, step),
+            until=until,
+            can_retry=step in gateway.JOB_STEPS["rate_match"] + gateway.JOB_STEPS["generate_pack"],
+        )
         for step, until in gateway.paused_steps(user_id)
     ]

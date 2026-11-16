@@ -548,16 +548,6 @@ def model_status(user_id: UUID) -> ModelStatus:
     )
 
 
-def paused_until(user_id: UUID, step: str) -> datetime | None:
-    with connect() as conn:
-        row: Any = conn.execute(
-            """SELECT paused_until FROM step_pauses
-               WHERE user_id = %s AND step = %s AND paused_until > now()""",
-            (user_id, step),
-        ).fetchone()
-    return row["paused_until"] if row else None
-
-
 def _failed(user_id: UUID, step: str) -> None:
     """Count a whole Fallback List failing, and pause the step at the third in a row."""
     with connect() as conn:
@@ -627,7 +617,7 @@ def complete_first(
     Eval Cases stop at their own cap instead, so they never test a model the person isn't using.
     """
     model_step = STEP_OF.get(step, step)
-    until = paused_until(user_id, model_step)
+    until = dict(paused_steps(user_id)).get(model_step)
     if until:
         raise StepPaused(
             f"{STEP_LABELS.get(model_step, model_step)} is paused until {until:%H:%M} UTC"
@@ -640,6 +630,8 @@ def complete_first(
     settings = model_settings(user_id)
     failures: list[str] = []
     rate_limited = False
+    # Only models that were called and failed count towards a pause, not the cap or missing keys.
+    called_and_failed = False
     for model in models:
         if _skip(model, data_class, settings):
             continue
@@ -671,10 +663,10 @@ def complete_first(
                 if error.out_of_credit and _is_paid(model):
                     _paid_out_until_tomorrow(user_id)
                 rate_limited = rate_limited or error.rate_limited
+                called_and_failed = True
                 failures.append(str(error))
             break
-    # Only models that were called and failed count towards a pause, not the cap or missing keys.
-    if any(not f.endswith("monthly cap reached") for f in failures):
+    if called_and_failed:
         _failed(user_id, model_step)
     # Every failure's type is kept, so a rate limit still reads as one: evals count it as not run.
     raise ModelUnavailable(

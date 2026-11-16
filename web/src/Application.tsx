@@ -310,18 +310,24 @@ function Finish({ application, pair, onReview, onSubmitted, onOutcome, onDownloa
         </button>
       </div>
       {submitted_at && (
-        <div role="group" aria-label="Outcome" style={{ marginTop: 6 }}>
-          Outcome:{" "}
-          {(Object.keys(OUTCOMES) as Outcome[]).map((outcome) => (
-            <button key={outcome} aria-pressed={application.outcome === outcome} onClick={() => onOutcome(outcome)}>
-              {OUTCOMES[outcome]}
-            </button>
-          ))}
-        </div>
+        <OutcomeButtons outcome={application.outcome} onOutcome={onOutcome} />
       )}
       <p style={{ fontSize: 13, marginBottom: 0 }}>
         Job Copilot never submits for you. This Application has cost {dollars(application.cost_usd)} so far.
       </p>
+    </div>
+  );
+}
+
+function OutcomeButtons({ outcome, onOutcome }: { outcome: Outcome | null; onOutcome: (outcome: Outcome) => void }) {
+  return (
+    <div role="group" aria-label="Outcome" style={{ marginTop: 6 }}>
+      Outcome:{" "}
+      {(Object.keys(OUTCOMES) as Outcome[]).map((choice) => (
+        <button key={choice} aria-pressed={outcome === choice} onClick={() => onOutcome(choice)}>
+          {OUTCOMES[choice]}
+        </button>
+      ))}
     </div>
   );
 }
@@ -444,14 +450,7 @@ export function Application({
             Submitted with your own resume on {new Date(application.submitted_at).toLocaleString()}, with no
             Application Pack.
           </p>
-          <div role="group" aria-label="Outcome">
-            Outcome:{" "}
-            {(Object.keys(OUTCOMES) as Outcome[]).map((outcome) => (
-              <button key={outcome} aria-pressed={application.outcome === outcome} onClick={() => report(outcome)}>
-                {OUTCOMES[outcome]}
-              </button>
-            ))}
-          </div>
+          <OutcomeButtons outcome={application.outcome} onOutcome={report} />
         </div>
       )}
       {application && !pack && !application.submitted_at && (

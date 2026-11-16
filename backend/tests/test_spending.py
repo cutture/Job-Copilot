@@ -163,6 +163,6 @@ def test_at_the_cap_the_warning_says_free_models_take_over(client: TestClient) -
 
     warning = spending(client)["warning"]
 
-    assert "free fallback models that don't train on your data" in warning
+    assert "free fallback models whose policy says they don't train on your data" in warning
     assert "labelled with" in warning
     assert "stops" not in warning

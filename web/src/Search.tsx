@@ -21,7 +21,8 @@ async function detail(response: Response, fallback: string): Promise<string> {
   }
 }
 
-export function Search({ onProgress }: { onProgress: () => void }) {
+// firstRun: the person has no Job Postings at all yet.
+export function Search({ onProgress, firstRun = false }: { onProgress: () => void; firstRun?: boolean }) {
   const [status, setStatus] = useState<SearchStatus | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [adding, setAdding] = useState(false);
@@ -119,6 +120,16 @@ export function Search({ onProgress }: { onProgress: () => void }) {
         </form>
       )}
       {message && <p role="alert">{message}</p>}
+      {firstRun && !adding && (
+        <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: "8px 12px", marginTop: 8 }}>
+          <h3 style={{ marginTop: 0 }}>No Job Postings yet</h3>
+          <p>Add employers you like, then search. We'll rate every Match against your Evidence.</p>
+          <button onClick={searchNow} disabled={searching || status?.runs_left === 0}>
+            Search now
+          </button>{" "}
+          <button onClick={() => setAdding(true)}>Add a job source</button>
+        </div>
+      )}
       {failures.map((entry) => (
         <p key={entry.id} style={{ background: "#fff8e1", padding: "4px 8px" }}>
           {entry.failure}

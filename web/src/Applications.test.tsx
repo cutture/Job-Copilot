@@ -38,7 +38,7 @@ describe("Applications", () => {
               status: "submitted",
               submitted_at: "2026-11-04T10:00:00Z",
               outcome: "no_response",
-              no_pack: true,
+              own_resume: true,
             },
           ]),
         ),
