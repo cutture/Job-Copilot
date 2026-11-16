@@ -153,10 +153,26 @@ class Verdict(NamedTuple):
     fix_area: str | None
 
 
+# Wording that says what the posting asks for, which claims nothing about the person.
+POSTING_ASKS = re.compile(
+    r"\b(?:asks? for|asking for|requires?|required|calls for|(?:is|are|you're) looking for|"
+    r"seeks|seeking|wants)\b",
+    re.IGNORECASE,
+)
+# Wording that says the person has something, which a line about the posting can still carry.
+PERSON_HAS = re.compile(
+    r"\b(?:I have|I've|I bring|I hold|I meet|I offer|I possess|my)\b", re.IGNORECASE
+)
+
+
 def _claims(documents: str, trap: str) -> bool:
-    """Whether a line of the documents claims the trap, rather than saying it's lacking."""
+    """Whether a line of the documents claims the trap, rather than saying it's lacking or
+    only what the posting asks for."""
     return any(
-        _mentions(line, trap) and not NEGATION.search(line) for line in documents.splitlines()
+        _mentions(line, trap)
+        and not NEGATION.search(line)
+        and not (POSTING_ASKS.search(line) and not PERSON_HAS.search(line))
+        for line in documents.splitlines()
     )
 
 

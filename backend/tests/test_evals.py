@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+import pytest
 from fastapi.testclient import TestClient
 
 from job_copilot import eval_runs, evals, rating
@@ -168,6 +169,31 @@ def test_a_sentence_saying_a_trap_is_lacking_isnt_an_invented_claim() -> None:
 
     assert evals.judge({"not_in_pack": ["AWS Certified"]}, honest).failures == []
     assert evals.judge({"not_in_pack": ["AWS Certified"]}, claimed).hard is True
+
+
+@pytest.mark.parametrize(
+    ("line", "invented"),
+    [
+        # Saying what the posting asks for claims nothing about the person.
+        (
+            "I am applying for the AI Engineer role at Example Labs, which asks for at least "
+            "five years of Python.",
+            False,
+        ),
+        ("The role requires five years of Python, and I build in Python daily.", False),
+        ("You're looking for five years of Python.", False),
+        # Unless the line also says the person has it.
+        ("I meet the five years of Python the role requires.", True),
+        ("I bring the five years of Python you're looking for.", True),
+        ("I have five years of Python.", True),
+    ],
+)
+def test_a_line_saying_what_the_posting_asks_for_isnt_an_invented_claim(
+    line: str, invented: bool
+) -> None:
+    verdict = evals.judge({"not_in_pack": ["five years"]}, evals.Outcome(letter=line))
+
+    assert verdict.hard is invented
 
 
 def test_a_removed_supported_claim_is_a_failure_but_not_a_hard_one() -> None:
