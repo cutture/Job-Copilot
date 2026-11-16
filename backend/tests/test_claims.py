@@ -88,6 +88,19 @@ def test_every_number_link_and_email_in_a_claim_must_be_in_its_evidence(
             ["AWS Certified Solutions Architect"],
             "AWS Certified Machine Learning Specialty",
         ),
+        # The issuer's name counts, even when it isn't an acronym.
+        (
+            "Oracle Certified Professional",
+            ["Microsoft Certified Professional"],
+            "Oracle Certified Professional",
+        ),
+        (
+            "Python, Oracle Certified Professional",
+            ["Microsoft Certified Professional"],
+            "Oracle Certified Professional",
+        ),
+        ("Oracle Certified Professional", ["Oracle Certified Professional, 2021"], None),
+        ("Earned Oracle Certified Professional", ["Oracle Certified Professional, 2021"], None),
         # Degrees written out in full.
         (
             "Bachelor of Science in Physics",

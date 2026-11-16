@@ -9,6 +9,7 @@ likeliest place for a writer to invent it.
 
 import re
 from datetime import date
+from typing import NamedTuple
 
 YEARS_CLAIM = re.compile(r"(\d+(?:\.\d+)?)(\s*\+)?\s*years?\b", re.IGNORECASE)
 # An email, a link with a scheme, or a bare host name such as example.com/jobs. Names like
@@ -59,15 +60,19 @@ def _looks_like_name(word: str) -> bool:
     return word[:1].isupper() or any(c.isdigit() for c in word)
 
 
-def _is_acronym(word: str) -> bool:
-    return len(word) > 1 and word.isupper()
+class Credential(NamedTuple):
+    """A credential's words, and whether the first may be a lead-in such as "Earned" rather than
+    part of the name: a capitalised word starting a clause."""
+
+    words: list[str]
+    lead_in: bool
 
 
-def _credentials(claim: str) -> list[str]:
+def _credentials(claim: str) -> list[Credential]:
     """Each certification, licence or degree a Claim names, with the words naming it.
 
-    The name runs left over acronyms only, as in "AWS Certified", so a lead-in such as "Earned"
-    stays out, and stops at punctuation, so a list such as "Python, AWS Certified" does too.
+    The name runs left over capitalised words, so its issuer counts, as in "Oracle Certified",
+    and stops at punctuation, so a list such as "Python, AWS Certified" stays out.
 
     ponytail: spots credentials by their wording, so a bare acronym such as CISSP or an all
     lowercase one slips past; Verification's prompt asks the model to treat them as facts too.
@@ -79,7 +84,12 @@ def _credentials(claim: str) -> list[str]:
         if on_its_own is None:
             continue
         start = i
-        while start > 0 and not tokens[start - 1][1] and _is_acronym(tokens[start - 1][0]):
+        while (
+            start > 0
+            and not tokens[start - 1][1]
+            and _looks_like_name(tokens[start - 1][0])
+            and tokens[start - 1][0] != "I"
+        ):
             start -= 1
         end = i + 1
         while end < len(tokens) and not tokens[end - 1][1]:
@@ -94,17 +104,34 @@ def _credentials(claim: str) -> list[str]:
             end += 1
         if not on_its_own and end - start == 1:
             continue
-        found.append(" ".join(w for w, _ in tokens[start:end]))
+        clause_start = start == 0 or tokens[start - 1][1]
+        first = tokens[start][0]
+        found.append(
+            Credential(
+                [w for w, _ in tokens[start:end]],
+                lead_in=clause_start and start < i and not first.isupper(),
+            )
+        )
     return found
 
 
-def _evidence_names(phrase: str, evidence: list[str]) -> bool:
-    """Whether some Evidence item has the phrase's words in a row, ignoring case."""
-    wanted = [w.casefold() for w, _ in _tokens(phrase)]
+def _shown(credential: Credential, evidence: list[str]) -> bool:
+    """Whether some Evidence item names the credential: all its words in a row, ignoring case,
+    or all but a lead-in, as long as no other capitalised name stands in the lead-in's place,
+    so "Earned AWS Certified" is shown by "AWS Certified" but "Oracle Certified" isn't by
+    "Microsoft Certified"."""
+    wanted = [w.casefold() for w in credential.words]
     for text in evidence:
-        words = [w.casefold() for w, _ in _tokens(text)]
-        if any(words[i : i + len(wanted)] == wanted for i in range(len(words))):
-            return True
+        tokens = _tokens(text)
+        words = [w.casefold() for w, _ in tokens]
+        for i in range(len(words)):
+            if words[i : i + len(wanted)] == wanted:
+                return True
+            rest = wanted[1:]
+            if credential.lead_in and words[i : i + len(rest)] == rest:
+                before = tokens[i - 1] if i else None
+                if before is None or before[1] or not _looks_like_name(before[0]):
+                    return True
     return False
 
 
@@ -129,8 +156,8 @@ def _value(token: str) -> str:
 def unsupported_detail(claim: str, evidence: list[str], today: date) -> str | None:
     """The first number, link, email or credential in the Claim its Evidence doesn't show."""
     for credential in _credentials(claim):
-        if not _evidence_names(credential, evidence):
-            return credential
+        if not _shown(credential, evidence):
+            return " ".join(credential.words)
     links = {_link(token) for text in evidence for token in LINK.findall(text)}
     for token in LINK.findall(claim):
         if _link(token) not in links:
