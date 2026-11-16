@@ -232,6 +232,22 @@ _Avoid_: Soft failure, KPI
 A model evaluated against the one currently used for a step, which replaces it only with the owner's approval.
 _Avoid_: Candidate, alternative
 
+**Model step**:
+One kind of model work that has a single model: Filter, Reading the resume, Rating Matches, Writing Application Packs (the resume and the cover letter) or Verification. A Challenger takes over a whole model step.
+_Avoid_: Stage, task
+
+**Challenger run**:
+An Eval Run that tries one Challenger on one model step, with no Fallback List, on the Eval Cases that use that step. It's labelled, and never turns on Extra care.
+_Avoid_: Trial run, shadow run
+
+**Model recommendation**:
+A Challenger that qualified for a model step, shown on the Eval Runs page with its scores against the current model, until the owner approves or dismisses it.
+_Avoid_: Recommendation alone, which a Match might be confused with; suggestion
+
+**Approved model**:
+The model the owner approved for a model step. It's tried before the step's Fallback List, and Settings can switch it back.
+_Avoid_: Active model, override
+
 **Fallback List**:
 The ordered models a step tries, using the first that can take the call: the paid model when there's a key with credit and the cap isn't reached, then Free models. Limited by what data the step handles.
 _Avoid_: Backup chain, failover
