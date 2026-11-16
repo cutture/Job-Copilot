@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { ConfirmDelete } from "./ConfirmDelete";
-import { ACCENTS, OUTCOMES, PHOTO_STYLE, RESULTS, dollars, splitDates } from "./labels";
+import { ACCENTS, KINDS as REQUIREMENT_KINDS, OUTCOMES, PHOTO_STYLE, RESULTS, dollars, splitDates } from "./labels";
 import type { AccentColour, Kind, Outcome, Result } from "./labels";
 
 type EvidenceRef = {
@@ -14,7 +14,14 @@ type EvidenceRef = {
 };
 type Claim = { text: string; evidence: EvidenceRef[] };
 // One of the Application's Requirements and the Evidence its Result rests on.
-type Requirement = { requirement: string; kind: Kind; result: Result; evidence_ids: number[] };
+type Requirement = {
+  requirement: string;
+  kind: Kind;
+  result: Result;
+  evidence_ids: number[];
+  // The Profile field that decides it, such as a Hard Blocker; no Claim answers those.
+  profile_field?: string | null;
+};
 type RemovedClaim = {
   text: string;
   kind: "stretched" | "invented" | "unchecked" | "with_heading" | "evidence_deleted";
@@ -93,29 +100,30 @@ const page: CSSProperties = {
   minHeight: 400,
 };
 const sectionHeading: CSSProperties = { margin: "12px 0 2px", borderBottom: "1px solid #52606d", fontSize: 14 };
-// Where each Evidence item came from, and how the panel labels it.
-const ORIGINS = { resume: "Your resume", self_reported: "A Profile entry you wrote", profile: "Your Profile" };
-const BADGES = { resume: "Direct Evidence", self_reported: "Self-reported", profile: "Profile fact" };
-const KIND_NAMES: Record<Kind, string> = { hard_blocker: "Hard Blocker", must_have: "Must-have", nice_to_have: "Nice-to-have" };
+// How the panel labels each Evidence item, and where it came from.
+const ORIGINS = {
+  resume: { badge: "Direct Evidence", from: "Your resume" },
+  self_reported: { badge: "Self-reported", from: "A Profile entry you wrote" },
+  profile: { badge: "Your Profile", from: "Your Profile's details" },
+};
 
 // The Claim open in the Evidence panel, and how a Claim in the documents opens it.
 const ClaimPicker = createContext<{ selected: Claim | null; select: (claim: Claim) => void } | null>(null);
 
-// A Claim as the documents show it. In the app, one with Evidence is underlined and opens it;
-// the downloaded files are written separately and never underline anything.
-// label: the text shown, when it differs from the Claim, as a heading split from its dates.
+// A Claim with Evidence, underlined on screen only; label is a heading without its dates.
 function ClaimText({ claim, label = claim.text }: { claim: Claim; label?: string }) {
   const picker = useContext(ClaimPicker);
   if (!picker || claim.evidence.length === 0) return <>{label}</>;
   return (
-    <ClaimLink selected={picker.selected?.text === claim.text} onClick={() => picker.select(claim)}>
+    <ClaimLink selected={picker.selected === claim} onClick={() => picker.select(claim)}>
       {label}
     </ClaimLink>
   );
 }
 
 // A span rather than a button, so a Claim that wraps stays inline text, its bullet beside it.
-function ClaimLink({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: string }) {
+// selected is left out where a Claim only opens, rather than shows which one is open.
+function ClaimLink({ selected, onClick, children }: { selected?: boolean; onClick: () => void; children: string }) {
   return (
     <span
       role="button"
@@ -314,8 +322,8 @@ function allClaims(pack: Pack): Claim[] {
   ].filter((claim) => claim.evidence.length > 0);
 }
 
-function rests(requirement: Requirement, claim: Claim): boolean {
-  return claim.evidence.some((item) => item.id != null && requirement.evidence_ids.includes(item.id));
+function answers(requirement: Requirement, item: EvidenceRef): boolean {
+  return item.id != null && requirement.evidence_ids.includes(item.id);
 }
 
 const tab = (selected: boolean): CSSProperties => ({
@@ -323,48 +331,58 @@ const tab = (selected: boolean): CSSProperties => ({
   color: selected ? "#fff" : undefined,
 });
 
-type PanelProps = {
-  pack: Pack;
-  selected: Claim | null;
-  onSelect: (claim: Claim) => void;
-  onAddToProfile?: (draft: string) => void;
-};
+const TABS = { evidence: "Evidence", coverage: "Requirement coverage" } as const;
+type View = keyof typeof TABS;
 
 // Beside the documents: the Evidence behind the Claim picked in them, or how the Pack answers
 // each of the posting's Requirements.
-function EvidencePanel({ pack, selected, onSelect, onAddToProfile }: PanelProps) {
-  const [view, setView] = useState<"evidence" | "coverage">("evidence");
+function EvidencePanel({ pack, onAddToProfile }: { pack: Pack; onAddToProfile?: (draft: string) => void }) {
+  const [view, setView] = useState<View>("evidence");
+  const { selected, select } = useContext(ClaimPicker)!;
   const requirements = pack.requirements ?? [];
   const claims = allClaims(pack);
+  // Packs written before Evidence IDs were kept can't link a Claim to a Requirement.
+  const linked = claims.some((claim) => claim.evidence.some((item) => item.id != null));
+  const inResume = new Map((pack.coverage?.counted ?? []).map((r) => [r.requirement, r.in_resume]));
   return (
-    <div style={{ ...card, position: "sticky", top: 8 }} aria-label="Evidence panel">
+    <section style={{ ...card, position: "sticky", top: 8 }} aria-label="Evidence panel">
       <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-        <button role="tab" aria-selected={view === "evidence"} style={tab(view === "evidence")} onClick={() => setView("evidence")}>
-          Evidence
-        </button>
-        <button role="tab" aria-selected={view === "coverage"} style={tab(view === "coverage")} onClick={() => setView("coverage")}>
-          Requirement coverage
-        </button>
+        {(Object.keys(TABS) as View[]).map((key) => (
+          <button
+            key={key}
+            id={`tab-${key}`}
+            role="tab"
+            aria-selected={view === key}
+            aria-controls={`panel-${key}`}
+            tabIndex={view === key ? 0 : -1}
+            style={tab(view === key)}
+            onClick={() => setView(key)}
+          >
+            {TABS[key]}
+          </button>
+        ))}
       </div>
       {view === "evidence" ? (
-        <div role="tabpanel" aria-label="Evidence">
+        <div role="tabpanel" id="panel-evidence" aria-labelledby="tab-evidence">
           <p style={{ fontSize: 13, marginTop: 0 }}>Click any underlined Claim in the documents.</p>
           {selected && (
             <>
               <b>{selected.text}</b>
               {selected.evidence.map((item, position) => {
-                const answers = requirements.filter((r) => item.id != null && r.evidence_ids.includes(item.id));
+                const answered = requirements.filter((r) => answers(r, item));
                 return (
                   <div key={position} style={{ fontSize: 13, borderTop: "1px solid #e4e7eb", marginTop: 6, paddingTop: 6 }}>
-                    <span style={{ fontWeight: 600 }}>{BADGES[item.origin]}</span>
+                    <span style={{ fontWeight: 600 }}>{ORIGINS[item.origin].badge}</span>
                     {item.deleted && <strong> (Evidence deleted)</strong>}
-                    <div>Source: {ORIGINS[item.origin]}</div>
+                    <div>From: {ORIGINS[item.origin].from}</div>
                     <div>Quote: “{item.text}”</div>
                     <div>
                       Answers:{" "}
-                      {answers.length
-                        ? answers.map((r) => `${r.requirement} (${RESULTS[r.result]})`).join("; ")
-                        : "no single Requirement"}
+                      {answered.length
+                        ? answered.map((r) => `${r.requirement} (${RESULTS[r.result]})`).join("; ")
+                        : item.id == null
+                          ? "not linked to a Requirement"
+                          : "no single Requirement"}
                     </div>
                   </div>
                 );
@@ -373,29 +391,38 @@ function EvidencePanel({ pack, selected, onSelect, onAddToProfile }: PanelProps)
           )}
         </div>
       ) : (
-        <div role="tabpanel" aria-label="Requirement coverage" style={{ fontSize: 13 }}>
+        <div role="tabpanel" id="panel-coverage" aria-labelledby="tab-coverage" style={{ fontSize: 13 }}>
           {pack.coverage && (
             <p style={{ marginTop: 0 }}>
               <b>Keyword coverage: {pack.coverage.score}%</b> of the posting's Requirements, from your Requirement
               Results. It's for your information only: the Pack never adds a keyword your Evidence doesn't support.
             </p>
           )}
+          {!linked && (
+            <p role="note">
+              This Pack was written before Claims were linked to Requirements. Write a new Pack to see where each one
+              is used.
+            </p>
+          )}
           {requirements.map((r, position) => {
-            const using = claims.filter((claim) => rests(r, claim));
+            const using = claims.filter((claim) => claim.evidence.some((item) => answers(r, item)));
+            const counted = inResume.get(r.requirement);
             return (
               <div key={position} style={{ borderTop: "1px solid #e4e7eb", padding: "6px 0" }}>
-                <b>{r.requirement}</b> <span>{KIND_NAMES[r.kind]}</span>, {RESULTS[r.result]}
+                <b>{r.requirement}</b> <span>{REQUIREMENT_KINDS[r.kind]}</span>, {RESULTS[r.result]}
+                {counted != null && (counted ? ", in your resume" : ", not in this resume")}
                 <div>
-                  {using.length > 0 ? (
+                  {r.profile_field ? (
+                    "Decided by your Profile."
+                  ) : !linked ? null : using.length > 0 ? (
                     <>
                       Used in:
                       <ul style={{ margin: "2px 0", paddingLeft: 18 }}>
                         {using.map((claim, at) => (
                           <li key={at}>
                             <ClaimLink
-                              selected={false}
                               onClick={() => {
-                                onSelect(claim);
+                                select(claim);
                                 setView("evidence");
                               }}
                             >
@@ -419,7 +446,7 @@ function EvidencePanel({ pack, selected, onSelect, onAddToProfile }: PanelProps)
           })}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -599,8 +626,9 @@ export function Application({
   }
 
   const pack = application?.pack;
-  // The first Claim with Evidence is open until the person picks another.
-  const selected = pack?.status === "ready" ? (picked ?? allClaims(pack)[0] ?? null) : null;
+  // The first Claim with Evidence is open until the person picks another one still in the Pack.
+  const claims = pack?.status === "ready" ? allClaims(pack) : [];
+  const selected = picked && claims.includes(picked) ? picked : (claims[0] ?? null);
   const back = (
     <p>
       <button onClick={onBack}>← Back to job listings</button>{" "}
@@ -644,8 +672,8 @@ export function Application({
       {pack?.status === "ready" && (
         <>
           <p style={{ ...card, background: "#e3edff" }}>
-            Preview of both final documents. Every Claim was checked against your Evidence. Underlined Claims show
-            their Evidence and appear only here, never in the files.
+            Preview of both final documents. Every Claim was checked against your Evidence. Click an underlined
+            Claim to see its Evidence. Underlining appears only here, never in your files.
             {pack.model && ` Written by ${pack.model}.`}
           </p>
           {pack.extra_care && (
@@ -677,7 +705,7 @@ export function Application({
           </div>
           <ClaimPicker.Provider value={{ selected, select: setPicked }}>
             <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, alignItems: "start" }}>
-              <EvidencePanel pack={pack} selected={selected} onSelect={setPicked} onAddToProfile={onAddToProfile} />
+              <EvidencePanel pack={pack} onAddToProfile={onAddToProfile} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
                 <Resume resume={pack.resume!} signature={application!} pair={pair} accent={application!.accent_colour} />
                 <CoverLetter

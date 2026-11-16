@@ -69,6 +69,13 @@ function application(
             { requirement: "Python", kind: "must_have", result: "met", evidence_ids: [1] },
             { requirement: "Mentoring", kind: "nice_to_have", result: "met", evidence_ids: [2] },
             { requirement: "Terraform", kind: "nice_to_have", result: "missing", evidence_ids: [] },
+            {
+              requirement: "Right to work in the UK",
+              kind: "hard_blocker",
+              result: "met",
+              evidence_ids: [],
+              profile_field: "work_authorization",
+            },
           ]
         : null,
       coverage: ready
@@ -130,7 +137,7 @@ describe("Application", () => {
 
     // The first Claim with Evidence is open to start with.
     expect(panel.textContent).toContain("Direct Evidence");
-    expect(panel.textContent).toContain("Source: Your resume");
+    expect(panel.textContent).toContain("From: Your resume");
     expect(panel.textContent).toContain("Quote: “Python Developer, Example Co, Jan 2021 to present”");
     expect(panel.textContent).toContain("Answers: Python (Met)");
 
@@ -141,7 +148,7 @@ describe("Application", () => {
     });
 
     expect(panel.textContent).toContain("Self-reported");
-    expect(panel.textContent).toContain("Source: A Profile entry you wrote");
+    expect(panel.textContent).toContain("From: A Profile entry you wrote");
     expect(panel.textContent).toContain("Answers: Mentoring (Met)");
     // A Claim with no Evidence, such as the greeting, isn't underlined or clickable.
     expect(within(letter).queryByRole("button", { name: "Dear Northwind Labs hiring team," })).toBeNull();
@@ -156,7 +163,9 @@ describe("Application", () => {
     const coverage = screen.getByRole("tabpanel", { name: "Requirement coverage" });
 
     expect(coverage.textContent).toContain("Keyword coverage: 75%");
-    expect(coverage.textContent).toContain("Python Must-have, Met");
+    // The same "in your resume" the keyword score counts.
+    expect(coverage.textContent).toContain("Python Must-have, Met, in your resume");
+    expect(coverage.textContent).toContain("Right to work in the UK Hard Blocker, MetDecided by your Profile.");
     expect(coverage.textContent).toContain("Terraform Nice-to-have, Missing");
     fireEvent.click(within(coverage).getByRole("button", { name: "Add to Profile" }));
     expect(added).toEqual(["Terraform"]);
@@ -164,6 +173,24 @@ describe("Application", () => {
     // A Claim that uses a Requirement opens its Evidence.
     fireEvent.click(within(coverage).getByRole("button", { name: "I mentor junior engineers every week." }));
     expect(screen.getByRole("tabpanel", { name: "Evidence" }).textContent).toContain("Self-reported");
+  });
+
+  it("says when a Pack was written before Claims were linked to Requirements", async () => {
+    const older = application("ready");
+    for (const claim of [
+      ...older.pack!.resume!.sections.flatMap((section) => [...section.claims, ...section.roles.map((role) => role.heading)]),
+      ...older.pack!.cover_letter!.paragraphs.flat(),
+    ])
+      claim.evidence = claim.evidence.map((item) => ({ ...item, id: null }));
+    serve({ "GET /api/applications/a": () => older });
+    render(<Application id="a" onBack={() => {}} />);
+
+    expect((await screen.findByRole("tabpanel", { name: "Evidence" })).textContent).toContain(
+      "Answers: not linked to a Requirement",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Requirement coverage" }));
+    expect(screen.getByRole("note").textContent).toContain("written before Claims were linked to Requirements");
+    expect(screen.queryByText(/Not used in this Pack/)).toBeNull();
   });
 
   it("asks for extra care on a Pack made while evals are failing, without blocking it", async () => {
