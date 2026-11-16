@@ -21,6 +21,7 @@ router = APIRouter()
 # children first. A new table with a user_id column must join it; a test checks the database.
 USER_TABLES = {
     "jobs": "Queued work",
+    "keep_decisions": "Keep Anyway decisions",
     "application_packs": "Application Pack versions",
     "applications": "Applications",
     "matches": "Match ratings",

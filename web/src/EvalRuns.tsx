@@ -65,6 +65,25 @@ export function EvalBanner() {
   );
 }
 
+// How often the person keeps a Claim without Evidence: a usage figure, never a pass or fail.
+function KeptClaims() {
+  const [counts, setCounts] = useState<{ kept: number; applications: number } | null>(null);
+  useEffect(() => {
+    getJson<{ kept: number; applications: number }>("/api/kept-claims")
+      .then(setCounts)
+      .catch(() => {});
+  }, []);
+  if (!counts?.applications) return null;
+  const perApplication = (counts.kept / counts.applications).toFixed(1);
+  return (
+    <p style={{ fontSize: 13 }}>
+      <b>Kept Claims per Application: {perApplication}</b> ({counts.kept} kept across {counts.applications}{" "}
+      {counts.applications === 1 ? "Application" : "Applications"}). It shows how often you keep a Claim without
+      Evidence, from your real Applications; it has no pass or fail.
+    </p>
+  );
+}
+
 export function EvalRuns() {
   const [runs, setRuns] = useState<EvalRunSummary[] | null>(null);
   const [run, setRun] = useState<EvalRun | null>(null);
@@ -92,6 +111,7 @@ export function EvalRuns() {
     <section>
       <h2>Eval Runs</h2>
       <Recommendations />
+      <KeptClaims />
       <p style={{ fontSize: 13 }}>
         Every Eval Case runs once a day on invented data. Results of cases whose labels you haven't checked aren't
         trusted yet, and don't turn on the warning.

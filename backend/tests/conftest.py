@@ -51,7 +51,8 @@ def clean(monkeypatch: pytest.MonkeyPatch) -> None:
         conn.execute(
             "TRUNCATE jobs, application_packs, applications, matches, deleted_postings, "
             "job_postings, watchlist, searches, model_calls, evidence, profiles, trace_deletions, "
-            "eval_results, eval_runs, step_models, dismissed_recommendations, step_pauses"
+            "eval_results, eval_runs, step_models, dismissed_recommendations, step_pauses, "
+            "keep_decisions"
         )
         conn.execute(
             """UPDATE users SET groq_zdr_confirmed = false, paid_unavailable_until = NULL,

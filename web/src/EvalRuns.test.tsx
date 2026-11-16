@@ -119,6 +119,19 @@ describe("EvalRuns", () => {
     expect(within(cells).getByText(/Rating Matches: Groq gpt-oss-120b \(free\)/)).toBeTruthy();
   });
 
+  it("shows Kept Claims per Application as a usage figure with no pass or fail", async () => {
+    serve({
+      "/api/eval-runs": runs,
+      "/api/eval-runs/2": run2,
+      "/api/kept-claims": { kept: 3, applications: 4 },
+    });
+    render(<EvalRuns />);
+
+    const figure = await screen.findByText(/Kept Claims per Application: 0\.8/);
+    expect(figure.parentElement!.textContent).toContain("3 kept across 4 Applications");
+    expect(figure.parentElement!.textContent).toContain("it has no pass or fail");
+  });
+
   it("says when there are no runs yet", async () => {
     serve({ "/api/eval-runs": [] });
     render(<EvalRuns />);

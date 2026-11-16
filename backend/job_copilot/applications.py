@@ -91,8 +91,8 @@ NOT_REVIEWED = "Tick “I've reviewed this Application Pack” first."
 NOT_READY = "This Application Pack isn't ready yet."
 NO_PACK = "This Application has no Application Pack."
 NEXT_STEP = (
-    "If it's true, add Evidence for it to your Profile, then generate the Pack again. "
-    "Otherwise, leave it out."
+    "If it's true, add Evidence for it to your Profile, then Check again. "
+    "Otherwise, leave it out, or keep it anyway if you're sure it's true."
 )
 
 UNTRUSTED = (
@@ -262,6 +262,10 @@ class EvidenceRef(BaseModel):
 class Claim(BaseModel):
     text: str
     evidence: list[EvidenceRef]
+    # Its ID in the Pack's draft, so a kept or returned Claim is placed where it was written.
+    id: str | None = None
+    # Kept with Keep Anyway: it has no Evidence and never counts as supported.
+    kept: bool = False
 
 
 class Role(BaseModel):
@@ -347,6 +351,19 @@ class RemovedClaim(BaseModel):
     kind: RemovedKind
     reason: str
     next_step: str
+    # Its ID in the Pack's draft; None for Packs written before drafts were saved.
+    id: str | None = None
+    # Kept with Keep Anyway, so it's in the documents too.
+    kept: bool = False
+
+
+class ListedClaim(RemovedClaim):
+    """A Removed Claim as the person sees it, with what they can do about it."""
+
+    # Why Keep Anyway isn't offered, or None when it is.
+    cant_keep: str | None
+    # Whether Check again could bring it back, once they've added Evidence.
+    can_check: bool
 
 
 class PackView(BaseModel):
@@ -356,7 +373,7 @@ class PackView(BaseModel):
     model: str | None
     resume: Resume | None
     cover_letter: CoverLetter | None
-    removed_claims: list[RemovedClaim] | None
+    removed_claims: list[ListedClaim] | None
     # For the person to read only: nothing that writes or renders a Pack uses it.
     coverage: Coverage | None = None
     # The Application's Requirements, so the person can see which Claims answer each one.
@@ -741,8 +758,10 @@ WORKFLOW = _graph()
 # --- Saving ------------------------------------------------------------------------------
 
 
-def listed(text: str, removal: Removal) -> RemovedClaim:
-    return RemovedClaim(text=text, kind=removal.kind, reason=removal.reason, next_step=NEXT_STEP)
+def listed(text: str, removal: Removal, claim_id: str | None = None) -> RemovedClaim:
+    return RemovedClaim(
+        text=text, kind=removal.kind, reason=removal.reason, next_step=NEXT_STEP, id=claim_id
+    )
 
 
 def _regroup(
@@ -765,30 +784,26 @@ def _regroup(
     return kept, loose
 
 
-def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim]]:
-    """Only verified Claims reach the documents; every other one is listed as removed."""
-    evidence, supported, removed = state["evidence"], state["supported"], state["removed"]
-    taken_out: list[RemovedClaim] = []
+# Gives a draft Claim's Claim, or None; a Removal says why it can't be placed.
+Verified = Callable[[DraftClaim, Removal | None], Claim | None]
 
-    def verified(draft: DraftClaim, removal: Removal | None = None) -> Claim | None:
-        """The Claim with its Evidence, or None after listing it as removed."""
-        removal = removal or removed.get(draft["id"])
-        if removal or draft["id"] not in supported:
-            text = draft["text"]
-            shown = text if len(text) <= MAX_CLAIM_LENGTH else text[:MAX_CLAIM_LENGTH] + "…"
-            taken_out.append(listed(shown, removal or UNCHECKED))
-            return None
-        refs = [EvidenceRef.model_validate(evidence[n]) for n in supported[draft["id"]]]
-        return Claim(text=draft["text"], evidence=refs)
+
+def _assemble(
+    drafted: list[DraftSection],
+    letter: list[list[DraftClaim]],
+    verified: Verified,
+    empty_group: Callable[[Claim], None],
+) -> tuple[Resume, CoverLetter]:
+    """The documents from a draft, each Claim verified() gives in the place it was written."""
 
     def all_verified(drafts: list[DraftClaim]) -> list[Claim]:
-        return [c for c in map(verified, drafts) if c]
+        return [c for c in (verified(d, None) for d in drafts) if c]
 
     sections = []
-    for drafted in state["resume"]:
+    for section in drafted:
         roles = []
-        for role in drafted["roles"]:
-            heading = verified(role["heading"])
+        for role in section["roles"]:
+            heading = verified(role["heading"], None)
             if heading:
                 roles.append(Role(heading=heading, lines=all_verified(role["lines"])))
             else:
@@ -796,21 +811,45 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
                 for line in role["lines"]:
                     verified(line, WITH_HEADING)
         groups, loose = _regroup(
-            [(verified(g["heading"]), all_verified(g["claims"])) for g in drafted["groups"]],
-            lambda heading: taken_out.append(listed(heading.text, EMPTY_GROUP)),
+            [(verified(g["heading"], None), all_verified(g["claims"])) for g in section["groups"]],
+            empty_group,
         )
-        claims = [*all_verified(drafted["claims"]), *loose]
         sections.append(
             Section(
-                kind=drafted["kind"],
-                heading=drafted["heading"],
-                claims=claims,
+                kind=section["kind"],
+                heading=section["heading"],
+                claims=[*all_verified(section["claims"]), *loose],
                 groups=groups,
                 roles=roles,
             )
         )
-    letter = CoverLetter(paragraphs=[p for p in map(all_verified, state["cover_letter"]) if p])
-    return Resume(sections=sections), letter, taken_out
+    paragraphs = [p for p in map(all_verified, letter) if p]
+    return Resume(sections=sections), CoverLetter(paragraphs=paragraphs)
+
+
+def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim]]:
+    """Only verified Claims reach the documents; every other one is listed as removed."""
+    evidence, supported, removed = state["evidence"], state["supported"], state["removed"]
+    taken_out: list[RemovedClaim] = []
+
+    def verified(draft: DraftClaim, removal: Removal | None) -> Claim | None:
+        """The Claim with its Evidence, or None after listing it as removed."""
+        removal = removal or removed.get(draft["id"])
+        if removal or draft["id"] not in supported:
+            text = draft["text"]
+            shown = text if len(text) <= MAX_CLAIM_LENGTH else text[:MAX_CLAIM_LENGTH] + "…"
+            taken_out.append(listed(shown, removal or UNCHECKED, draft["id"]))
+            return None
+        refs = [EvidenceRef.model_validate(evidence[n]) for n in supported[draft["id"]]]
+        return Claim(text=draft["text"], evidence=refs, id=draft["id"])
+
+    resume, letter = _assemble(
+        state["resume"],
+        state["cover_letter"],
+        verified,
+        lambda heading: taken_out.append(listed(heading.text, EMPTY_GROUP, heading.id)),
+    )
+    return resume, letter, taken_out
 
 
 def _evidence(user_id: UUID) -> dict[int, dict[str, Any]]:
@@ -837,6 +876,8 @@ class WrittenPack(NamedTuple):
     removed: list[RemovedClaim]
     # The model that wrote it.
     model: str
+    # The writer's draft, which a kept or returned Claim is placed from.
+    draft: dict[str, Any]
 
 
 def resume_sections(theirs: list[SectionSpec], custom: list[str]) -> list[SectionSpec]:
@@ -881,7 +922,8 @@ def write_pack(
             )
         ),
     )
-    return WrittenPack(*_documents(final), final["model"])
+    draft = {"resume": final["resume"], "cover_letter": final["cover_letter"]}
+    return WrittenPack(*_documents(final), final["model"], draft)
 
 
 def _wait(user_id: UUID, pack_id: int, failure: Failure | None) -> None:
@@ -913,7 +955,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
             (user_id,),
         ).fetchone()
     try:
-        resume, letter, removed, model = write_pack(
+        resume, letter, removed, model, draft = write_pack(
             user_id,
             row["text"],
             row["requirements"],
@@ -947,13 +989,14 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
                 removed += take_out_evidence(resume, letter, item["id"], item["text"], False)[1]
         conn.execute(
             """UPDATE application_packs SET status = 'ready', resume = %s, cover_letter = %s,
-                   removed_claims = %s, model = %s
+                   removed_claims = %s, model = %s, draft = %s
                WHERE id = %s AND user_id = %s""",
             (
                 Jsonb(resume.model_dump()),
                 Jsonb(letter.model_dump()),
                 Jsonb([r.model_dump() for r in removed]),
                 model,
+                Jsonb(draft),
                 pack_id,
                 user_id,
             ),
@@ -1000,7 +1043,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        COALESCE(pr.accent_colour, 'navy') AS accent_colour,
                        COALESCE(pr.photo IS NOT NULL, false) AS has_photo,
                        pack.version, pack.status, pack.failure, pack.model, pack.resume,
-                       pack.cover_letter, pack.removed_claims, a.requirements,
+                       pack.cover_letter, pack.removed_claims, pack.draft, a.requirements,
                        pack.created_at AS pack_created_at
                 FROM applications a
                 JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
@@ -1033,7 +1076,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
             # Only a verified Pack's documents are ever shown.
             resume=resume,
             cover_letter=CoverLetter(**row["cover_letter"]) if ready else None,
-            removed_claims=[RemovedClaim(**r) for r in row["removed_claims"]] if ready else None,
+            removed_claims=_listed(row) if ready else None,
             coverage=keyword_coverage(requirements, _cited_ids(resume)) if resume else None,
             requirements=requirements if ready else None,
             extra_care=extra_care,
@@ -1160,6 +1203,242 @@ def latest_pack(conn: Any, user_id: UUID, application_id: UUID) -> Any:
     if pack is None:
         raise HTTPException(404, "Application not found")
     return pack
+
+
+# --- Claims without Evidence ---------------------------------------------------------------
+
+UNSAVED_DRAFT = "This Pack was written before Claims could be kept. Write a new Pack to keep it."
+NOT_KEPT = "This Claim isn't kept."
+PACK_CHANGED = "This Application Pack changed meanwhile. Look again, then try again."
+NOT_CHECKED = (
+    "Verification couldn't run: our AI models aren't responding right now. Your Application "
+    "Pack is unchanged, so try again later."
+)
+
+
+def _present(resume: Resume, letter: CoverLetter, removed: list[RemovedClaim]) -> dict[str, Claim]:
+    """The Claims a Pack's documents should hold, by draft ID: its verified ones and kept ones."""
+    claims = [*resume.all_claims(), *(c for paragraph in letter.paragraphs for c in paragraph)]
+    found = {c.id: c for c in claims if c.id and not c.kept}
+    kept = [r for r in removed if r.kept and r.id]
+    return found | {r.id: Claim(text=r.text, evidence=[], id=r.id, kept=True) for r in kept if r.id}
+
+
+def _placed(draft: dict[str, Any], present: dict[str, Claim]) -> tuple[Resume, CoverLetter]:
+    """The documents again from the Pack's draft, with each Claim present in its place."""
+    return _assemble(
+        draft["resume"],
+        draft["cover_letter"],
+        lambda d, removal: None if removal else present.get(d["id"]),
+        lambda heading: None,
+    )
+
+
+def _heading_of(draft: dict[str, Any], claim_id: str) -> str | None:
+    """The draft ID of the job heading over a role's line, if it is one."""
+    for section in draft["resume"]:
+        for role in section["roles"]:
+            if any(line["id"] == claim_id for line in role["lines"]):
+                heading: str = role["heading"]["id"]
+                return heading
+    return None
+
+
+def _cant_keep(entry: RemovedClaim, draft: dict[str, Any] | None, present: set[str]) -> str | None:
+    """Why Keep Anyway isn't offered for this Removed Claim, or None when it is."""
+    if draft is None or entry.id is None:
+        return UNSAVED_DRAFT
+    if entry.kind == "evidence_deleted":
+        return "You deleted its Evidence. Add Evidence for it again, then Check again."
+    if entry.reason == TOO_LONG.reason:
+        return "It's too long to keep. Leave it out, or add a shorter version to your Profile."
+    if entry.reason == EMPTY_GROUP.reason:
+        return "None of the skills under this heading are in the Pack, so it has nothing to head."
+    heading = _heading_of(draft, entry.id)
+    if heading and heading not in present:
+        return "Keep its job heading, or bring it back, first."
+    return None
+
+
+def _can_check(entry: RemovedClaim, draft: dict[str, Any] | None, present: set[str]) -> bool:
+    cant = _cant_keep(entry, draft, present)
+    return not entry.kept and (cant is None or entry.kind == "evidence_deleted")
+
+
+def _listed(row: Any) -> list[ListedClaim]:
+    removed = [RemovedClaim(**r) for r in row["removed_claims"]]
+    resume, letter = Resume(**row["resume"]), CoverLetter(**row["cover_letter"])
+    placed = {c.id for c in [*resume.all_claims(), *(c for p in letter.paragraphs for c in p)]}
+    present = {i for i in placed if i}
+    return [
+        ListedClaim(
+            **r.model_dump(exclude={"kept"}),
+            # Kept only while it's in the documents: a kept line goes with its job heading.
+            kept=r.kept and r.id in present,
+            cant_keep=None if r.kept else _cant_keep(r, row["draft"], present),
+            can_check=_can_check(r, row["draft"], present),
+        )
+        for r in removed
+    ]
+
+
+def _changeable(conn: Any, user_id: UUID, application_id: UUID) -> Any:
+    """The latest Pack, locked, when its Claims can still change: ready and not Submitted."""
+    pack = latest_pack(conn, user_id, application_id)
+    _check_ready(pack)
+    if pack["submitted_at"] is not None:
+        raise HTTPException(409, "A Submitted Application keeps the Pack you sent.")
+    return pack
+
+
+def _entry(pack: Any, index: int) -> tuple[list[RemovedClaim], RemovedClaim]:
+    removed = [RemovedClaim(**r) for r in pack["removed_claims"]]
+    if not 0 <= index < len(removed):
+        raise HTTPException(404, "Removed Claim not found")
+    return removed, removed[index]
+
+
+def _save_placed(
+    conn: Any, user_id: UUID, pack: Any, present: dict[str, Claim], removed: list[RemovedClaim]
+) -> None:
+    """Place the documents again and save them; changed documents need reviewing again."""
+    resume, letter = _placed(pack["draft"], present)
+    placed = {c.id for c in [*resume.all_claims(), *(c for p in letter.paragraphs for c in p)]}
+    for r in removed:
+        # A kept line can't stay once its job heading has gone.
+        r.kept = r.kept and r.id in placed
+    conn.execute(
+        """UPDATE application_packs SET resume = %s, cover_letter = %s, removed_claims = %s,
+               reviewed_at = NULL
+           WHERE id = %s AND user_id = %s""",
+        (
+            Jsonb(resume.model_dump()),
+            Jsonb(letter.model_dump()),
+            Jsonb([r.model_dump() for r in removed]),
+            pack["id"],
+            user_id,
+        ),
+    )
+
+
+def _decide(application_id: UUID, index: int, user_id: UUID, kept: bool) -> ApplicationView:
+    """Record a Keep Anyway decision, or undoing one, and place the documents again."""
+    with connect() as conn:
+        pack = _changeable(conn, user_id, application_id)
+        removed, entry = _entry(pack, index)
+        resume, letter = Resume(**pack["resume"]), CoverLetter(**pack["cover_letter"])
+        present = _present(resume, letter, removed)
+        if kept and not entry.kept:
+            cant = _cant_keep(entry, pack["draft"], set(present))
+            if cant:
+                raise HTTPException(409, cant)
+        if not kept and not entry.kept:
+            raise HTTPException(409, NOT_KEPT)
+        if entry.kept != kept:
+            entry.kept = kept
+            _save_placed(conn, user_id, pack, _present(resume, letter, removed), removed)
+            conn.execute(
+                """INSERT INTO keep_decisions (user_id, application_id, claim, kept)
+                   VALUES (%s, %s, %s, %s)""",
+                (user_id, application_id, entry.text, kept),
+            )
+    return application_view(user_id, application_id)
+
+
+@router.post("/api/applications/{application_id}/removed/{index}/keep")
+def keep_anyway(application_id: UUID, index: int, user_id: UserId) -> ApplicationView:
+    """Keep a Removed Claim after the warning, which the person confirmed in the app."""
+    return _decide(application_id, index, user_id, kept=True)
+
+
+@router.delete("/api/applications/{application_id}/removed/{index}/keep")
+def stop_keeping(application_id: UUID, index: int, user_id: UserId) -> ApplicationView:
+    return _decide(application_id, index, user_id, kept=False)
+
+
+def _draft_claim(draft: dict[str, Any], claim_id: str) -> tuple[DraftClaim, bool]:
+    """A Claim in the draft, and whether it's in the cover letter."""
+    letter = [d for paragraph in draft["cover_letter"] for d in paragraph]
+    for found in letter:
+        if found["id"] == claim_id:
+            return found, True
+    return next(d for d in _resume_drafts(draft["resume"]) if d["id"] == claim_id), False
+
+
+@router.post("/api/applications/{application_id}/removed/{index}/check")
+def check_again(application_id: UUID, index: int, user_id: UserId) -> ApplicationView:
+    """Verify one Removed Claim again against the person's Evidence now.
+
+    It comes back, with that Evidence, only if Verification passes; otherwise its reason is
+    brought up to date. The model call is made with nothing locked.
+    """
+    with connect() as conn:
+        pack = _changeable(conn, user_id, application_id)
+        removed, entry = _entry(pack, index)
+        present = _present(Resume(**pack["resume"]), CoverLetter(**pack["cover_letter"]), removed)
+        if not _can_check(entry, pack["draft"], set(present)):
+            raise HTTPException(409, _cant_keep(entry, pack["draft"], set(present)) or NOT_KEPT)
+        assert entry.id is not None
+        drafted, in_letter = _draft_claim(pack["draft"], entry.id)
+    candidate = DraftClaim(id=entry.id, text=drafted["text"], evidence=[])
+    evidence = _evidence(user_id)
+    alone = DraftSection(kind="custom", heading="Claim", claims=[candidate], groups=[], roles=[])
+    try:
+        result = verify(
+            PackState(
+                user_id=user_id,
+                application_id=application_id,
+                evidence=evidence,
+                resume=[] if in_letter else [alone],
+                cover_letter=[[candidate]] if in_letter else [],
+            )
+        )
+    except (gateway.GatewayError, ValueError, KeyError, TypeError) as error:
+        log.warning("Check again didn't run: %s", type(error).__name__)
+        raise HTTPException(503, NOT_CHECKED) from error
+    with connect() as conn:
+        latest = _changeable(conn, user_id, application_id)
+        removed, now = _entry(latest, index)
+        if latest["id"] != pack["id"] or now.id != entry.id:
+            raise HTTPException(409, PACK_CHANGED)
+        supported = result["supported"].get(entry.id)
+        if supported is None:
+            removed[index] = listed(now.text, result["removed"].get(entry.id, UNCHECKED), now.id)
+            conn.execute(
+                "UPDATE application_packs SET removed_claims = %s WHERE id = %s AND user_id = %s",
+                (Jsonb([r.model_dump() for r in removed]), latest["id"], user_id),
+            )
+        else:
+            removed.pop(index)
+            present = _present(
+                Resume(**latest["resume"]), CoverLetter(**latest["cover_letter"]), removed
+            )
+            refs = [EvidenceRef.model_validate(evidence[n]) for n in supported]
+            present[entry.id] = Claim(text=drafted["text"], evidence=refs, id=entry.id)
+            _save_placed(conn, user_id, latest, present, removed)
+    return application_view(user_id, application_id)
+
+
+class KeptClaims(BaseModel):
+    kept: int
+    applications: int
+
+
+@router.get("/api/kept-claims")
+def kept_claims(user_id: UserId) -> KeptClaims:
+    """Kept Claims across Applications with a ready Pack, for the Eval Runs page: totals only."""
+    with connect() as conn:
+        row: Any = conn.execute(
+            f"""SELECT count(*) AS applications,
+                       COALESCE(sum((SELECT count(*)
+                                     FROM jsonb_array_elements(pack.removed_claims) r
+                                     WHERE r ->> 'kept' = 'true')), 0)::int AS kept
+                FROM applications a
+                JOIN application_packs pack ON pack.id = {LATEST_PACK}
+                WHERE a.user_id = %s AND pack.status = 'ready'""",
+            (user_id,),
+        ).fetchone()
+    return KeptClaims(**row)
 
 
 def _check_ready(pack: Any) -> None:
@@ -1311,7 +1590,7 @@ def take_out_evidence(
         claim.evidence = [ref for ref in claim.evidence if not cites(ref)]
         if claim.evidence:
             return True
-        removed.append(listed(claim.text, EVIDENCE_DELETED))
+        removed.append(listed(claim.text, EVIDENCE_DELETED, claim.id))
         return False
 
     def kept(claims: list[Claim]) -> list[Claim]:
@@ -1323,13 +1602,15 @@ def take_out_evidence(
             if still_supported(role.heading):
                 roles.append(Role(heading=role.heading, lines=kept(role.lines)))
             else:
-                removed.extend(listed(line.text, WITH_HEADING) for line in role.lines)
+                removed.extend(
+                    listed(line.text, WITH_HEADING, line.id) for line in role.lines if not line.kept
+                )
         groups, loose = _regroup(
             [
                 (g.heading if still_supported(g.heading) else None, kept(g.claims))
                 for g in section.groups
             ],
-            lambda heading: removed.append(listed(heading.text, EMPTY_GROUP)),
+            lambda heading: removed.append(listed(heading.text, EMPTY_GROUP, heading.id)),
         )
         section.claims, section.groups, section.roles = (
             [*kept(section.claims), *loose],

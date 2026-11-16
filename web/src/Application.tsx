@@ -12,7 +12,8 @@ type EvidenceRef = {
   // The Evidence item's ID; null for a Profile fact.
   id?: number | null;
 };
-type Claim = { text: string; evidence: EvidenceRef[] };
+// kept: kept with Keep Anyway, so it has no Evidence; labelled here, never in the files.
+type Claim = { text: string; evidence: EvidenceRef[]; kept?: boolean };
 // One of the Application's Requirements and the Evidence its Result rests on.
 type Requirement = {
   requirement: string;
@@ -27,6 +28,12 @@ type RemovedClaim = {
   kind: "stretched" | "invented" | "unchecked" | "with_heading" | "evidence_deleted";
   reason: string;
   next_step: string;
+  // Kept with Keep Anyway, so it's in the documents too.
+  kept: boolean;
+  // Why Keep Anyway isn't offered, or null when it is.
+  cant_keep: string | null;
+  // Whether Check again could bring it back once Evidence is added.
+  can_check: boolean;
 };
 type Role = { heading: Claim; lines: Claim[] };
 // Experience holds roles; every other kind holds Claims.
@@ -113,6 +120,7 @@ const ClaimPicker = createContext<{ selected: Claim | null; select: (claim: Clai
 // A Claim with Evidence, underlined on screen only; label is a heading without its dates.
 function ClaimText({ claim, label = claim.text }: { claim: Claim; label?: string }) {
   const picker = useContext(ClaimPicker);
+  if (claim.kept) return <Kept text={label} />;
   if (!picker || claim.evidence.length === 0) return <>{label}</>;
   return (
     <ClaimLink selected={picker.selected === claim} onClick={() => picker.select(claim)}>
@@ -143,6 +151,27 @@ function ClaimLink({ selected, onClick, children }: { selected?: boolean; onClic
     >
       {children}
     </span>
+  );
+}
+
+const keptBadge: CSSProperties = {
+  fontFamily: "system-ui, sans-serif",
+  fontSize: 11,
+  background: "#fdecea",
+  color: "#8a1c12",
+  borderRadius: 4,
+  padding: "0 4px",
+  marginLeft: 4,
+  whiteSpace: "nowrap",
+};
+
+// A kept Claim, labelled on screen only.
+function Kept({ text }: { text: string }) {
+  return (
+    <>
+      {text}
+      <span style={keptBadge}>Kept by you</span>
+    </>
   );
 }
 
@@ -450,6 +479,83 @@ function EvidencePanel({ pack, onAddToProfile }: { pack: Pack; onAddToProfile?: 
   );
 }
 
+type RemovedClaimsProps = {
+  removed: RemovedClaim[];
+  submitted: boolean;
+  onKeep: (index: number) => Promise<void>;
+  onUnkeep: (index: number) => Promise<void>;
+  onCheck: (index: number) => Promise<void>;
+  onAddToProfile?: (draft: string) => void;
+};
+
+// Claims Verification took out, and what the person can do about each: add Evidence and check
+// again, or keep it anyway after a warning, one Claim at a time.
+function RemovedClaims({ removed, submitted, onKeep, onUnkeep, onCheck, onAddToProfile }: RemovedClaimsProps) {
+  const [confirming, setConfirming] = useState<number | null>(null);
+  const [checking, setChecking] = useState<number | null>(null);
+  return (
+    <div style={card}>
+      <h3 style={{ marginTop: 0 }}>Claims without Evidence</h3>
+      {removed.map((claim, index) => (
+        <div key={index} style={{ borderTop: "1px solid #e4e7eb", padding: "6px 0" }}>
+          {claim.kept ? (
+            <Kept text={claim.text} />
+          ) : (
+            <>
+              <s>{claim.text}</s> <span style={{ fontSize: 12 }}>({KINDS[claim.kind]})</span>
+            </>
+          )}
+          <div style={{ fontSize: 13 }}>{claim.reason}</div>
+          {!claim.kept && <div style={{ fontSize: 13 }}>{claim.next_step}</div>}
+          {!submitted && (
+            <div style={{ marginTop: 4 }}>
+              {claim.kept ? (
+                <button onClick={() => onUnkeep(index)}>Remove</button>
+              ) : confirming === index ? (
+                <div role="alertdialog" aria-label="Keep this Claim?" style={{ background: "#fdecea", padding: "4px 8px" }}>
+                  <b>Keep this?</b> We found no Evidence for it in your resume or Profile. Keep it only if it's true:
+                  it goes in your files without any Evidence behind it.
+                  <div>
+                    <button
+                      onClick={() => {
+                        setConfirming(null);
+                        void onKeep(index);
+                      }}
+                    >
+                      Keep it, it's true
+                    </button>{" "}
+                    <button onClick={() => setConfirming(null)}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {onAddToProfile && <button onClick={() => onAddToProfile(claim.text)}>Add Evidence</button>}{" "}
+                  {claim.can_check && (
+                    <button
+                      disabled={checking !== null}
+                      onClick={() => {
+                        setChecking(index);
+                        onCheck(index).finally(() => setChecking(null));
+                      }}
+                    >
+                      {checking === index ? "Checking…" : "Check again"}
+                    </button>
+                  )}{" "}
+                  {claim.cant_keep === null ? (
+                    <button onClick={() => setConfirming(index)}>Keep anyway</button>
+                  ) : (
+                    <span style={{ fontSize: 13 }}>{claim.cant_keep}</span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 type FinishProps = {
   application: ApplicationData;
   pair: Pair;
@@ -682,16 +788,22 @@ export function Application({
             </p>
           )}
           {pack.removed_claims!.length > 0 && (
-            <div style={card}>
-              <h3 style={{ marginTop: 0 }}>Claims without Evidence</h3>
-              {pack.removed_claims!.map((removed) => (
-                <div key={removed.text} style={{ borderTop: "1px solid #e4e7eb", padding: "6px 0" }}>
-                  <s>{removed.text}</s> <span style={{ fontSize: 12 }}>({KINDS[removed.kind]})</span>
-                  <div style={{ fontSize: 13 }}>{removed.reason}</div>
-                  <div style={{ fontSize: 13 }}>{removed.next_step}</div>
-                </div>
-              ))}
-            </div>
+            <RemovedClaims
+              removed={pack.removed_claims!}
+              submitted={!!application?.submitted_at}
+              onKeep={(index) => update(`removed/${index}/keep`, "POST", "We couldn't keep this Claim. Try again.")}
+              onUnkeep={(index) =>
+                update(`removed/${index}/keep`, "DELETE", "We couldn't remove this Claim. Try again.")
+              }
+              onCheck={(index) =>
+                update(
+                  `removed/${index}/check`,
+                  "POST",
+                  "We couldn't check this Claim again. Your Pack is unchanged, so try again later.",
+                )
+              }
+              onAddToProfile={onAddToProfile}
+            />
           )}
           <div role="group" aria-label="Which pair" style={{ marginBottom: 8 }}>
             Preview and download:{" "}

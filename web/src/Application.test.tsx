@@ -59,7 +59,10 @@ function application(
               text: "Led a team of six engineers",
               kind: "stretched",
               reason: "It goes beyond what your Evidence says: “Member of a team”",
-              next_step: "If it's true, add Evidence for it to your Profile, then generate the Pack again.",
+              next_step: "If it's true, add Evidence for it to your Profile, then Check again.",
+              kept: false,
+              cant_keep: null,
+              can_check: true,
             },
           ]
         : null,
@@ -191,6 +194,74 @@ describe("Application", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Requirement coverage" }));
     expect(screen.getByRole("note").textContent).toContain("written before Claims were linked to Requirements");
     expect(screen.queryByText(/Not used in this Pack/)).toBeNull();
+  });
+
+  it("keeps a Removed Claim only after a warning and a second confirmation, one Claim at a time", async () => {
+    const kept = application("ready");
+    kept.pack!.removed_claims![0].kept = true;
+    kept.pack!.resume!.sections[0].claims.push({ text: "Led a team of six engineers", evidence: [], kept: true });
+    const calls = serve({
+      "GET /api/applications/a": () => application("ready"),
+      "POST /api/applications/a/removed/0/keep": () => kept,
+    });
+    render(<Application id="a" onBack={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Keep anyway" }));
+    const warning = screen.getByRole("alertdialog", { name: "Keep this Claim?" });
+    expect(warning.textContent).toContain("We found no Evidence for it in your resume or Profile");
+    expect(screen.queryByRole("button", { name: /keep all/i })).toBeNull();
+    fireEvent.click(within(warning).getByRole("button", { name: "Cancel" }));
+    expect(calls).not.toContain("POST /api/applications/a/removed/0/keep");
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep anyway" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep it, it's true" }));
+
+    // Labelled in the documents and the list, with Remove to undo it.
+    expect(await screen.findByRole("button", { name: "Remove" })).toBeTruthy();
+    expect(calls).toContain("POST /api/applications/a/removed/0/keep");
+    expect(within(screen.getByLabelText("Resume")).getByText("Kept by you")).toBeTruthy();
+  });
+
+  it("removes a kept Claim, checks a Claim again and adds Evidence for one", async () => {
+    const kept = application("ready");
+    kept.pack!.removed_claims![0].kept = true;
+    const calls = serve({
+      "GET /api/applications/a": () => kept,
+      "DELETE /api/applications/a/removed/0/keep": () => application("ready"),
+      "POST /api/applications/a/removed/0/check": () => application("ready"),
+    });
+    const added: string[] = [];
+    render(<Application id="a" onBack={() => {}} onAddToProfile={(draft) => added.push(draft)} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Evidence" }));
+
+    await screen.findByRole("button", { name: "Check again" });
+    expect(calls).toContain("DELETE /api/applications/a/removed/0/keep");
+    expect(calls).toContain("POST /api/applications/a/removed/0/check");
+    expect(added).toEqual(["Led a team of six engineers"]);
+  });
+
+  it("says why a Removed Claim can't be kept, and nothing changes once Submitted", async () => {
+    const tooLong = application("ready");
+    tooLong.pack!.removed_claims![0] = {
+      ...tooLong.pack!.removed_claims![0],
+      cant_keep: "It's too long to keep.",
+      can_check: false,
+    };
+    serve({ "GET /api/applications/a": () => tooLong });
+    render(<Application id="a" onBack={() => {}} />);
+
+    expect(await screen.findByText("It's too long to keep.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Keep anyway" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+
+    cleanup();
+    serve({ "GET /api/applications/a": () => application("ready", { reviewed: true, submitted_at: "2026-11-04T10:00:00Z" }) });
+    render(<Application id="a" onBack={() => {}} />);
+    await screen.findByText("Claims without Evidence");
+    expect(screen.queryByRole("button", { name: "Keep anyway" })).toBeNull();
   });
 
   it("asks for extra care on a Pack made while evals are failing, without blocking it", async () => {
