@@ -66,13 +66,27 @@ MAIN_KINDS = {"hard_blocker", "must_have"}
 # An answer that isn't JSON, such as one with an unescaped quote, is usually fine when asked again.
 RETRY = RetryPolicy(max_attempts=2, retry_on=(gateway.ModelUnavailable, json.JSONDecodeError))
 STILL_WORKS = "Your Job Posting is saved, and everything else still works."
+WAYS_FORWARD = (
+    "You can retry, check your model settings, or apply with your own resume and mark it as "
+    "Submitted."
+)
+
+
+def _failure_message(reason: str) -> str:
+    """The spec's message when a Pack can't be written, with every way forward."""
+    return (
+        "We couldn't write this Application Pack. Our AI models aren't responding right now: "
+        f"{reason}. {STILL_WORKS} {WAYS_FORWARD}"
+    )
+
+
 WARNINGS = {
-    "model_unavailable": f"Our AI model isn't responding, so this Application Pack is waiting. "
-    f"{STILL_WORKS}",
-    "unusable_answer": f"We couldn't use our AI model's answer, so this Application Pack is "
-    f"waiting. {STILL_WORKS}",
+    "model_unavailable": _failure_message(
+        "every model that may receive your data failed, or is paused after failing"
+    ),
+    "unusable_answer": _failure_message("their answer couldn't be used"),
 }
-UNKNOWN_FAILURE = f"We couldn't write this Application Pack, so it is waiting. {STILL_WORKS}"
+UNKNOWN_FAILURE = _failure_message("something went wrong")
 NOT_REVIEWED = "Tick “I've reviewed this Application Pack” first."
 NOT_READY = "This Application Pack isn't ready yet."
 NO_PACK = "This Application has no Application Pack."
@@ -382,6 +396,8 @@ class ApplicationRow(BaseModel):
     source: str
     status: Literal["generating", "waiting", "ready", "reviewed", "submitted", "no_pack"]
     submitted_at: datetime | None
+    # Submitted with the person's own resume, with no Application Pack.
+    no_pack: bool
     outcome: Outcome | None
     cost_usd: Decimal
     # When a never-submitted Pack is deleted, unless the Application is opened before then.
@@ -1105,6 +1121,7 @@ def list_applications(user_id: UserId) -> list[ApplicationRow]:
     with connect() as conn:
         rows = conn.execute(
             f"""SELECT a.id, p.title, p.employer, a.source, a.submitted_at, a.outcome,
+                       a.submitted_at IS NOT NULL AND a.submitted_pack_id IS NULL AS no_pack,
                        {COST} AS cost_usd,
                        CASE WHEN a.submitted_at IS NOT NULL THEN 'submitted'
                             WHEN pack.id IS NULL THEN 'no_pack'
@@ -1176,16 +1193,24 @@ def review_pack(application_id: UUID, review: Review, user_id: UserId) -> Applic
 
 @router.post("/api/applications/{application_id}/submitted")
 def mark_submitted(application_id: UUID, user_id: UserId) -> ApplicationView:
-    """The person says they submitted it themselves; nothing here ever submits."""
+    """The person says they submitted it themselves; nothing here ever submits.
+
+    A ready Pack must be reviewed first. With no ready Pack, they applied with their own resume:
+    any Pack still being written, or waiting, is dropped, so none appears later.
+    """
     with connect() as conn:
         pack = latest_pack(conn, user_id, application_id)
-        check_reviewed(pack)
+        sent = pack["id"] if pack["status"] == "ready" else None
+        if sent:
+            check_reviewed(pack)
+        elif pack["submitted_at"] is None:
+            delete_packs(conn, user_id, [application_id])
         conn.execute(
             # The version sent is kept with the Application; the others go later.
             """UPDATE applications SET submitted_at = COALESCE(submitted_at, now()),
                                         submitted_pack_id = COALESCE(submitted_pack_id, %s)
                WHERE id = %s AND user_id = %s""",
-            (pack["id"], application_id, user_id),
+            (sent, application_id, user_id),
         )
     return application_view(user_id, application_id)
 

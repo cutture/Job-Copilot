@@ -285,7 +285,7 @@ def test_a_failing_model_makes_the_pack_wait_with_a_warning_until_retried(
 
     pack = client.get(f"/api/applications/{started['id']}").json()["pack"]
     assert pack["status"] == "waiting"
-    assert pack["warning"].startswith("Our AI model isn't responding")
+    assert pack["warning"].startswith("We couldn't write this Application Pack.")
     assert pack["resume"] is None
 
     provider.error = None
@@ -306,7 +306,7 @@ def test_a_pack_whose_verification_fails_is_never_saved_or_shown(
 
     pack = client.get(f"/api/applications/{started['id']}").json()["pack"]
     assert (pack["status"], pack["resume"], pack["cover_letter"]) == ("waiting", None, None)
-    assert pack["warning"].startswith("We couldn't use our AI model's answer")
+    assert "their answer couldn't be used" in pack["warning"]
     with psycopg.connect(TEST_DB) as conn:
         stored = conn.execute("SELECT resume, cover_letter FROM application_packs").fetchone()
     assert stored == (None, None)

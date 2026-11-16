@@ -157,6 +157,29 @@ describe("Application", () => {
     expect(calls).toContain("POST /api/applications/a/retry");
   });
 
+  it("offers every way forward when the Pack can't be written", async () => {
+    const calls = serve({
+      "GET /api/applications/a": () => application("waiting", { apply_url: "https://jobs.example.com/apply" }),
+      "POST /api/applications/a/submitted": () => ({
+        ...application("waiting", { submitted_at: "2026-11-16T10:00:00Z" }),
+        pack: null,
+      }),
+    });
+    const openSettings = vi.fn();
+    render(<Application id="a" onBack={() => {}} onOpenSettings={openSettings} />);
+
+    const card = (await screen.findByRole("button", { name: "Retry" })).closest("div")!;
+    fireEvent.click(within(card).getByRole("button", { name: "Check model settings" }));
+    expect(openSettings).toHaveBeenCalled();
+    expect(
+      within(card).getByRole("link", { name: "Open employer's application page" }).getAttribute("href"),
+    ).toBe("https://jobs.example.com/apply");
+
+    fireEvent.click(within(card).getByRole("button", { name: "I submitted it on their site" }));
+    expect(await screen.findByText(/Submitted with your own resume/)).toBeTruthy();
+    expect(calls).toContain("POST /api/applications/a/submitted");
+  });
+
   it("keeps downloads and Submitted locked until the review is ticked", async () => {
     const calls = serve({
       "GET /api/applications/a": () => application("ready"),

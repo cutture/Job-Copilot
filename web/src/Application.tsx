@@ -326,7 +326,29 @@ function Finish({ application, pair, onReview, onSubmitted, onOutcome, onDownloa
   );
 }
 
-export function Application({ id, onBack }: { id: string; onBack: () => void }) {
+// Applying with the person's own resume when there's no ready Application Pack.
+function OwnResume({ applyUrl, onSubmitted }: { applyUrl: string | null; onSubmitted: () => void }) {
+  return (
+    <>
+      {applyUrl && (
+        <a href={applyUrl} target="_blank" rel="noreferrer noopener" style={{ marginRight: 8 }}>
+          Open employer's application page
+        </a>
+      )}
+      <button onClick={onSubmitted}>I submitted it on their site</button>
+    </>
+  );
+}
+
+export function Application({
+  id,
+  onBack,
+  onOpenSettings,
+}: {
+  id: string;
+  onBack: () => void;
+  onOpenSettings?: () => void;
+}) {
   const [application, setApplication] = useState<ApplicationData | null>(null);
   const [error, setError] = useState("");
   const [downloadError, setDownloadError] = useState("");
@@ -416,17 +438,35 @@ export function Application({ id, onBack }: { id: string; onBack: () => void }) 
         </h2>
       )}
       {error && <p role="alert">{error}</p>}
-      {application && !pack && (
+      {application && !pack && application.submitted_at && (
+        <div style={card}>
+          <p style={{ marginTop: 0 }}>
+            Submitted with your own resume on {new Date(application.submitted_at).toLocaleString()}, with no
+            Application Pack.
+          </p>
+          <div role="group" aria-label="Outcome">
+            Outcome:{" "}
+            {(Object.keys(OUTCOMES) as Outcome[]).map((outcome) => (
+              <button key={outcome} aria-pressed={application.outcome === outcome} onClick={() => report(outcome)}>
+                {OUTCOMES[outcome]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {application && !pack && !application.submitted_at && (
         <div style={card}>
           <p style={{ marginTop: 0 }}>This Application has no Application Pack.</p>
-          <button onClick={writePack}>Write a new Application Pack</button>
+          <button onClick={writePack}>Write a new Application Pack</button>{" "}
+          <OwnResume applyUrl={application.apply_url} onSubmitted={submitted} />
         </div>
       )}
       {pack?.status === "generating" && <p>Writing and checking your Application Pack…</p>}
-      {pack?.status === "waiting" && (
+      {application && pack?.status === "waiting" && (
         <div role="alert" style={{ ...card, background: "#fdecea" }}>
           <p style={{ marginTop: 0 }}>{pack.warning}</p>
-          <button onClick={retry}>Retry</button>
+          <button onClick={retry}>Retry</button> <button onClick={onOpenSettings}>Check model settings</button>{" "}
+          <OwnResume applyUrl={application.apply_url} onSubmitted={submitted} />
         </div>
       )}
       {pack?.status === "ready" && (

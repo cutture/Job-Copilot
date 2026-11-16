@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -108,6 +108,18 @@ describe("pasting a Job Posting", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("was saved");
     expect(field.value).toBe("");
+  });
+
+  it("retries rating a posting that couldn't be rated", async () => {
+    const notRated = { ...posting, id: "4", title: "Platform Engineer", status: "not_rated" };
+    const fetchMock = respondWith([[notRated], [{ ...notRated, status: "received" }]]);
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/job-postings/4/retry-rating", { method: "POST" }),
+    );
   });
 
   it("collapses Filtered Postings but shows each one's reason", async () => {

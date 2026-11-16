@@ -38,6 +38,7 @@ describe("Applications", () => {
               status: "submitted",
               submitted_at: "2026-11-04T10:00:00Z",
               outcome: "no_response",
+              no_pack: true,
             },
           ]),
         ),
@@ -52,6 +53,7 @@ describe("Applications", () => {
     expect(rows[1]).toContain("Not yet");
     expect(rows[1]).toContain("Its Pack will be deleted in 2 days unless you open it");
     expect(rows[2]).toContain("Greenhouse");
+    expect(rows[2]).toContain("Submitted, no Pack");
     expect(rows[2]).toContain("No response");
     expect(rows[2]).toContain("$0.0061");
 

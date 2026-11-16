@@ -27,7 +27,15 @@ type JobPosting = PostingOrigin & {
   application_id?: string | null;
 };
 
-function PostingRow({ posting, onDelete }: { posting: JobPosting; onDelete: (posting: JobPosting) => void }) {
+function PostingRow({
+  posting,
+  onDelete,
+  onRetry,
+}: {
+  posting: JobPosting;
+  onDelete: (posting: JobPosting) => void;
+  onRetry?: (posting: JobPosting) => void;
+}) {
   const notice = deletionNotice(
     posting.deletes_on,
     "This posting",
@@ -50,7 +58,12 @@ function PostingRow({ posting, onDelete }: { posting: JobPosting; onDelete: (pos
       )}
       {posting.status === "queued" && <em> Working on the title…</em>}
       {posting.status === "model_unavailable" && <em> Our AI model couldn't read this posting.</em>}
-      {posting.status === "not_rated" && <em> Our AI model couldn't rate this posting.</em>}
+      {posting.status === "not_rated" && (
+        <>
+          <em> Our AI model couldn't rate this posting.</em>{" "}
+          {onRetry && <button onClick={() => onRetry(posting)}>Retry</button>}
+        </>
+      )}
       {posting.rating_state === "rating" && <em> Rating…</em>}
       {posting.filter_reason && <div style={{ fontSize: 13 }}>{posting.filter_reason}</div>}
       {notice && <div style={{ fontSize: 13 }}>{notice}</div>}
@@ -167,6 +180,18 @@ export function App() {
     refreshPostings();
   }
 
+  async function retryRating(posting: { id: string }) {
+    setError("");
+    const response = await fetch(`/api/job-postings/${posting.id}/retry-rating`, { method: "POST" }).catch(
+      () => null,
+    );
+    if (!response?.ok) {
+      setError("We couldn't retry rating this Job Posting. Try again.");
+      return;
+    }
+    refreshPostings();
+  }
+
   function backToListings() {
     setApplicationId(null);
     setView("postings");
@@ -178,7 +203,14 @@ export function App() {
       <main style={{ maxWidth: 1320, margin: "0 auto", padding: 20, fontFamily: "system-ui, sans-serif" }}>
         <EvalBanner />
         <SpendingBanner />
-        <Application id={applicationId} onBack={backToListings} />
+        <Application
+          id={applicationId}
+          onBack={backToListings}
+          onOpenSettings={() => {
+            setApplicationId(null);
+            setView("spending");
+          }}
+        />
       </main>
     );
   }
@@ -265,7 +297,7 @@ export function App() {
       )}
       <ul>
         {shown.map((posting) => (
-          <PostingRow key={posting.id} posting={posting} onDelete={deletePosting} />
+          <PostingRow key={posting.id} posting={posting} onDelete={deletePosting} onRetry={retryRating} />
         ))}
       </ul>
       {filtered.length > 0 && (
