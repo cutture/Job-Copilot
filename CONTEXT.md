@@ -64,6 +64,10 @@ _Avoid_: Approved, verified, accepted Evidence
 Evidence that the person wrote themselves as a Profile entry, which counts as Evidence and is shown as self-reported.
 _Avoid_: Unverified, manual Evidence
 
+**Direct Evidence**:
+Evidence taken from the person's resume, as opposed to Self-reported Evidence. The Evidence panel labels each item one or the other.
+_Avoid_: Verified Evidence, resume proof
+
 ### Rating
 
 **Match**:
@@ -135,6 +139,10 @@ _Avoid_: Backup, data dump, download all
 **Keyword coverage**:
 How much of a posting's must-haves and nice-to-haves an Application Pack's resume answers, shown as a percentage for the person's information only. A Requirement counts when its Requirement Result is Met (in full) or Partial (half) and the resume cites Evidence that Result rests on; a Result resting on no Evidence item isn't counted. Nothing that writes or checks a Pack reads it.
 _Avoid_: ATS score, Match score, resume score
+
+**Requirement coverage**:
+The Evidence panel's tab listing each of an Application's Requirements with its Requirement Result and the Claims in the Pack that use it. A Claim uses a Requirement when it cites Evidence that Result rests on; a Requirement a Profile field decides is shown as decided by the Profile.
+_Avoid_: Gap analysis, keyword match
 
 **Resume section**:
 A titled part of an Application Pack's resume: Summary, Skills, Experience, Education, Qualifications, Affiliations, Certifications, or one the person names. Its order and headings come from the resume the person uploaded; with none, it's Summary, Skills, Experience, Education, Certifications.
