@@ -316,7 +316,13 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
             "id": None,
         }
         requirements = [r.model_dump() for r in match.requirements]
-        pack = applications.write_pack(EVAL_USER_ID, posting, requirements, pack_evidence)
+        pack = applications.write_pack(
+            EVAL_USER_ID,
+            posting,
+            requirements,
+            pack_evidence,
+            change_requests=case.get("change_requests"),
+        )
         outcome.resume, outcome.letter = _documents_text(pack)
         outcome.removed_kinds = [claim.kind for claim in pack.removed]
         outcome.removed_texts = [claim.text for claim in pack.removed]

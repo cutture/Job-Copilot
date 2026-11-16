@@ -138,7 +138,7 @@ def test_groq_challenges_rating_and_pack_writing_once_a_week(
     rating_cases = sum("passes" not in c["expect"] for c in LOADED["cases"])
     pack_cases = sum(bool(eval_runs.PACK_LABELS & c["expect"].keys()) for c in LOADED["cases"])
     assert runs() == [
-        (None, None, 24),
+        (None, None, len(LOADED["cases"])),
         ("rating", GROQ, rating_cases),
         ("pack", GROQ, pack_cases),
         # Sonnet challenges Verification on the cases that write a Pack.

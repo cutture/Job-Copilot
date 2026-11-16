@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException, Response
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from job_copilot import claims, gateway
 from job_copilot.coverage import Coverage, keyword_coverage
@@ -104,10 +104,17 @@ CREDENTIALS_RULE = (
     "Name a certification, licence or degree only when an Evidence item names it, never "
     "because the posting asks for one. "
 )
+# A Change Request is the person's own words, but a fact in one is never Evidence.
+CHANGE_REQUESTS_RULE = (
+    'Any "change_requests" are the person\'s instructions for this version: follow them only to '
+    "change tone, order, emphasis and length. They are never Evidence: never add a skill, "
+    "number, date, title, employer, credential or achievement because a request states it. "
+)
 RESUME_PROMPT = (
     "You tailor a resume to a job posting. "
     + UNTRUSTED
     + CREDENTIALS_RULE
+    + CHANGE_REQUESTS_RULE
     + "You may only reorder and reword what the Evidence says: never add a skill, number, date, "
     "title, employer or achievement it doesn't state, and never make it sound bigger. Put first "
     "what best answers the posting's Requirements. Never write nationality, marital status, "
@@ -129,6 +136,7 @@ COVER_LETTER_PROMPT = (
     "You write a short cover letter for a job posting. "
     + UNTRUSTED
     + CREDENTIALS_RULE
+    + CHANGE_REQUESTS_RULE
     + "Write at most three short paragraphs about the posting's main Requirements. Every "
     "statement about the person must come from the Evidence, reworded at most. Reply with only "
     'a JSON object: "paragraphs": a list of up to three paragraphs, each {"sentences": [{"text": '
@@ -242,6 +250,8 @@ class PackState(TypedDict, total=False):
     posting: str
     requirements: list[dict[str, Any]]
     evidence: dict[int, dict[str, Any]]
+    # The person's Change Requests for this version, oldest first.
+    change_requests: list[str]
     resume: list[DraftSection]
     cover_letter: list[list[DraftClaim]]
     # The model that wrote the Pack.
@@ -380,6 +390,12 @@ class PackView(BaseModel):
     requirements: list[RequirementView] | None = None
     # Made while evals are failing, so worth checking more closely. It never blocks anything.
     extra_care: bool = False
+    # The Change Requests this version was written with, oldest first.
+    change_requests: list[str] = []
+    # Whether there's an earlier version to go back to.
+    has_previous: bool = False
+    # What a new version should cost: this Application's Pack calls so far, per version.
+    estimate_usd: Decimal | None = None
 
 
 class ApplicationView(BaseModel):
@@ -463,7 +479,7 @@ def _numbered(evidence: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _writing_task(state: PackState, task: str, kinds: set[str] | None = None) -> dict[str, Any]:
     requirements = [r for r in state["requirements"] if kinds is None or r["kind"] in kinds]
-    return {
+    written = {
         "task": task,
         "posting": state["posting"],
         "requirements": [
@@ -471,6 +487,9 @@ def _writing_task(state: PackState, task: str, kinds: set[str] | None = None) ->
         ],
         "evidence": _numbered(state["evidence"]),
     }
+    if state.get("change_requests"):
+        written["change_requests"] = state["change_requests"]
+    return written
 
 
 def _cited(item: dict[str, Any], evidence: dict[int, Any]) -> list[int]:
@@ -908,8 +927,12 @@ def write_pack(
     evidence: dict[int, dict[str, Any]],
     application_id: UUID | None = None,
     sections: list[SectionSpec] | None = None,
+    change_requests: list[str] | None = None,
 ) -> WrittenPack:
-    """Write and verify a Pack, its resume in the given sections, else the default ones."""
+    """Write and verify a Pack, its resume in the given sections, else the default ones.
+
+    Verification never sees the Change Requests: every line is judged against Evidence only.
+    """
     final = cast(
         PackState,
         WORKFLOW.invoke(
@@ -920,6 +943,7 @@ def write_pack(
                 requirements=requirements,
                 evidence=evidence,
                 sections=sections or resume_sections([], []),
+                change_requests=change_requests or [],
             )
         ),
     )
@@ -940,7 +964,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
     pack_id = payload["pack_id"]
     with connect() as conn:
         row: Any = conn.execute(
-            """SELECT a.id, p.text, a.requirements
+            """SELECT a.id, p.text, a.requirements, pack.version, pack.change_requests
                FROM application_packs pack
                JOIN applications a ON a.id = pack.application_id AND a.user_id = pack.user_id
                JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
@@ -965,6 +989,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
             resume_sections(profile["resume_sections"], profile["custom_sections"])
             if profile
             else None,
+            row["change_requests"],
         )
     except gateway.GatewayError as error:
         # No model on the Fallback List could take the call, so the Pack waits.
@@ -988,6 +1013,22 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
         for number, item in evidence.items():
             if item["id"] is not None and number not in still:
                 removed += take_out_evidence(resume, letter, item["id"], item["text"], False)[1]
+        earlier: Any = conn.execute(
+            """SELECT removed_claims FROM application_packs
+               WHERE application_id = %s AND user_id = %s AND version < %s
+               ORDER BY version DESC LIMIT 1""",
+            (row["id"], user_id, row["version"]),
+        ).fetchone()
+        if earlier:
+            kept = [RemovedClaim(**r) for r in earlier["removed_claims"] if r.get("kept")]
+            resume, letter, carried = _carry_kept(SavedPack(resume, letter, removed, draft), kept)
+            _record(
+                conn,
+                user_id,
+                {"application_id": row["id"], "version": row["version"]},
+                carried,
+                True,
+            )
         conn.execute(
             """UPDATE application_packs SET status = 'ready', resume = %s, cover_letter = %s,
                    removed_claims = %s, model = %s, draft = %s
@@ -1045,7 +1086,9 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
                        COALESCE(pr.photo IS NOT NULL, false) AS has_photo,
                        pack.version, pack.status, pack.failure, pack.model, pack.resume,
                        pack.cover_letter, pack.removed_claims, pack.draft, a.requirements,
-                       pack.created_at AS pack_created_at
+                       pack.created_at AS pack_created_at, pack.change_requests,
+                       (SELECT count(*) FROM application_packs v
+                        WHERE v.application_id = a.id AND v.user_id = a.user_id) AS versions
                 FROM applications a
                 JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
                 LEFT JOIN application_packs pack ON pack.id = {LATEST_PACK}
@@ -1081,6 +1124,9 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
             coverage=keyword_coverage(requirements, _cited_ids(resume)) if resume else None,
             requirements=requirements if ready else None,
             extra_care=extra_care,
+            change_requests=row["change_requests"],
+            has_previous=row["versions"] > 1,
+            estimate_usd=row["cost_usd"] / row["version"] if row["cost_usd"] else None,
         )
     )
     return ApplicationView(
@@ -1369,6 +1415,27 @@ def _save_placed(
     return gone
 
 
+def _comparable(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def _carry_kept(
+    saved: SavedPack, earlier: list[RemovedClaim]
+) -> tuple[Resume, CoverLetter, list[str]]:
+    """Keep again what the previous version kept, where this draft still has the same Claim and
+    Verification removed it again. Returns the documents and the draft IDs carried over."""
+    wanted = {_comparable(r.text) for r in earlier}
+    carried: list[str] = []
+    for entry in saved.removed:
+        if entry.id and _comparable(entry.text) in wanted and saved.cant_keep(entry) is None:
+            entry.kept = True
+            assert saved.draft is not None
+            resume, letter = _placed(saved.draft, saved.present())
+            saved = saved._replace(resume=resume, letter=letter)
+            carried.append(entry.id)
+    return saved.resume, saved.letter, carried
+
+
 def _decide(application_id: UUID, claim_id: str, user_id: UUID, kept: bool) -> ApplicationView:
     """Record a Keep Anyway decision, or undoing one, and place the documents again."""
     with connect() as conn:
@@ -1463,6 +1530,75 @@ def check_again(application_id: UUID, claim_id: str, user_id: UserId) -> Applica
             refs = [EvidenceRef.model_validate(evidence[n]) for n in supported]
             present[claim_id] = Claim(text=drafted["text"], evidence=refs, id=claim_id)
             _save_placed(conn, user_id, latest, present, now.removed)
+    return application_view(user_id, application_id)
+
+
+MAX_CHANGE_REQUEST_LENGTH = 500
+# Each version is written with every request so far, so the list stays short.
+MAX_CHANGE_REQUESTS = 5
+
+
+class ChangeRequest(BaseModel):
+    request: str = Field(max_length=MAX_CHANGE_REQUEST_LENGTH)
+
+    @field_validator("request")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        cleaned = strip_controls(value).strip()
+        if not cleaned:
+            raise ValueError("Say what should change")
+        return cleaned
+
+
+@router.post("/api/applications/{application_id}/changes", status_code=202)
+def request_changes(
+    application_id: UUID, change: ChangeRequest, user_id: UserId
+) -> ApplicationView:
+    """Write a new Pack version with this Change Request and every earlier one."""
+    with connect() as conn:
+        pack = _changeable(conn, user_id, application_id)
+        asked = [*pack["change_requests"], change.request]
+        if len(asked) > MAX_CHANGE_REQUESTS:
+            raise HTTPException(
+                409,
+                f"This Pack has had {MAX_CHANGE_REQUESTS} Change Requests, the most it takes. Go "
+                "back to an earlier version, or delete the Pack and write a new one.",
+            )
+        new: Any = conn.execute(
+            """INSERT INTO application_packs (user_id, application_id, version, change_requests)
+               VALUES (%s, %s, %s, %s) RETURNING id""",
+            (user_id, application_id, pack["version"] + 1, Jsonb(asked)),
+        ).fetchone()
+        queue_pack(conn, user_id, new["id"])
+    return application_view(user_id, application_id)
+
+
+@router.post("/api/applications/{application_id}/previous")
+def previous_version(application_id: UUID, user_id: UserId) -> ApplicationView:
+    """Go back to the version before the latest, deleting the latest, even one still being
+    written. The version restored needs reviewing again."""
+    with connect() as conn:
+        pack = latest_pack(conn, user_id, application_id)
+        if pack["id"] is None:
+            raise HTTPException(409, NO_PACK)
+        if pack["submitted_at"] is not None:
+            raise HTTPException(409, "A Submitted Application keeps the Pack you sent.")
+        earlier: Any = conn.execute(
+            """SELECT id FROM application_packs
+               WHERE application_id = %s AND user_id = %s AND version < %s
+               ORDER BY version DESC LIMIT 1""",
+            (application_id, user_id, pack["version"]),
+        ).fetchone()
+        if earlier is None:
+            raise HTTPException(409, "This is the Pack's first version, so there's none before it.")
+        conn.execute(
+            "DELETE FROM application_packs WHERE id = %s AND user_id = %s", (pack["id"], user_id)
+        )
+        drop_queued_work(conn, user_id, "pack_id", [pack["id"]])
+        conn.execute(
+            "UPDATE application_packs SET reviewed_at = NULL WHERE id = %s AND user_id = %s",
+            (earlier["id"], user_id),
+        )
     return application_view(user_id, application_id)
 
 

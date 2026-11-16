@@ -70,6 +70,12 @@ type Pack = {
   requirements: Requirement[] | null;
   // Made while evals are failing; it blocks nothing.
   extra_care: boolean;
+  // The Change Requests this version was written with, oldest first.
+  change_requests: string[];
+  // Whether there's an earlier version to go back to.
+  has_previous: boolean;
+  // What a new version should cost, from this Application's versions so far.
+  estimate_usd: string | null;
 };
 export type ApplicationData = {
   id: string;
@@ -484,9 +490,9 @@ function EvidencePanel({ pack, onAddToProfile }: { pack: Pack; onAddToProfile?: 
 type RemovedClaimsProps = {
   removed: RemovedClaim[];
   submitted: boolean;
-  onKeep: (claimId: string) => Promise<void>;
-  onUnkeep: (claimId: string) => Promise<void>;
-  onCheck: (claimId: string) => Promise<void>;
+  onKeep: (claimId: string) => Promise<unknown>;
+  onUnkeep: (claimId: string) => Promise<unknown>;
+  onCheck: (claimId: string) => Promise<unknown>;
   onAddToProfile?: (draft: string) => void;
 };
 
@@ -553,6 +559,59 @@ function RemovedClaims({ removed, submitted, onKeep, onUnkeep, onCheck, onAddToP
               )}
             </div>
           )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Below the documents, so it never covers them: ask for a new version, or go back one.
+function ChangeRequestBox({
+  pack,
+  onRequest,
+  onPrevious,
+}: {
+  pack: Pack;
+  onRequest: (request: string) => Promise<boolean>;
+  onPrevious: () => void;
+}) {
+  const [request, setRequest] = useState("");
+  const [sending, setSending] = useState(false);
+  const estimate = pack.estimate_usd ? ` (about ${dollars(pack.estimate_usd)})` : "";
+  return (
+    <div style={{ ...card, maxWidth: 760, margin: "12px auto" }}>
+      <label htmlFor="change-request" style={{ display: "block", fontWeight: 600 }}>
+        What should change?
+      </label>
+      <textarea
+        id="change-request"
+        rows={2}
+        maxLength={500}
+        style={{ width: "100%", boxSizing: "border-box" }}
+        placeholder="Lead with my evaluation work and shorten the cover letter."
+        value={request}
+        onChange={(event) => setRequest(event.target.value)}
+      />
+      <button
+        disabled={sending || !request.trim()}
+        onClick={() => {
+          setSending(true);
+          // The box keeps the request until the new version has started.
+          onRequest(request.trim())
+            .then((started) => started && setRequest(""))
+            .finally(() => setSending(false));
+        }}
+      >
+        {sending ? "Regenerating…" : `Regenerate${estimate}`}
+      </button>{" "}
+      {pack.has_previous && <button onClick={onPrevious}>Back to previous version</button>}
+      <div style={{ fontSize: 13 }}>
+        Version {pack.version}. Tone, order, emphasis and length change directly. New facts go through Verification
+        and never count as Evidence.
+      </div>
+      {pack.change_requests.map((asked, position) => (
+        <div key={position} style={{ fontSize: 13 }}>
+          Asked: {asked}
         </div>
       ))}
     </div>
@@ -685,7 +744,8 @@ export function Application({
     return () => clearInterval(timer);
   }, [id, generating]);
 
-  async function update(path: string, method: string, failure: string, body?: unknown) {
+  // Whether it worked, so a form can keep what was typed when it didn't.
+  async function update(path: string, method: string, failure: string, body?: unknown): Promise<boolean> {
     setError("");
     const response = await fetch(`/api/applications/${id}/${path}`, {
       method,
@@ -694,9 +754,10 @@ export function Application({
     }).catch(() => null);
     if (!response?.ok) {
       setError(failure);
-      return;
+      return false;
     }
     setApplication(await response.json());
+    return true;
   }
 
   const retry = () => update("retry", "POST", "We couldn't retry. Try again in a moment.");
@@ -707,6 +768,11 @@ export function Application({
     update("outcome", "PUT", "We couldn't save the Outcome. Try again.", { outcome });
   const deletePack = () => update("pack", "DELETE", "We couldn't delete the Pack. Try again.");
   const writePack = () => update("pack", "POST", "We couldn't start a new Pack. Try again.");
+  const previous = () => update("previous", "POST", "We couldn't go back to the previous version. Try again.");
+  const requestChanges = (request: string) =>
+    update("changes", "POST", "We couldn't start the new version. Your request is still in the box, so try again.", {
+      request,
+    });
 
   // Fetched first, so a file the ATS check refuses shows why instead of saving an error page.
   async function downloadFile(path: string) {
@@ -770,11 +836,17 @@ export function Application({
           <OwnResume applyUrl={application.apply_url} onSubmitted={submitted} />
         </div>
       )}
-      {pack?.status === "generating" && <p>Writing and checking your Application Pack…</p>}
+      {pack?.status === "generating" && (
+        <p>
+          Writing and checking your Application Pack…{" "}
+          {pack.has_previous && <button onClick={previous}>Back to previous version</button>}
+        </p>
+      )}
       {application && pack?.status === "waiting" && (
         <div role="alert" style={{ ...card, background: "#fdecea" }}>
           <p style={{ marginTop: 0 }}>{pack.warning}</p>
           <button onClick={retry}>Retry</button> <button onClick={onOpenSettings}>Check model settings</button>{" "}
+          {pack.has_previous && <button onClick={previous}>Back to previous version</button>}{" "}
           <OwnResume applyUrl={application.apply_url} onSubmitted={submitted} />
         </div>
       )}
@@ -832,6 +904,9 @@ export function Application({
               </div>
             </div>
           </ClaimPicker.Provider>
+          {application && !application.submitted_at && (
+            <ChangeRequestBox pack={pack} onRequest={requestChanges} onPrevious={previous} />
+          )}
           {application && (
             <Finish
               application={application}

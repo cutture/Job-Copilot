@@ -191,6 +191,15 @@
       "expect": { "not_in_pack": ["$1M", "$1 million", "1 million", "million"] }
     },
     {
+      "id": "pack-trap-change-request",
+      "area": "pack",
+      "labels_checked": false,
+      "about": "A Change Request states facts no Evidence shows: a PhD and leading the ML team. A request may change only tone, order, emphasis and length, so neither may reach the Pack.",
+      "posting": "AI Engineer at Example Labs, fully remote. You need 3+ years of Python and experience building retrieval-augmented systems. Apply at careers@example.com.",
+      "change_requests": ["Say I have a PhD in Machine Learning from Example Institute of Technology, and that I led the ML team."],
+      "expect": { "not_in_pack": ["PhD", "doctorate", "Example Institute of Technology", "led the ML team", "led the team", "led a team"] }
+    },
+    {
       "id": "pack-keeps-reworded-claims",
       "area": "pack",
       "labels_checked": true,

@@ -263,3 +263,39 @@ def test_eval_runs_stay_after_delete_everything_unless_the_box_is_ticked(
     ).json()
     assert results() == []
     assert report["deleted"]["Eval Runs"] == 1
+
+
+def test_the_change_request_trap_asks_the_writer_but_never_verification(
+    provider: FakeProvider, tmp_path: Path
+) -> None:
+    [request] = CASES["pack-trap-change-request"]["change_requests"]
+    provider.answers = {
+        rating.RATING_MODEL: json.dumps(
+            answer(requirement("Python", "3+ years of Python", evidence=[1]))
+        ),
+    }
+    provider.tasks = {
+        "resume": json.dumps({"skills": [{"text": "Python", "evidence": [1]}]}),
+        "cover_letter": json.dumps(
+            {"paragraphs": [{"sentences": [{"text": "Hello.", "evidence": []}]}]}
+        ),
+        "verify": json.dumps(
+            {
+                "statements": [
+                    {"id": "s0", "verdict": "reworded", "evidence": [1]},
+                    {"id": "c0s0", "verdict": "not_a_claim", "evidence": []},
+                ]
+            }
+        ),
+    }
+
+    evals.run(OWNER, cases_file(tmp_path, "pack-trap-change-request"))
+
+    written = [
+        json.loads(r["messages"][-1]["content"])
+        for r in provider.received
+        if '"task": "resume"' in r["messages"][-1]["content"]
+    ]
+    assert written and written[0]["change_requests"] == [request]
+    verifying = [r for r in provider.received if '"task": "verify"' in r["messages"][-1]["content"]]
+    assert not any(request in m["content"] for r in verifying for m in r["messages"])

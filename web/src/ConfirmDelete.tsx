@@ -8,7 +8,7 @@ export function ConfirmDelete({
 }: {
   label?: string;
   question: string;
-  onConfirm: () => void | Promise<void>;
+  onConfirm: () => void | Promise<unknown>;
 }) {
   const [asking, setAsking] = useState(false);
   if (!asking) return <button onClick={() => setAsking(true)}>{label}</button>;

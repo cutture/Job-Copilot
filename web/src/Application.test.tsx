@@ -68,6 +68,9 @@ function application(
           ]
         : null,
       extra_care: false,
+      change_requests: [],
+      has_previous: false,
+      estimate_usd: ready ? "0.0061" : null,
       requirements: ready
         ? [
             { requirement: "Python", kind: "must_have", result: "met", evidence_ids: [1] },
@@ -263,6 +266,59 @@ describe("Application", () => {
     render(<Application id="a" onBack={() => {}} />);
     await screen.findByText("Claims without Evidence");
     expect(screen.queryByRole("button", { name: "Keep anyway" })).toBeNull();
+  });
+
+  it("asks for changes below the documents and goes back to the previous version", async () => {
+    const second = application("ready");
+    second.pack = { ...second.pack!, version: 2, change_requests: ["Shorten the cover letter."], has_previous: true };
+    const calls = serve({
+      "GET /api/applications/a": () => application("ready"),
+      "POST /api/applications/a/changes": () => ({ ...second, pack: { ...second.pack!, status: "generating" } }),
+      "POST /api/applications/a/previous": () => application("ready"),
+    });
+    const sent: unknown[] = [];
+    const fetchMock = vi.mocked(fetch);
+    render(<Application id="a" onBack={() => {}} />);
+
+    const box = await screen.findByLabelText("What should change?");
+    // Below both documents, so it never covers them.
+    expect(screen.getByLabelText("Cover letter").compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(/Version 1\. Tone, order, emphasis and length change directly/)).toBeTruthy();
+    fireEvent.change(box, { target: { value: "Shorten the cover letter." } });
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate (about $0.0061)" }));
+
+    expect(await screen.findByText(/Writing and checking your Application Pack/)).toBeTruthy();
+    const [, init] = fetchMock.mock.calls.find(([url]) => url === "/api/applications/a/changes")!;
+    sent.push(JSON.parse(init!.body as string));
+    expect(sent).toEqual([{ request: "Shorten the cover letter." }]);
+    fireEvent.click(screen.getByRole("button", { name: "Back to previous version" }));
+    await screen.findByLabelText("What should change?");
+    expect(calls).toContain("POST /api/applications/a/previous");
+  });
+
+  it("lists what each version was asked, keeps a request that failed to start, and hides once Submitted", async () => {
+    const second = application("ready");
+    second.pack = { ...second.pack!, version: 2, change_requests: ["Shorten the cover letter."], has_previous: true };
+    serve({
+      "GET /api/applications/a": () => second,
+      "POST /api/applications/a/changes": () => new Response("{}", { status: 500 }),
+    });
+    render(<Application id="a" onBack={() => {}} />);
+
+    expect(await screen.findByText("Asked: Shorten the cover letter.")).toBeTruthy();
+    const box = screen.getByLabelText<HTMLTextAreaElement>("What should change?");
+    fireEvent.change(box, { target: { value: "Warmer, please." } });
+    fireEvent.click(screen.getByRole("button", { name: /Regenerate/ }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(box.value).toBe("Warmer, please.");
+
+    cleanup();
+    serve({
+      "GET /api/applications/a": () => application("ready", { reviewed: true, submitted_at: "2026-11-04T10:00:00Z" }),
+    });
+    render(<Application id="a" onBack={() => {}} />);
+    await screen.findByLabelText("Resume");
+    expect(screen.queryByLabelText("What should change?")).toBeNull();
   });
 
   it("asks for extra care on a Pack made while evals are failing, without blocking it", async () => {
