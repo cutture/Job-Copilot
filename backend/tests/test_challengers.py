@@ -135,20 +135,36 @@ def test_groq_challenges_rating_and_pack_writing_once_a_week(
 
     rating_cases = sum("passes" not in c["expect"] for c in LOADED["cases"])
     pack_cases = sum(bool(eval_runs.PACK_LABELS & c["expect"].keys()) for c in LOADED["cases"])
-    assert runs() == [(None, None, 24), ("rating", GROQ, rating_cases), ("pack", GROQ, pack_cases)]
+    assert runs() == [
+        (None, None, 24),
+        ("rating", GROQ, rating_cases),
+        ("pack", GROQ, pack_cases),
+        # Sonnet challenges Verification on the cases that write a Pack.
+        ("verification", SONNET, pack_cases),
+    ]
 
     with psycopg.connect(TEST_DB, autocommit=True) as conn:
         conn.execute("UPDATE eval_runs SET started_at = started_at - interval '8 days'")
     worker.schedule_daily_evals(now)
-    assert [r[0] for r in runs()][3:] == [None, "rating", "pack"]
+    assert [r[0] for r in runs()][4:] == [None, "rating", "pack", "verification"]
+
+
+def test_the_verification_challenger_waits_for_an_anthropic_key(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+
+    worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
+
+    assert "verification" not in [r[0] for r in runs()]
 
 
 def test_no_challenger_runs_for_a_model_already_approved_or_one_that_cant_take_the_data(
     client: TestClient, provider: FakeProvider
 ) -> None:
     worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
-    # Groq's Zero Data Retention isn't confirmed, so it can't run these steps.
-    assert [r[0] for r in runs()] == [None]
+    # Groq's Zero Data Retention isn't confirmed, so it can't run these steps; Sonnet can.
+    assert [r[0] for r in runs()] == [None, "verification"]
 
     confirm_groq_zdr(client)
     use_for("rating", GROQ)
@@ -156,7 +172,7 @@ def test_no_challenger_runs_for_a_model_already_approved_or_one_that_cant_take_t
         conn.execute("DELETE FROM jobs")
         conn.execute("DELETE FROM eval_runs")
     worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
-    assert [r[0] for r in runs()] == [None, "pack"]
+    assert [r[0] for r in runs()] == [None, "pack", "verification"]
 
 
 def test_a_challenger_run_uses_its_model_for_its_step_and_records_the_models(

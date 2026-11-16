@@ -264,3 +264,69 @@ def test_the_challengers_other_steps_must_match_the_runs_its_compared_with(
         )
 
     assert recommended(client) == []
+
+
+def verification_run(
+    weeks_ago: int, model: str, challenger: bool, caught: int, removed: int
+) -> None:
+    """A finished run of one Pack case with 4 planted traps and 4 supported Claims."""
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        conn.execute("UPDATE users SET groq_zdr_confirmed = true WHERE id = %s", (SEEDED_USER_ID,))
+        run: Any = conn.execute(
+            """INSERT INTO eval_runs (user_id, deepeval_version, started_at, finished_at,
+                                      challenger_step, challenger_model)
+               VALUES (%s, 'x', now() - %s * interval '1 week', now() - %s * interval '1 week',
+                       %s, %s) RETURNING id""",
+            (
+                SEEDED_USER_ID,
+                weeks_ago,
+                weeks_ago,
+                "verification" if challenger else None,
+                model if challenger else None,
+            ),
+        ).fetchone()
+        scores = CaseScores(
+            traps_caught=caught, traps_planted=4, wrongly_removed=removed, supported_labelled=4
+        )
+        conn.execute(
+            """INSERT INTO eval_results (user_id, run_id, case_id, area, status,
+                                        hard_failure, labels_checked, reason, scores, models)
+               VALUES (%s, %s, 'pack-case', 'pack', 'passed', false, true, 'r', %s, %s)""",
+            (
+                SEEDED_USER_ID,
+                run[0],
+                scores.model_dump_json(),
+                json.dumps({"rating": HAIKU, "pack": HAIKU, "verification": model}),
+            ),
+        )
+
+
+def test_a_verification_challenger_that_catches_more_traps_is_recommended(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    for week in (3, 2, 1):
+        verification_run(week, HAIKU, challenger=False, caught=3, removed=1)
+        verification_run(week, SONNET, challenger=True, caught=4, removed=1)
+
+    [recommendation] = recommended(client)
+    assert (recommendation["step"], recommendation["label"]) == ("verification", "Verification")
+
+
+def test_fewer_wrong_removals_alone_doesnt_make_a_verification_challenger_qualify(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    for week in (3, 2, 1):
+        verification_run(week, HAIKU, challenger=False, caught=4, removed=1)
+        verification_run(week, SONNET, challenger=True, caught=4, removed=0)
+
+    assert recommended(client) == []
+
+
+def test_catching_more_but_removing_more_supported_claims_doesnt_qualify(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    for week in (3, 2, 1):
+        verification_run(week, HAIKU, challenger=False, caught=3, removed=0)
+        verification_run(week, SONNET, challenger=True, caught=4, removed=1)
+
+    assert recommended(client) == []

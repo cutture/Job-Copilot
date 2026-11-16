@@ -3,7 +3,8 @@ it or switching back.
 
 A Challenger qualifies after three Challenger runs about a week apart with no Hard Failures,
 which do no worse than the current model on any of the step's judged scores, in the same weeks
-and on the same models for every other step, and better on one. It must be able to take the
+and on the same models for every other step, and better on one; a Verification Challenger must
+be better at catching traps. It must be able to take the
 step's data now, and last month's total, with that step repriced at its rates, must fit the
 monthly cap. Nothing switches until the owner approves.
 """
@@ -29,7 +30,11 @@ RUNS_APART = timedelta(days=6)
 STEP_SCORES = {
     "rating": {"Exact Band": True, "Requirement Results": True},
     "pack": {"Writer invention rate": False, "Stretched Claims": False},
+    "verification": {"Traps caught": True, "Wrong removals": False},
 }
+# A step whose Challenger must be better on this score in particular, not on any: a Verification
+# model is adopted only if it catches more.
+MUST_BE_BETTER_ON = {"verification": "Traps caught"}
 # How far back spending is priced for the cost check.
 USE_DAYS = 30
 
@@ -177,7 +182,9 @@ def _recommendation(
 
     if not compared or any(ahead(n, ours, theirs) for n in compared):
         return None
-    if not any(ahead(n, theirs, ours) for n in compared):
+    must = MUST_BE_BETTER_ON.get(step)
+    better_on = [must] if must else compared
+    if not any(n in compared and ahead(n, theirs, ours) for n in better_on):
         return None
     projected = _projected_monthly(conn, owner, challenger)
     cap, _ = gateway.cap_and_spent(conn, owner)

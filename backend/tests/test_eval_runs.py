@@ -38,6 +38,12 @@ class Counts(NamedTuple):
     case_jobs: int
 
 
+@pytest.fixture(autouse=True)
+def daily_runs_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about the daily run; Challenger runs have their own tests."""
+    monkeypatch.setattr(eval_runs, "CHALLENGERS", ())
+
+
 def counts() -> Counts:
     """Eval Runs started, and Eval Case jobs still queued."""
     with psycopg.connect(TEST_DB) as conn:

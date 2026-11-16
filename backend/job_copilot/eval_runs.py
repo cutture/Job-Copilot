@@ -35,14 +35,17 @@ def load_cases(cases_file: Path = CASES_FILE) -> dict[str, Any]:
     return loaded
 
 
-# Free Challengers tried weekly on each step; a paid one runs only when the owner starts it.
+# Challengers tried weekly on each step. Sonnet on rating or Pack writing costs about $0.70 a
+# run, so it runs only when the owner starts it.
 CHALLENGERS = (
     gateway.Challenger("rating", gateway.GROQ_PERSONAL),
     gateway.Challenger("pack", gateway.GROQ_PERSONAL),
+    # Paid, but Verification is a few calls a Pack case: about $0.10 a week.
+    gateway.Challenger("verification", gateway.SONNET),
 )
 CHALLENGER_EVERY_DAYS = 7
-# The model steps a Challenger can take over; both handle personal data.
-CHALLENGER_STEPS = ("rating", "pack")
+# The model steps a Challenger can take over; all handle personal data.
+CHALLENGER_STEPS = ("rating", "pack", "verification")
 # Labels on a case that writes a Pack, and the ones a rating Challenger is judged on.
 PACK_LABELS = {"not_in_resume", "not_in_pack", "in_pack"}
 RATING_LABELS = {"band", "hard_blocker", "requirements"}
@@ -51,7 +54,7 @@ Challenger = gateway.Challenger
 
 def uses_step(case: dict[str, Any], step: str) -> bool:
     """Whether a case reaches this model step: Filter-only cases never rate, and only cases
-    labelled with what a Pack may hold write one."""
+    labelled with what a Pack may hold write and verify one."""
     if step == "rating":
         return "passes" not in case["expect"]
     return bool(PACK_LABELS & case["expect"].keys())
