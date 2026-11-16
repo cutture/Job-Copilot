@@ -170,6 +170,10 @@ _Avoid_: Fact check, validation
 A Claim that restates something in the Evidence in different words, which is allowed.
 _Avoid_: Paraphrase, stretched claim
 
+**Credential**:
+A certification, licence or degree. A Claim may name one only when its cited Evidence names that same one, which code checks whatever the model says.
+_Avoid_: Qualification, which is a resume section
+
 **Stretched Claim**:
 A Claim based on something real in the Evidence but inflated beyond it, such as "led a team" from "member of a team".
 _Avoid_: Exaggeration, invented claim
