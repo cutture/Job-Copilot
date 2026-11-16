@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -14,6 +14,7 @@ from job_copilot import (
     documents,
     eval_runs,
     export,
+    gateway,
     model_settings,
     profile,
     rating,
@@ -136,6 +137,21 @@ def paste_posting(posting: PastedPosting, user_id: UserId) -> JobPosting:
         ).fetchone()
         search.queue_processing(conn, user_id, row["id"])
     return JobPosting(**row, expired=False)
+
+
+@app.post("/api/job-postings/{posting_id}/retry-rating", status_code=202)
+def retry_rating(posting_id: UUID, user_id: UserId) -> None:
+    """Rate a posting that couldn't be rated again, starting a paused rating step at once."""
+    with connect() as conn:
+        updated = conn.execute(
+            """UPDATE job_postings SET status = 'received'
+               WHERE id = %s AND user_id = %s AND status = 'not_rated'""",
+            (posting_id, user_id),
+        ).rowcount
+    if not updated:
+        raise HTTPException(409, "This Job Posting isn't waiting to be rated again.")
+    gateway.resume_steps(user_id, gateway.JOB_STEPS["rate_match"])
+    rating.queue_ratings(user_id)
 
 
 def _credit_text(source: str) -> str | None:

@@ -28,6 +28,9 @@ NOT_RECORDED = "Not recorded: Job Copilot never sends prompt or answer text"
 # Free tiers limit tokens per minute, so a rate-limited model is asked again after waiting,
 # across about a minute, before the next model on the list.
 RATE_LIMIT_TRIES = 3
+# A model step pauses after its whole Fallback List fails this many times in a row, for a while.
+PAUSE_AFTER_FAILURES = 3
+PAUSE_MINUTES = 30
 RATE_LIMIT_WAIT_SECONDS = 30.0
 
 
@@ -104,6 +107,14 @@ class Challenger(NamedTuple):
     model: str
 
 
+# The model steps each kind of queued job calls, so a paused step's jobs wait.
+JOB_STEPS = {
+    "process_posting": ["filter"],
+    "extract_evidence": ["evidence"],
+    "rate_match": ["rating"],
+    "generate_pack": ["pack", "verification"],
+}
+
 # The Challenger a run is trying; calls for its step use it alone.
 _challenger: ContextVar[Challenger | None] = ContextVar("challenger", default=None)
 # Where calls record the model each step used, while an Eval Case runs.
@@ -163,6 +174,10 @@ class ModelUnavailable(GatewayError):
         # The provider refused the key or the account has no credit, so retrying won't help today.
         self.out_of_credit = out_of_credit
         self.rate_limited = rate_limited
+
+
+class StepPaused(ModelUnavailable):
+    """The model step failed too often in a row, so it waits a while before trying again."""
 
 
 @dataclass(frozen=True)
@@ -533,6 +548,40 @@ def model_status(user_id: UUID) -> ModelStatus:
     )
 
 
+def paused_until(user_id: UUID, step: str) -> datetime | None:
+    with connect() as conn:
+        row: Any = conn.execute(
+            """SELECT paused_until FROM step_pauses
+               WHERE user_id = %s AND step = %s AND paused_until > now()""",
+            (user_id, step),
+        ).fetchone()
+    return row["paused_until"] if row else None
+
+
+def _failed(user_id: UUID, step: str) -> None:
+    """Count a whole Fallback List failing, and pause the step at the third in a row."""
+    with connect() as conn:
+        conn.execute(
+            f"""INSERT INTO step_pauses AS s (user_id, step, failures)
+                VALUES (%(user)s, %(step)s, 1)
+                ON CONFLICT (user_id, step) DO UPDATE SET
+                    failures = CASE WHEN s.failures + 1 >= {PAUSE_AFTER_FAILURES} THEN 0
+                                    ELSE s.failures + 1 END,
+                    paused_until = CASE WHEN s.failures + 1 >= {PAUSE_AFTER_FAILURES}
+                                        THEN now() + interval '{PAUSE_MINUTES} minutes'
+                                        ELSE s.paused_until END""",
+            {"user": user_id, "step": step},
+        )
+
+
+def resume_steps(user_id: UUID, steps: Sequence[str]) -> None:
+    """Start these model steps again now, as Retry does, with their failure count cleared."""
+    with connect() as conn:
+        conn.execute(
+            "DELETE FROM step_pauses WHERE user_id = %s AND step = ANY(%s)", (user_id, list(steps))
+        )
+
+
 def can_take_personal(user_id: UUID, model: str) -> bool:
     """Whether this model may receive personal-data work for the person now."""
     return not _skip(model, DataClass.PERSONAL, model_settings(user_id))
@@ -567,6 +616,11 @@ def complete_first(
     Eval Cases stop at their own cap instead, so they never test a model the person isn't using.
     """
     model_step = STEP_OF.get(step, step)
+    until = paused_until(user_id, model_step)
+    if until:
+        raise StepPaused(
+            f"{STEP_LABELS.get(model_step, model_step)} is paused until {until:%H:%M} UTC"
+        )
     models = _ordered(user_id, model_step, models)
     for model in models:
         rule = MODELS.get(model)
@@ -592,6 +646,7 @@ def complete_first(
                 used = _used.get()
                 if used is not None:
                     used[model_step] = completion.model
+                resume_steps(user_id, [model_step])
                 return completion
             except CapReached:
                 if user_id == EVAL_USER_ID:
@@ -607,6 +662,9 @@ def complete_first(
                 rate_limited = rate_limited or error.rate_limited
                 failures.append(str(error))
             break
+    # Only models that were called and failed count towards a pause, not the cap or missing keys.
+    if any(not f.endswith("monthly cap reached") for f in failures):
+        _failed(user_id, model_step)
     # Every failure's type is kept, so a rate limit still reads as one: evals count it as not run.
     raise ModelUnavailable(
         "; ".join(failures) or "No model is set up for this step", rate_limited=rate_limited

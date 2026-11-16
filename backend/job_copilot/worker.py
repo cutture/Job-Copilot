@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -6,7 +7,16 @@ from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
-from job_copilot import applications, eval_runs, filter, profile, rating, retention, search
+from job_copilot import (
+    applications,
+    eval_runs,
+    filter,
+    gateway,
+    profile,
+    rating,
+    retention,
+    search,
+)
 from job_copilot.db import connect, current_user_id
 
 log = logging.getLogger(__name__)
@@ -166,10 +176,16 @@ def run_once() -> bool:
     with connect() as conn:
         job = conn.execute(
             """DELETE FROM jobs WHERE id = (
-                   SELECT id FROM jobs ORDER BY kind = %s, id FOR UPDATE SKIP LOCKED LIMIT 1
+                   SELECT id FROM jobs j
+                   -- A paused model step's work waits in the queue until the pause ends.
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM step_pauses p
+                       WHERE p.user_id = j.user_id AND p.paused_until > now()
+                         AND p.step IN (SELECT jsonb_array_elements_text(%s::jsonb -> j.kind)))
+                   ORDER BY kind = %s, id FOR UPDATE SKIP LOCKED LIMIT 1
                ) RETURNING user_id, kind, payload""",
             # Eval Cases wait behind everything else, so the person's own work goes first.
-            (eval_runs.EVAL_CASE_JOB,),
+            (json.dumps(gateway.JOB_STEPS), eval_runs.EVAL_CASE_JOB),
         ).fetchone()
     if job is None:
         return False

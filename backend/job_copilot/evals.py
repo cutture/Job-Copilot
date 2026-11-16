@@ -332,6 +332,8 @@ def _result(case: dict[str, Any], profile: dict[str, Any]) -> CaseResult:
         outcome = run_case(case, profile)
     except gateway.CapReached:
         return CaseResult("did_not_run", False, "Did not run: the eval budget is used up", None)
+    except gateway.StepPaused as error:
+        return CaseResult("did_not_run", False, f"Did not run: {error}", None)
     except gateway.ModelUnavailable as error:
         if any(kind in str(error) for kind in DID_NOT_RUN):
             return CaseResult("did_not_run", False, f"Did not run: {error}", None)

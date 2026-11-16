@@ -1095,6 +1095,8 @@ def retry_pack(application_id: UUID, user_id: UserId) -> ApplicationView:
             (latest["id"],),
         )
         queue_pack(conn, user_id, latest["id"])
+    # Retry starts paused steps again at once, rather than waiting out the pause.
+    gateway.resume_steps(user_id, gateway.JOB_STEPS["generate_pack"])
     return application_view(user_id, application_id)
 
 

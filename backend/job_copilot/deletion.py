@@ -31,6 +31,7 @@ USER_TABLES = {
     "model_calls": "Spending ledger entries",
     "step_models": "Approved models",
     "dismissed_recommendations": "Dismissed model recommendations",
+    "step_pauses": "Paused model steps",
     "evidence": "Evidence items",
     "profiles": "Profile",
 }
