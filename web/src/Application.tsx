@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ACCENTS, OUTCOMES, PHOTO_STYLE, RESULTS, dollars, splitDates } from "./labels";
@@ -9,8 +9,12 @@ type EvidenceRef = {
   origin: "resume" | "self_reported" | "profile";
   // Deleted after this Pack was Submitted; the Pack stays as it was sent.
   deleted?: boolean;
+  // The Evidence item's ID; null for a Profile fact.
+  id?: number | null;
 };
 type Claim = { text: string; evidence: EvidenceRef[] };
+// One of the Application's Requirements and the Evidence its Result rests on.
+type Requirement = { requirement: string; kind: Kind; result: Result; evidence_ids: number[] };
 type RemovedClaim = {
   text: string;
   kind: "stretched" | "invented" | "unchecked" | "with_heading" | "evidence_deleted";
@@ -47,6 +51,7 @@ type Pack = {
   removed_claims: RemovedClaim[] | null;
   // For information only: nothing that writes or renders the Pack uses it.
   coverage: { score: number; counted: CountedRequirement[] } | null;
+  requirements: Requirement[] | null;
   // Made while evals are failing; it blocks nothing.
   extra_care: boolean;
 };
@@ -88,7 +93,56 @@ const page: CSSProperties = {
   minHeight: 400,
 };
 const sectionHeading: CSSProperties = { margin: "12px 0 2px", borderBottom: "1px solid #52606d", fontSize: 14 };
-const ORIGINS = { resume: "Resume", self_reported: "Profile entry (self-reported)", profile: "Your Profile" };
+// Where each Evidence item came from, and how the panel labels it.
+const ORIGINS = { resume: "Your resume", self_reported: "A Profile entry you wrote", profile: "Your Profile" };
+const BADGES = { resume: "Direct Evidence", self_reported: "Self-reported", profile: "Profile fact" };
+const KIND_NAMES: Record<Kind, string> = { hard_blocker: "Hard Blocker", must_have: "Must-have", nice_to_have: "Nice-to-have" };
+
+// The Claim open in the Evidence panel, and how a Claim in the documents opens it.
+const ClaimPicker = createContext<{ selected: Claim | null; select: (claim: Claim) => void } | null>(null);
+
+// A Claim as the documents show it. In the app, one with Evidence is underlined and opens it;
+// the downloaded files are written separately and never underline anything.
+// label: the text shown, when it differs from the Claim, as a heading split from its dates.
+function ClaimText({ claim, label = claim.text }: { claim: Claim; label?: string }) {
+  const picker = useContext(ClaimPicker);
+  if (!picker || claim.evidence.length === 0) return <>{label}</>;
+  const selected = picker.selected?.text === claim.text;
+  return (
+    <button
+      aria-pressed={selected}
+      onClick={() => picker.select(claim)}
+      style={{
+        display: "inline",
+        font: "inherit",
+        color: "inherit",
+        padding: 0,
+        margin: 0,
+        border: 0,
+        borderBottom: "1px dotted #1f5fbf",
+        background: selected ? "#e3edff" : "none",
+        textAlign: "left",
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// Claims run together, as a summary, a skills line or a letter paragraph is written.
+function Joined({ claims, separator }: { claims: Claim[]; separator: string }) {
+  return (
+    <>
+      {claims.map((claim, position) => (
+        <span key={position}>
+          {position > 0 && separator}
+          <ClaimText claim={claim} />
+        </span>
+      ))}
+    </>
+  );
+}
 const KINDS = {
   stretched: "Stretched",
   invented: "No Evidence",
@@ -154,11 +208,15 @@ function Skills({ skills, styled }: { skills: Claim[]; styled: boolean }) {
   return styled ? (
     <ul style={{ columns: 2, margin: "4px 0", paddingLeft: 20 }}>
       {skills.map((skill) => (
-        <li key={skill.text}>{skill.text}</li>
+        <li key={skill.text}>
+          <ClaimText claim={skill} />
+        </li>
       ))}
     </ul>
   ) : (
-    <div>{skills.map((skill) => skill.text).join(", ")}</div>
+    <div>
+      <Joined claims={skills} separator=", " />
+    </div>
   );
 }
 
@@ -171,31 +229,44 @@ function Resume({ resume, signature, pair, accent }: Props<{ resume: NonNullable
         <div key={`${section.kind}-${position}`}>
           <Heading text={section.heading} pair={pair} accent={accent} />
           {section.kind === "summary" ? (
-            <div>{section.claims.map((sentence) => sentence.text).join(" ")}</div>
+            <div>
+              <Joined claims={section.claims} separator=" " />
+            </div>
           ) : section.kind === "skills" ? (
             <>
               {section.claims.length > 0 && <Skills skills={section.claims} styled={styled} />}
               {section.groups.map((group) => (
                 <div key={group.heading.text}>
-                  <b>{styled ? group.heading.text : `${group.heading.text}: `}</b>
-                  {styled ? <Skills skills={group.claims} styled /> : group.claims.map((skill) => skill.text).join(", ")}
+                  <b>
+                    <ClaimText claim={group.heading} />
+                    {!styled && ": "}
+                  </b>
+                  {styled ? <Skills skills={group.claims} styled /> : <Joined claims={group.claims} separator=", " />}
                 </div>
               ))}
             </>
           ) : (
-            section.claims.map((claim) => <div key={claim.text}>{claim.text}</div>)
+            section.claims.map((claim) => (
+              <div key={claim.text}>
+                <ClaimText claim={claim} />
+              </div>
+            ))
           )}
           {section.roles.map((role) => {
             const [title, dates] = styled ? splitDates(role.heading.text) : [role.heading.text, null];
             return (
               <div key={role.heading.text}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <b>{title}</b>
+                  <b>
+                    <ClaimText claim={role.heading} label={title} />
+                  </b>
                   {dates && <span>{dates}</span>}
                 </div>
                 <ul style={{ margin: "4px 0", paddingLeft: 20 }}>
                   {role.lines.map((line) => (
-                    <li key={line.text}>{line.text}</li>
+                    <li key={line.text}>
+                      <ClaimText claim={line} />
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -216,7 +287,7 @@ function CoverLetter({ letter, signature, pair, accent }: Props<{ letter: NonNul
       <Header signature={signature} pair={pair} accent={accent} />
       {letter.paragraphs.map((paragraph) => (
         <p key={paragraph.map((sentence) => sentence.text).join(" ")}>
-          {paragraph.map((sentence) => sentence.text).join(" ")}
+          <Joined claims={paragraph} separator=" " />
         </p>
       ))}
       {signature.name && <p>{signature.name}</p>}
@@ -235,22 +306,110 @@ function allClaims(pack: Pack): Claim[] {
   ].filter((claim) => claim.evidence.length > 0);
 }
 
-function KeywordCoverage({ coverage }: { coverage: NonNullable<Pack["coverage"]> }) {
-  const where = { true: ", in your resume", false: ", not in this resume", null: "" };
+function rests(requirement: Requirement, claim: Claim): boolean {
+  return claim.evidence.some((item) => item.id != null && requirement.evidence_ids.includes(item.id));
+}
+
+const tab = (selected: boolean): CSSProperties => ({
+  background: selected ? "#1f2933" : undefined,
+  color: selected ? "#fff" : undefined,
+});
+
+type PanelProps = {
+  pack: Pack;
+  selected: Claim | null;
+  onSelect: (claim: Claim) => void;
+  onAddToProfile?: (draft: string) => void;
+};
+
+// Beside the documents: the Evidence behind the Claim picked in them, or how the Pack answers
+// each of the posting's Requirements.
+function EvidencePanel({ pack, selected, onSelect, onAddToProfile }: PanelProps) {
+  const [view, setView] = useState<"evidence" | "coverage">("evidence");
+  const requirements = pack.requirements ?? [];
+  const claims = allClaims(pack);
   return (
-    <section aria-label="Keyword coverage" style={{ fontSize: 13, marginBottom: 8 }}>
-      <b>Keyword coverage: {coverage.score}%</b> of the posting's Requirements, from your Requirement Results. It's
-      for your information only: the Pack never adds a keyword your Evidence doesn't support.
-      <ul style={{ margin: "4px 0" }}>
-        {coverage.counted.map((r, position) => (
-          <li key={position}>
-            {r.requirement}
-            {r.kind === "nice_to_have" && " (nice-to-have)"}: {RESULTS[r.result]}
-            {where[`${r.in_resume}`]}
-          </li>
-        ))}
-      </ul>
-    </section>
+    <div style={{ ...card, position: "sticky", top: 8 }} aria-label="Evidence panel">
+      <div role="tablist" style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        <button role="tab" aria-selected={view === "evidence"} style={tab(view === "evidence")} onClick={() => setView("evidence")}>
+          Evidence
+        </button>
+        <button role="tab" aria-selected={view === "coverage"} style={tab(view === "coverage")} onClick={() => setView("coverage")}>
+          Requirement coverage
+        </button>
+      </div>
+      {view === "evidence" ? (
+        <div role="tabpanel" aria-label="Evidence">
+          <p style={{ fontSize: 13, marginTop: 0 }}>Click any underlined Claim in the documents.</p>
+          {selected && (
+            <>
+              <b>{selected.text}</b>
+              {selected.evidence.map((item, position) => {
+                const answers = requirements.filter((r) => item.id != null && r.evidence_ids.includes(item.id));
+                return (
+                  <div key={position} style={{ fontSize: 13, borderTop: "1px solid #e4e7eb", marginTop: 6, paddingTop: 6 }}>
+                    <span style={{ fontWeight: 600 }}>{BADGES[item.origin]}</span>
+                    {item.deleted && <strong> (Evidence deleted)</strong>}
+                    <div>Source: {ORIGINS[item.origin]}</div>
+                    <div>Quote: “{item.text}”</div>
+                    <div>
+                      Answers:{" "}
+                      {answers.length
+                        ? answers.map((r) => `${r.requirement} (${RESULTS[r.result]})`).join("; ")
+                        : "no single Requirement"}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      ) : (
+        <div role="tabpanel" aria-label="Requirement coverage" style={{ fontSize: 13 }}>
+          {pack.coverage && (
+            <p style={{ marginTop: 0 }}>
+              <b>Keyword coverage: {pack.coverage.score}%</b> of the posting's Requirements, from your Requirement
+              Results. It's for your information only: the Pack never adds a keyword your Evidence doesn't support.
+            </p>
+          )}
+          {requirements.map((r, position) => {
+            const using = claims.filter((claim) => rests(r, claim));
+            return (
+              <div key={position} style={{ borderTop: "1px solid #e4e7eb", padding: "6px 0" }}>
+                <b>{r.requirement}</b> <span>{KIND_NAMES[r.kind]}</span>, {RESULTS[r.result]}
+                <div>
+                  {using.length > 0 ? (
+                    <>
+                      Used in:{" "}
+                      {using.map((claim, at) => (
+                        <span key={at}>
+                          {at > 0 && "; "}
+                          <button
+                            onClick={() => {
+                              onSelect(claim);
+                              setView("evidence");
+                            }}
+                          >
+                            {claim.text}
+                          </button>
+                        </span>
+                      ))}
+                    </>
+                  ) : r.result === "missing" || r.result === "unknown" ? (
+                    <>
+                      Not in this Pack: no Evidence answers it yet.{" "}
+                      {onAddToProfile && <button onClick={() => onAddToProfile(r.requirement)}>Add to Profile</button>}
+                    </>
+                  ) : (
+                    "Not used in this Pack."
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -275,7 +434,6 @@ function Finish({ application, pair, onReview, onSubmitted, onOutcome, onDownloa
   const suffix = pair === "styled" ? "" : " (plain)";
   return (
     <div style={{ ...card, marginTop: 12 }}>
-      {application.pack?.coverage && <KeywordCoverage coverage={application.pack.coverage} />}
       {!application.name && (
         <p style={{ fontSize: 13, background: "#fff8e1", padding: "4px 8px" }}>
           Add your name to your Profile so it appears in your files and their names.
@@ -350,12 +508,15 @@ export function Application({
   id,
   onBack,
   onOpenSettings,
+  onAddToProfile,
 }: {
   id: string;
   onBack: () => void;
   onOpenSettings?: () => void;
+  onAddToProfile?: (draft: string) => void;
 }) {
   const [application, setApplication] = useState<ApplicationData | null>(null);
+  const [picked, setPicked] = useState<Claim | null>(null);
   const [error, setError] = useState("");
   const [downloadError, setDownloadError] = useState("");
   const [pair, setPair] = useState<Pair>("styled");
@@ -428,6 +589,8 @@ export function Application({
   }
 
   const pack = application?.pack;
+  // The first Claim with Evidence is open until the person picks another.
+  const selected = pack?.status === "ready" ? (picked ?? allClaims(pack)[0] ?? null) : null;
   const back = (
     <p>
       <button onClick={onBack}>← Back to job listings</button>{" "}
@@ -471,7 +634,8 @@ export function Application({
       {pack?.status === "ready" && (
         <>
           <p style={{ ...card, background: "#e3edff" }}>
-            Preview of both final documents. Every Claim was checked against your Evidence.
+            Preview of both final documents. Every Claim was checked against your Evidence. Underlined Claims show
+            their Evidence and appear only here, never in the files.
             {pack.model && ` Written by ${pack.model}.`}
           </p>
           {pack.extra_care && (
@@ -501,31 +665,20 @@ export function Application({
             </button>{" "}
             <span style={{ fontSize: 13 }}>Both read cleanly in an ATS. Use the plain pair for strict portals.</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
-            <Resume resume={pack.resume!} signature={application!} pair={pair} accent={application!.accent_colour} />
-            <CoverLetter
-              letter={pack.cover_letter!}
-              signature={application!}
-              pair={pair}
-              accent={application!.accent_colour}
-            />
-          </div>
-          <div style={{ ...card, marginTop: 12 }}>
-            <h3 style={{ marginTop: 0 }}>Evidence</h3>
-            <ul>
-              {allClaims(pack).map((claim) => (
-                <li key={claim.text}>
-                  <b>{claim.text}</b>
-                  {claim.evidence.map((item) => (
-                    <div key={item.text} style={{ fontSize: 13 }}>
-                      {ORIGINS[item.origin]}: {item.text}
-                      {item.deleted && <strong> (Evidence deleted)</strong>}
-                    </div>
-                  ))}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <ClaimPicker.Provider value={{ selected, select: setPicked }}>
+            <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, alignItems: "start" }}>
+              <EvidencePanel pack={pack} selected={selected} onSelect={setPicked} onAddToProfile={onAddToProfile} />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
+                <Resume resume={pack.resume!} signature={application!} pair={pair} accent={application!.accent_colour} />
+                <CoverLetter
+                  letter={pack.cover_letter!}
+                  signature={application!}
+                  pair={pair}
+                  accent={application!.accent_colour}
+                />
+              </div>
+            </div>
+          </ClaimPicker.Provider>
           {application && (
             <Finish
               application={application}

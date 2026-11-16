@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Application } from "./Application";
 import type { ApplicationData } from "./Application";
 
-const python = { text: "Python Developer, Example Co, Jan 2021 to present", origin: "resume" as const };
+const python = { text: "Python Developer, Example Co, Jan 2021 to present", origin: "resume" as const, id: 1 };
+const mentoring = { text: "I mentor two junior engineers each week", origin: "self_reported" as const, id: 2 };
 
 function application(
   status: "generating" | "waiting" | "ready",
@@ -45,7 +46,12 @@ function application(
           }
         : null,
       cover_letter: ready
-        ? { paragraphs: [[{ text: "Dear Northwind Labs hiring team,", evidence: [] }]] }
+        ? {
+            paragraphs: [
+              [{ text: "Dear Northwind Labs hiring team,", evidence: [] }],
+              [{ text: "I mentor junior engineers every week.", evidence: [mentoring] }],
+            ],
+          }
         : null,
       removed_claims: ready
         ? [
@@ -58,6 +64,13 @@ function application(
           ]
         : null,
       extra_care: false,
+      requirements: ready
+        ? [
+            { requirement: "Python", kind: "must_have", result: "met", evidence_ids: [1] },
+            { requirement: "Mentoring", kind: "nice_to_have", result: "met", evidence_ids: [2] },
+            { requirement: "Terraform", kind: "nice_to_have", result: "missing", evidence_ids: [] },
+          ]
+        : null,
       coverage: ready
         ? {
             score: 75,
@@ -106,24 +119,48 @@ describe("Application", () => {
     // As the files download: name and contact line on top, the letter signed with the name.
     expect(resume.textContent!.startsWith("Sam Riverasam@example.com")).toBe(true);
     expect(screen.getByLabelText("Cover letter").textContent!.endsWith("Sam Rivera")).toBe(true);
-    expect(screen.getAllByText("Resume: Python Developer, Example Co, Jan 2021 to present")).toHaveLength(2);
     expect(screen.getByText("Led a team of six engineers").tagName).toBe("S");
     expect(screen.getByText(/goes beyond what your Evidence says/)).toBeTruthy();
   });
 
-  it("shows the keyword coverage score and which Requirements it counts", async () => {
+  it("opens a Claim's Evidence from either document: source, quote and Requirement answered", async () => {
     serve({ "GET /api/applications/a": () => application("ready") });
-
     render(<Application id="a" onBack={() => {}} />);
+    const panel = await screen.findByRole("tabpanel", { name: "Evidence" });
 
-    const coverage = await screen.findByRole("region", { name: "Keyword coverage" });
+    // The first Claim with Evidence is open to start with.
+    expect(panel.textContent).toContain("Direct Evidence");
+    expect(panel.textContent).toContain("Source: Your resume");
+    expect(panel.textContent).toContain("Quote: “Python Developer, Example Co, Jan 2021 to present”");
+    expect(panel.textContent).toContain("Answers: Python (Met)");
+
+    const letter = screen.getByLabelText("Cover letter");
+    fireEvent.click(within(letter).getByRole("button", { name: "I mentor junior engineers every week." }));
+
+    expect(panel.textContent).toContain("Self-reported");
+    expect(panel.textContent).toContain("Source: A Profile entry you wrote");
+    expect(panel.textContent).toContain("Answers: Mentoring (Met)");
+    // A Claim with no Evidence, such as the greeting, isn't underlined or clickable.
+    expect(within(letter).queryByRole("button", { name: "Dear Northwind Labs hiring team," })).toBeNull();
+  });
+
+  it("shows each Requirement's result and where the Pack uses it on the coverage tab", async () => {
+    serve({ "GET /api/applications/a": () => application("ready") });
+    const added: string[] = [];
+    render(<Application id="a" onBack={() => {}} onAddToProfile={(draft) => added.push(draft)} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Requirement coverage" }));
+    const coverage = screen.getByRole("tabpanel", { name: "Requirement coverage" });
+
     expect(coverage.textContent).toContain("Keyword coverage: 75%");
-    expect([...coverage.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
-      "Python: Met, in your resume",
-      "Retrieval: Partial, in your resume",
-      "SQL: Met, not in this resume",
-      "Terraform (nice-to-have): Missing",
-    ]);
+    expect(coverage.textContent).toContain("Python Must-have, Met");
+    expect(coverage.textContent).toContain("Terraform Nice-to-have, Missing");
+    fireEvent.click(within(coverage).getByRole("button", { name: "Add to Profile" }));
+    expect(added).toEqual(["Terraform"]);
+
+    // A Claim that uses a Requirement opens its Evidence.
+    fireEvent.click(within(coverage).getByRole("button", { name: "I mentor junior engineers every week." }));
+    expect(screen.getByRole("tabpanel", { name: "Evidence" }).textContent).toContain("Self-reported");
   });
 
   it("asks for extra care on a Pack made while evals are failing, without blocking it", async () => {

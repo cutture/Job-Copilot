@@ -237,6 +237,11 @@ export function App() {
             setApplicationId(null);
             setView("spending");
           }}
+          onAddToProfile={(draft) => {
+            setApplicationId(null);
+            setEvidenceDraft(draft);
+            setView("profile");
+          }}
         />
       </main>
     );

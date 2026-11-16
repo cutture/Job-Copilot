@@ -359,6 +359,8 @@ class PackView(BaseModel):
     removed_claims: list[RemovedClaim] | None
     # For the person to read only: nothing that writes or renders a Pack uses it.
     coverage: Coverage | None = None
+    # The Application's Requirements, so the person can see which Claims answer each one.
+    requirements: list[RequirementView] | None = None
     # Made while evals are failing, so worth checking more closely. It never blocks anything.
     extra_care: bool = False
 
@@ -1019,6 +1021,7 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
     )
     waiting = row["status"] == "waiting"
     resume = Resume(**row["resume"]) if ready else None
+    requirements = [RequirementView.model_validate(r) for r in row["requirements"]]
     pack = (
         None
         if row["version"] is None
@@ -1031,11 +1034,8 @@ def application_view(user_id: UUID, application_id: UUID) -> ApplicationView:
             resume=resume,
             cover_letter=CoverLetter(**row["cover_letter"]) if ready else None,
             removed_claims=[RemovedClaim(**r) for r in row["removed_claims"]] if ready else None,
-            coverage=keyword_coverage(
-                [RequirementView.model_validate(r) for r in row["requirements"]], _cited_ids(resume)
-            )
-            if resume
-            else None,
+            coverage=keyword_coverage(requirements, _cited_ids(resume)) if resume else None,
+            requirements=requirements if ready else None,
             extra_care=extra_care,
         )
     )
