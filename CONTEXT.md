@@ -202,6 +202,10 @@ _Avoid_: Rejected claim, deleted claim
 A person's explicit, recorded decision to keep a Removed Claim after a warning. It never counts as support from Evidence.
 _Avoid_: Override, force, approve
 
+**Check again**:
+Running Verification on one Removed Claim against the person's Evidence as it is now, usually after they add Evidence for it. The Claim comes back to its place in the Pack, with that Evidence, only if Verification passes.
+_Avoid_: Retry, re-verify, recheck
+
 ### Outcomes and measurement
 
 **Outcome**:
@@ -247,6 +251,10 @@ _Avoid_: Warning mode, unsafe Pack
 **Tracked Score**:
 An eval measure watched for trends and judged against a target, which isn't a Hard Failure when missed.
 _Avoid_: Soft failure, KPI
+
+**Kept Claims per Application**:
+How many Claims the person currently keeps with Keep Anyway, across their Applications with a ready Pack, divided by those Applications. A usage figure from real Applications, shown as totals only on the Eval Runs page, with no target, pass or fail.
+_Avoid_: Kept Claim rate, override rate
 
 **Challenger**:
 A model evaluated against the one currently used for a step, which replaces it only with the owner's approval.
