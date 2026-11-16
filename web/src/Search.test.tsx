@@ -43,6 +43,20 @@ describe("Search", () => {
     expect(screen.getByText(/Contoso \(Greenhouse\)/)).toBeTruthy();
   });
 
+  it("says a search is running, and when today's searches are used", async () => {
+    serve({
+      "GET /api/search": () => status(2, true),
+      "GET /api/watchlist": () => json([{ id: "a", name: "Northwind Labs", source: "Greenhouse", failure: null }]),
+    });
+    render(<Search onProgress={() => {}} />);
+    expect(await screen.findByText(/Searching your Watchlist\. New Matches appear as they're rated\./)).toBeTruthy();
+
+    cleanup();
+    serve({ "GET /api/search": () => status(0), "GET /api/watchlist": () => json([]) });
+    render(<Search onProgress={() => {}} />);
+    expect(await screen.findByText(/Today's 5 searches are used\. Search is available again tomorrow\./)).toBeTruthy();
+  });
+
   it("adds an employer from a careers URL and explains an unsupported one", async () => {
     let added = false;
     const calls = serve({

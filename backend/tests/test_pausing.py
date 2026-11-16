@@ -136,3 +136,16 @@ def test_retrying_a_match_that_wasnt_rated_resumes_rating_at_once(
 
     [posting] = [p for p in client.get("/api/job-postings").json() if p["id"] == created["id"]]
     assert posting["match"] is not None
+
+
+def test_the_listings_say_which_step_is_paused_and_until_when(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    assert client.get("/api/paused-steps").json() == []
+    provider.error = TimeoutError()
+    fail_times(3)
+
+    [paused] = client.get("/api/paused-steps").json()
+
+    assert paused["label"] == "Rating Matches"
+    assert paused["until"] is not None

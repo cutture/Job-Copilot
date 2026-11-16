@@ -27,6 +27,30 @@ type JobPosting = PostingOrigin & {
   application_id?: string | null;
 };
 
+const stateCard = { border: "1px solid #ddd", borderRadius: 8, padding: "8px 12px", margin: "8px 0" };
+
+// A model step paused after failing three times in a row; its work waits until it tries again.
+function PausedSteps() {
+  const [paused, setPaused] = useState<{ label: string; until: string }[]>([]);
+  useEffect(() => {
+    fetch("/api/paused-steps")
+      .then((response) => (response.ok ? response.json() : []))
+      .then((steps) => setPaused(Array.isArray(steps) ? steps : []))
+      .catch(() => {});
+  }, []);
+  return (
+    <>
+      {paused.map((step) => (
+        <p key={step.label} role="status" style={{ ...stateCard, background: "#fdecea" }}>
+          <b>{step.label} is paused after failing three times in a row.</b> Its work waits, so nothing is spent on
+          calls that would fail. It tries again at {new Date(step.until).toLocaleTimeString()}, or use Retry to try
+          now. Everything else still works.
+        </p>
+      ))}
+    </>
+  );
+}
+
 function PostingRow({
   posting,
   onDelete,
@@ -114,6 +138,8 @@ export function App() {
       (posting) => posting.status !== "filtered" && !posting.match && posting.rating_state !== "waiting",
     ) ?? [];
   const filtered = postings?.filter((posting) => posting.status === "filtered") ?? [];
+  // Open Matches whose rating relied on Evidence that's since been deleted.
+  const outOfDate = rated.filter((posting) => posting.match.profile_changed && !posting.application_id).length;
 
   useEffect(() => {
     if (!processing) return;
@@ -280,7 +306,26 @@ export function App() {
       </form>
       {error && <p role="alert">{error}</p>}
       <h2>Your Job Postings</h2>
-      {postings?.length === 0 && <p>No Job Postings yet.</p>}
+      <PausedSteps />
+      {postings?.length === 0 && (
+        <div style={stateCard}>
+          <h3 style={{ marginTop: 0 }}>No jobs yet</h3>
+          Add employers you like, then search. We'll rate every Match against your Evidence.
+        </div>
+      )}
+      {!!postings?.length && !rated.length && !shown.length && !waiting && filtered.length > 0 && (
+        <div style={stateCard}>
+          <h3 style={{ marginTop: 0 }}>No Matches this time</h3>
+          {filtered.length} {filtered.length === 1 ? "posting was" : "postings were"} filtered out. Widen your Location
+          Preference or add employers to your Watchlist.
+        </div>
+      )}
+      {outOfDate > 0 && (
+        <p role="status" style={{ ...stateCard, background: "#fff8e1" }}>
+          <b>Your Profile changed.</b> {outOfDate} open {outOfDate === 1 ? "Match" : "Matches"} may be out of date.
+          Nothing rescores automatically.
+        </p>
+      )}
       <Matches
         postings={rated}
         onAddToProfile={(draft) => {

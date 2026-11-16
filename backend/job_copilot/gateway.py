@@ -574,6 +574,17 @@ def _failed(user_id: UUID, step: str) -> None:
         )
 
 
+def paused_steps(user_id: UUID) -> list[tuple[str, datetime]]:
+    """Each model step paused now, and until when."""
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT step, paused_until FROM step_pauses
+               WHERE user_id = %s AND paused_until > now() ORDER BY step""",
+            (user_id,),
+        ).fetchall()
+    return [(row["step"], row["paused_until"]) for row in rows]
+
+
 def resume_steps(user_id: UUID, steps: Sequence[str]) -> None:
     """Start these model steps again now, as Retry does, with their failure count cleared."""
     with connect() as conn:

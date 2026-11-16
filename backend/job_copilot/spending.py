@@ -48,9 +48,10 @@ class NewCap(BaseModel):
 def _warning(spent: Decimal, cap: Decimal) -> tuple[Level, str | None]:
     if spent >= cap:
         return "reached", (
-            f"You've reached this month's ${cap:.2f} cap. Paid AI work, such as ratings, reading "
-            "your resume and Application Packs, stops until the 1st or until you raise the cap "
-            "on the Settings page. Reading new postings keeps working."
+            f"You've reached this month's ${cap:.2f} cap. Until the 1st, ratings, reading your "
+            "resume and Application Packs use free fallback models that don't train on your data, "
+            "labelled with their name; if none can take the work, it waits with a warning. Raise "
+            "the cap on the Settings page to use Claude Haiku again."
         )
     if spent >= WARN_AT * cap:
         return "warning", (

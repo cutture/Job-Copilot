@@ -156,3 +156,13 @@ def test_delete_everything_keeps_eval_spending_unless_eval_runs_go_too(
     assert gone["notes"] == [
         "The spending ledger is deleted too, so this month's spending starts again from $0."
     ]
+
+
+def test_at_the_cap_the_warning_says_free_models_take_over(client: TestClient) -> None:
+    spend("10.00")
+
+    warning = spending(client)["warning"]
+
+    assert "free fallback models that don't train on your data" in warning
+    assert "labelled with" in warning
+    assert "stops" not in warning

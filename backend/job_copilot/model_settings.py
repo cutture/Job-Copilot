@@ -1,6 +1,7 @@
 """Settings for which models run: whether paid or free models are in use, and why, and
 Groq's Zero Data Retention confirmation."""
 
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter
@@ -43,3 +44,17 @@ def set_groq_zdr(new: GroqZdr, user_id: UserId) -> ModelSettings:
             "UPDATE users SET groq_zdr_confirmed = %s WHERE id = %s", (new.confirmed, user_id)
         )
     return get_model_settings(user_id)
+
+
+class PausedStep(BaseModel):
+    label: str
+    # When the step tries again by itself; Retry starts it sooner.
+    until: datetime
+
+
+@router.get("/api/paused-steps")
+def get_paused_steps(user_id: UserId) -> list[PausedStep]:
+    return [
+        PausedStep(label=gateway.STEP_LABELS.get(step, step), until=until)
+        for step, until in gateway.paused_steps(user_id)
+    ]

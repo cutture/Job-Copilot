@@ -14,12 +14,15 @@ const posting = {
   created_at: "2026-11-02T00:00:00Z",
 };
 
+let paused: unknown[] = [];
+
 function respondWith(listed: unknown[][]) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/api/search") return new Response(JSON.stringify({ runs_left: 5, daily_limit: 5, searching: false }));
     if (url === "/api/watchlist") return new Response("[]");
     if (url === "/api/evals/status") return new Response(JSON.stringify({ failing: false, failing_since: null }));
     if (url === "/api/spending") return new Response(JSON.stringify({ level: "ok", warning: null }));
+    if (url === "/api/paused-steps") return new Response(JSON.stringify(paused));
     return init?.method === "POST"
       ? new Response("{}", { status: 201 })
       : new Response(JSON.stringify(listed.shift() ?? []));
@@ -45,13 +48,13 @@ describe("pasting a Job Posting", () => {
     );
     expect(notice.compareDocumentPosition(field)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(notice.nextElementSibling).toBe(field);
-    await screen.findByText("No Job Postings yet.");
+    await screen.findByText("No jobs yet");
   });
 
   it("sends the text and lists the new posting with its Source", async () => {
     const fetchMock = respondWith([[], [posting]]);
     render(<App />);
-    await screen.findByText("No Job Postings yet.");
+    await screen.findByText("No jobs yet");
 
     fireEvent.change(screen.getByLabelText("Paste a Job Posting"), {
       target: { value: "Senior GenAI Engineer" },
@@ -70,7 +73,7 @@ describe("pasting a Job Posting", () => {
     const processed = { ...posting, title: "GenAI Developer at Northwind Labs", status: "received" };
     const fetchMock = respondWith([[], [posting], [processed]]);
     render(<App />);
-    await screen.findByText("No Job Postings yet.");
+    await screen.findByText("No jobs yet");
 
     fireEvent.change(screen.getByLabelText("Paste a Job Posting"), {
       target: { value: "Senior GenAI Engineer" },
@@ -100,7 +103,7 @@ describe("pasting a Job Posting", () => {
       }),
     );
     render(<App />);
-    await screen.findByText("No Job Postings yet.");
+    await screen.findByText("No jobs yet");
     const field = screen.getByLabelText<HTMLTextAreaElement>("Paste a Job Posting");
 
     fireEvent.change(field, { target: { value: "Saved once" } });
@@ -108,6 +111,46 @@ describe("pasting a Job Posting", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("was saved");
     expect(field.value).toBe("");
+  });
+
+  it("says when a step is paused and when it tries again", async () => {
+    paused = [{ label: "Rating Matches", until: "2026-11-16T14:30:00Z" }];
+    respondWith([[]]);
+    render(<App />);
+
+    expect(await screen.findByText(/Rating Matches is paused after failing three times in a row/)).toBeTruthy();
+    paused = [];
+  });
+
+  it("welcomes a first run with no postings at all", async () => {
+    respondWith([[]]);
+    render(<App />);
+
+    expect(await screen.findByText("No jobs yet")).toBeTruthy();
+    expect(screen.getByText(/Add employers you like, then search/)).toBeTruthy();
+  });
+
+  it("says when every posting was filtered out", async () => {
+    const filteredOut = { ...posting, id: "5", title: "Entwickler", status: "filtered", filter_reason: "Not written in English" };
+    respondWith([[filteredOut, { ...filteredOut, id: "6" }]]);
+    render(<App />);
+
+    expect(await screen.findByText("No Matches this time")).toBeTruthy();
+    expect(screen.getByText(/2 postings were filtered out/)).toBeTruthy();
+  });
+
+  it("says how many open Matches may be out of date after a Profile change", async () => {
+    const stale = {
+      ...posting,
+      id: "7",
+      status: "received",
+      rating_state: "rated",
+      match: { band: "High", nice_met: 0, reasons: [], gaps: [], profile_prompts: [], requirements: [], rubric_version: 2, profile_changed: true },
+    };
+    respondWith([[stale]]);
+    render(<App />);
+
+    expect(await screen.findByText(/1 open Match may be out of date\. Nothing rescores automatically\./)).toBeTruthy();
   });
 
   it("retries rating a posting that couldn't be rated", async () => {
@@ -183,7 +226,7 @@ describe("pasting a Job Posting", () => {
       ),
     );
     render(<App />);
-    await screen.findByText("No Job Postings yet.");
+    await screen.findByText("No jobs yet");
     const field = screen.getByLabelText<HTMLTextAreaElement>("Paste a Job Posting");
 
     fireEvent.change(field, { target: { value: "Keep me" } });

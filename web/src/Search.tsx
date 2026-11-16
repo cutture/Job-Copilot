@@ -103,6 +103,12 @@ export function Search({ onProgress }: { onProgress: () => void }) {
       <button aria-expanded={adding} onClick={() => setAdding(!adding)}>
         Add a job source
       </button>
+      {searching && <p style={{ margin: "6px 0 0" }}>Searching your Watchlist. New Matches appear as they're rated.</p>}
+      {status && !searching && status.runs_left === 0 && (
+        <p style={{ margin: "6px 0 0", background: "#fff8e1", padding: "4px 8px" }}>
+          Today's {status.daily_limit} searches are used. Search is available again tomorrow.
+        </p>
+      )}
       {adding && (
         <form onSubmit={addEmployer} style={{ marginTop: 8 }}>
           <label htmlFor="careers-url">Add employer by careers page URL</label>{" "}
