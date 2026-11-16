@@ -220,6 +220,10 @@ _Avoid_: Test run, benchmark
 One invented test scenario with labelled expected results. It never contains real personal data.
 _Avoid_: Golden, fixture, test
 
+**Trap**:
+A phrase planted in an Eval Case that must never reach a final Application Pack, such as a degree the invented person doesn't hold. One that does is a Hard Failure; one the writer wrote and Verification removed counts towards Traps caught.
+_Avoid_: Bait, canary
+
 **Hard Failure**:
 An eval result that must never happen, such as an Invented Claim reaching a final Application Pack.
 _Avoid_: Critical bug, blocker
