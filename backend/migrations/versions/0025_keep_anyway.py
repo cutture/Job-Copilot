@@ -13,12 +13,13 @@ def upgrade() -> None:
         -- comes back. NULL for Packs written before it was saved.
         ALTER TABLE application_packs ADD COLUMN draft jsonb;
 
-        -- Every Keep Anyway decision, and every undoing of one. They go with their Application.
+        -- Every Keep Anyway decision, and every undoing of one. They go with their Application,
+        -- and hold the Claim's draft ID, never its text, so nothing personal outlives the Pack.
         CREATE TABLE keep_decisions (
             id bigserial PRIMARY KEY,
             user_id uuid NOT NULL REFERENCES users (id),
             application_id uuid NOT NULL REFERENCES applications (id) ON DELETE CASCADE,
-            claim text NOT NULL,
+            claim_id text NOT NULL,
             kept boolean NOT NULL,
             created_at timestamptz NOT NULL DEFAULT now()
         );

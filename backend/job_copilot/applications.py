@@ -1338,9 +1338,9 @@ def _decide(application_id: UUID, index: int, user_id: UUID, kept: bool) -> Appl
             entry.kept = kept
             _save_placed(conn, user_id, pack, _present(resume, letter, removed), removed)
             conn.execute(
-                """INSERT INTO keep_decisions (user_id, application_id, claim, kept)
+                """INSERT INTO keep_decisions (user_id, application_id, claim_id, kept)
                    VALUES (%s, %s, %s, %s)""",
-                (user_id, application_id, entry.text, kept),
+                (user_id, application_id, entry.id, kept),
             )
     return application_view(user_id, application_id)
 

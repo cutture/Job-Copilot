@@ -41,7 +41,7 @@ def decisions() -> list[tuple[str, bool]]:
     with psycopg.connect(TEST_DB) as conn:
         return [
             (row[0], row[1])
-            for row in conn.execute("SELECT claim, kept FROM keep_decisions ORDER BY id")
+            for row in conn.execute("SELECT claim_id, kept FROM keep_decisions ORDER BY id")
         ]
 
 
@@ -63,7 +63,7 @@ def test_keeping_a_claim_puts_it_back_where_it_was_written_labelled_and_unsuppor
     assert entry["kept"] is True
     # Changing a kept Claim clears the review tick, and the decision is recorded.
     assert after["reviewed"] is False
-    assert decisions() == [(LED, True)]
+    assert decisions() == [("e0b1", True)]
 
     review(client, application_id)
     resume = client.get(f"/api/applications/{application_id}/resume.docx").content
@@ -84,7 +84,7 @@ def test_removing_a_kept_claim_takes_it_out_again_and_is_recorded(
     assert LED not in texts(lines(after["pack"]))
     assert after["pack"]["removed_claims"][index_of(after["pack"], LED)]["kept"] is False
     assert after["reviewed"] is False
-    assert decisions() == [(LED, True), (LED, False)]
+    assert decisions() == [("e0b1", True), ("e0b1", False)]
 
 
 def test_only_some_removed_claims_can_be_kept(client: TestClient, provider: FakeProvider) -> None:
