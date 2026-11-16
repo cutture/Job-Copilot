@@ -180,12 +180,17 @@ def test_a_sentence_saying_a_trap_is_lacking_isnt_an_invented_claim() -> None:
             "five years of Python.",
             False,
         ),
-        ("The role requires five years of Python, and I build in Python daily.", False),
         ("You're looking for five years of Python.", False),
         # Unless the line also says the person has it.
         ("I meet the five years of Python the role requires.", True),
         ("I bring the five years of Python you're looking for.", True),
         ("I have five years of Python.", True),
+        # Code can't tell "and I build in Python" from "and I have it", so any other words about
+        # the person count: a false alarm is safer than a missed Invented Claim.
+        ("The role requires five years of Python, and I build in Python daily.", True),
+        ("Your posting asks for five years of Python, which I earned at Example Co.", True),
+        ("The role requires five years of Python and I am at five years of Python.", True),
+        ("I'm writing because the role asks for five years of Python.", False),
     ],
 )
 def test_a_line_saying_what_the_posting_asks_for_isnt_an_invented_claim(

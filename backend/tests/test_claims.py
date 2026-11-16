@@ -75,6 +75,27 @@ def test_every_number_link_and_email_in_a_claim_must_be_in_its_evidence(
         ("BSc Computer Science", ["Education: BSc Computer Science, Example University"], None),
         ("PhD in Machine Learning", ["Wrote evaluation suites"], "PhD in Machine Learning"),
         ("Licensed Professional Engineer", ["Built APIs"], "Licensed Professional Engineer"),
+        # A lead-in word or a list before the credential doesn't change which one it is.
+        ("Earned AWS Certified Solutions Architect", ["AWS Certified Solutions Architect"], None),
+        (
+            "Holds the AWS Certified Solutions Architect",
+            ["AWS Certified Solutions Architect"],
+            None,
+        ),
+        ("Python, AWS Certified Solutions Architect", ["AWS Certified Solutions Architect"], None),
+        (
+            "Python, AWS Certified Machine Learning Specialty",
+            ["AWS Certified Solutions Architect"],
+            "AWS Certified Machine Learning Specialty",
+        ),
+        # Degrees written out in full.
+        (
+            "Bachelor of Science in Physics",
+            ["Education: BSc Computer Science"],
+            "Bachelor of Science in Physics",
+        ),
+        ("Master of Science in AI", ["Built APIs"], "Master of Science in AI"),
+        ("Bachelor of Science in Physics", ["Bachelor of Science in Physics, 2015"], None),
         # Words that only look like credentials aren't checked.
         ("Certified the release process for the team", ["Ran the release process"], None),
         ("Built APIs for a Masters programme website", ["Built APIs"], None),
