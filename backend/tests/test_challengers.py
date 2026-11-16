@@ -1,5 +1,6 @@
 """Challenger runs, recommendations and the owner's approval of a step's model."""
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -9,11 +10,12 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-from job_copilot import eval_runs, evals, gateway, worker
+from job_copilot import eval_runs, evals, gateway, rating, worker
 from job_copilot.db import SEEDED_USER_ID
 from job_copilot.gateway import DataClass
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_evals import LOADED, OWNER, cases_file
+from tests.test_rating import answer
 
 HAIKU = gateway.HAIKU
 GROQ = gateway.GROQ_PERSONAL
@@ -221,3 +223,38 @@ def test_a_failing_challenger_run_never_turns_on_the_banner(
     # Nor does it count as today's daily run.
     worker.schedule_daily_evals(datetime.now(UTC).replace(hour=23))
     assert None in [r[0] for r in runs()]
+
+
+def test_a_verification_challenger_run_keeps_rating_and_writing_on_their_models(
+    client: TestClient, provider: FakeProvider, tmp_path: Path
+) -> None:
+    provider.answers = {
+        rating.RATING_MODEL: json.dumps(answer(seniority={"level": None, "quote": None}))
+    }
+    provider.tasks = {
+        "resume": json.dumps({"skills": [{"text": "Python", "evidence": [1]}], "experience": []}),
+        "cover_letter": json.dumps(
+            {"paragraphs": [{"sentences": [{"text": "I build in Python.", "evidence": [1]}]}]}
+        ),
+        "verify": json.dumps(
+            {
+                "statements": [
+                    {"id": "s0", "verdict": "reworded", "evidence": [1]},
+                    {"id": "c0s0", "verdict": "reworded", "evidence": [1]},
+                ]
+            }
+        ),
+    }
+
+    run_id = evals.run(
+        OWNER,
+        cases_file(tmp_path, "pack-trap-degree"),
+        gateway.Challenger("verification", SONNET),
+    )
+
+    [result] = client.get(f"/api/eval-runs/{run_id}").json()["results"]
+    assert result["models"] == {
+        "Rating Matches": "Claude Haiku 5.5",
+        "Writing Application Packs": "Claude Haiku 5.5",
+        "Verification": "Claude Sonnet 5.5",
+    }

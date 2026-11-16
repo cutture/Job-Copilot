@@ -118,12 +118,13 @@ def reordered(posting: str) -> str:
     return " ".join([first, *(_reordered_asks(s) for s in reversed(rest))])
 
 
+def _pack_text(outcome: Outcome) -> str:
+    return f"{outcome.resume}\n{outcome.letter}"
+
+
 def _planted_traps(expect: dict[str, Any], outcome: Outcome) -> list[tuple[str, str]]:
-    """Each trap phrase planted in a case, with the documents it must stay out of."""
-    documents = {
-        "not_in_resume": outcome.resume,
-        "not_in_pack": f"{outcome.resume}\n{outcome.letter}",
-    }
+    """Each Trap planted in a case, with the documents it must stay out of."""
+    documents = {"not_in_resume": outcome.resume, "not_in_pack": _pack_text(outcome)}
     return [(trap, text) for key, text in documents.items() for trap in expect.get(key, [])]
 
 
@@ -131,7 +132,13 @@ def case_scores(expect: dict[str, Any], outcome: Outcome) -> CaseScores:
     """What one case counts towards its run's Tracked Scores."""
     right, labelled = requirement_hits(expect.get("requirements", {}), outcome.requirements)
     supported = expect.get("in_pack", [])
-    traps = _planted_traps(expect, outcome)
+    # Verification's own catches: of the Traps the writer wrote, those it removed.
+    removed = [
+        trap
+        for trap, _ in _planted_traps(expect, outcome)
+        if any(_mentions(text, trap) for text in outcome.removed_texts)
+    ]
+    leaked = [trap for trap, text in _planted_traps(expect, outcome) if _claims(text, trap)]
     return CaseScores(
         band_exact=outcome.band == expect["band"] if "band" in expect else None,
         requirements_right=right,
@@ -147,8 +154,8 @@ def case_scores(expect: dict[str, Any], outcome: Outcome) -> CaseScores:
         same_band_reordered=(
             outcome.reordered_band == outcome.band if outcome.reordered_band else None
         ),
-        traps_caught=sum(not _claims(text, trap) for trap, text in traps),
-        traps_planted=len(traps),
+        traps_caught=len([trap for trap in removed if trap not in leaked]),
+        traps_written=len(set(removed) | set(leaked)),
     )
 
 
@@ -225,7 +232,7 @@ def judge(expect: dict[str, Any], outcome: Outcome) -> Verdict:
             hard = True
     # A wrong removal is tracked, not a Hard Failure.
     for kept in expect.get("in_pack", []):
-        if not _mentions(f"{outcome.resume}\n{outcome.letter}", kept):
+        if not _mentions(_pack_text(outcome), kept):
             failures.append(f"A Claim the Evidence supports was removed: “{kept}”")
             fixes.append(FIX_VERIFY)
     # A Hard Failure's area comes first, since it matters most.

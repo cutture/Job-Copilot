@@ -35,12 +35,11 @@ def load_cases(cases_file: Path = CASES_FILE) -> dict[str, Any]:
     return loaded
 
 
-# Challengers tried weekly on each step. Sonnet on rating or Pack writing costs about $0.70 a
-# run, so it runs only when the owner starts it.
+# Challengers tried weekly; Sonnet elsewhere runs by hand, at about $0.70 a run.
 CHALLENGERS = (
     gateway.Challenger("rating", gateway.GROQ_PERSONAL),
     gateway.Challenger("pack", gateway.GROQ_PERSONAL),
-    # Paid, but Verification is a few calls a Pack case: about $0.10 a week.
+    # Paid: about $0.15 a run, with writing on Haiku, or $0.60 a month.
     gateway.Challenger("verification", gateway.SONNET),
 )
 CHALLENGER_EVERY_DAYS = 7

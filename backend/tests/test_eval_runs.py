@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import psycopg
 import pytest
@@ -38,22 +38,24 @@ class Counts(NamedTuple):
     case_jobs: int
 
 
-@pytest.fixture(autouse=True)
-def daily_runs_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests are about the daily run; Challenger runs have their own tests."""
-    monkeypatch.setattr(eval_runs, "CHALLENGERS", ())
-
-
 def counts() -> Counts:
-    """Eval Runs started, and Eval Case jobs still queued."""
+    """Daily Eval Runs started, and their Eval Case jobs still queued. Challenger runs, which
+    have their own tests, are left out."""
     with psycopg.connect(TEST_DB) as conn:
         row = conn.execute(
-            """SELECT (SELECT count(*) FROM eval_runs),
-                      (SELECT count(*) FROM jobs WHERE kind = %s)""",
+            """SELECT (SELECT count(*) FROM eval_runs WHERE challenger_model IS NULL),
+                      (SELECT count(*) FROM jobs j JOIN eval_runs r
+                         ON r.id = (j.payload ->> 'run_id')::bigint
+                       WHERE j.kind = %s AND r.challenger_model IS NULL)""",
             (eval_runs.EVAL_CASE_JOB,),
         ).fetchone()
     assert row is not None
     return Counts(runs=int(row[0]), case_jobs=int(row[1]))
+
+
+def daily_runs(client: TestClient) -> list[dict[str, Any]]:
+    runs: list[dict[str, Any]] = client.get("/api/eval-runs").json()
+    return [r for r in runs if r["challenger_name"] is None]
 
 
 def queue_todays_run() -> None:
@@ -61,7 +63,7 @@ def queue_todays_run() -> None:
 
 
 def statuses(client: TestClient) -> list[tuple[str, str]]:
-    [run] = client.get("/api/eval-runs").json()
+    [run] = daily_runs(client)
     assert run["finished_at"] is not None
     return [
         (r["status"], r["reason"])
@@ -111,13 +113,13 @@ def test_the_queued_run_runs_every_case_and_finishes_after_the_last(
     queue_todays_run()
 
     worker.run_once()
-    [running] = client.get("/api/eval-runs").json()
+    [running] = daily_runs(client)
     assert running["finished_at"] is None
     assert client.get("/api/evals/status").json()["failing"] is False
 
     run_worker()
 
-    [run] = client.get("/api/eval-runs").json()
+    [run] = daily_runs(client)
     assert run["finished_at"] is not None
     assert run["passed"] + run["failed"] + run["did_not_run"] == 24
 

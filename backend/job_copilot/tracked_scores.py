@@ -26,9 +26,9 @@ class CaseScores(BaseModel):
     stretched: int = 0
     invented: int = 0
     same_band_reordered: bool | None = None
-    # Of the trap phrases planted in the case, how many stayed out of the final Pack.
+    # Of the Traps the writer wrote, how many Verification removed.
     traps_caught: int = 0
-    traps_planted: int = 0
+    traps_written: int = 0
 
 
 class TrackedScore(BaseModel):
@@ -117,12 +117,11 @@ def scores_for(results: Sequence[dict[str, Any]]) -> list[TrackedScore]:
         reported(
             "Same Band after reordering Requirements", _percent(sum(reordered), len(reordered))
         ),
-        # A trap that got through is already a Hard Failure; this shows how close runs come.
         reported(
             "Traps caught",
             _percent(
                 total(trusted, lambda c: c.traps_caught),
-                total(trusted, lambda c: c.traps_planted),
+                total(trusted, lambda c: c.traps_written),
             ),
         ),
     ]

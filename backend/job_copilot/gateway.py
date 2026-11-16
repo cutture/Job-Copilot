@@ -63,8 +63,10 @@ MODELS = {
     CLOUDFLARE_PERSONAL: ModelRule(POSTING_AND_PERSONAL),
 }
 
-# How a Pack names the model that wrote it.
+# How a model is named to the person, on a Pack and the Eval Runs page.
 MODEL_NAMES = {
+    "groq/openai/gpt-oss-20b": "Groq gpt-oss-20b (free)",
+    "cloudflare/@cf/openai/gpt-oss-20b": "Cloudflare gpt-oss-20b (free)",
     HAIKU: "Claude Haiku 5.5",
     SONNET: "Claude Sonnet 5.5",
     GROQ_PERSONAL: "Groq gpt-oss-120b (free)",

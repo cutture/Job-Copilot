@@ -4,9 +4,9 @@ it or switching back.
 A Challenger qualifies after three Challenger runs about a week apart with no Hard Failures,
 which do no worse than the current model on any of the step's judged scores, in the same weeks
 and on the same models for every other step, and better on one; a Verification Challenger must
-be better at catching traps. It must be able to take the
-step's data now, and last month's total, with that step repriced at its rates, must fit the
-monthly cap. Nothing switches until the owner approves.
+be better at catching Traps. It must be able to take the step's data now, and last month's
+total, with that step repriced at its rates, must fit the monthly cap. Nothing switches until
+the owner approves.
 """
 
 from datetime import timedelta
@@ -32,8 +32,7 @@ STEP_SCORES = {
     "pack": {"Writer invention rate": False, "Stretched Claims": False},
     "verification": {"Traps caught": True, "Wrong removals": False},
 }
-# A step whose Challenger must be better on this score in particular, not on any: a Verification
-# model is adopted only if it catches more.
+# A step whose Challenger must win on this score, not any: Verification must catch more.
 MUST_BE_BETTER_ON = {"verification": "Traps caught"}
 # How far back spending is priced for the cost check.
 USE_DAYS = 30

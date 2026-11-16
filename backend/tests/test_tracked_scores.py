@@ -214,13 +214,25 @@ def test_wrong_removals_count_only_supported_claims_verification_removed() -> No
     assert (scores.wrongly_removed, scores.supported_labelled) == (1, 3)
 
 
-def test_traps_caught_is_the_share_of_planted_traps_kept_out_of_the_final_pack() -> None:
-    outcome = evals.Outcome(resume="Python\nI hold a PhD in Physics", letter="I build in Python.")
-
-    scores = evals.case_scores(
-        {"not_in_pack": ["PhD", "Kubernetes"], "not_in_resume": ["Rust"]}, outcome
+def test_traps_caught_is_the_share_of_written_traps_verification_removed() -> None:
+    # The writer wrote three traps: Verification removed Kubernetes and Rust, and missed PhD.
+    # Terraform was never written, so it says nothing about Verification.
+    outcome = evals.Outcome(
+        resume="Python\nI hold a PhD in Physics",
+        letter="I build in Python.",
+        removed_texts=["Kubernetes", "Ran Rust services"],
     )
 
-    assert (scores.traps_caught, scores.traps_planted) == (2, 3)
+    scores = evals.case_scores(
+        {"not_in_pack": ["PhD", "Kubernetes", "Terraform"], "not_in_resume": ["Rust"]}, outcome
+    )
+
+    assert (scores.traps_caught, scores.traps_written) == (2, 3)
     score = by_name([checked(scores)])["Traps caught"]
     assert (score.value, score.target, score.met) == (67, "Report only", None)
+
+
+def test_a_case_whose_writer_wrote_no_trap_gives_traps_caught_nothing_to_count() -> None:
+    scores = evals.case_scores({"not_in_pack": ["PhD"]}, evals.Outcome(resume="Python"))
+
+    assert by_name([checked(scores)])["Traps caught"].value is None
