@@ -135,7 +135,10 @@ describe("Application", () => {
     expect(panel.textContent).toContain("Answers: Python (Met)");
 
     const letter = screen.getByLabelText("Cover letter");
-    fireEvent.click(within(letter).getByRole("button", { name: "I mentor junior engineers every week." }));
+    // Opened from the keyboard too.
+    fireEvent.keyDown(within(letter).getByRole("button", { name: "I mentor junior engineers every week." }), {
+      key: "Enter",
+    });
 
     expect(panel.textContent).toContain("Self-reported");
     expect(panel.textContent).toContain("Source: A Profile entry you wrote");

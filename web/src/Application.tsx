@@ -107,26 +107,34 @@ const ClaimPicker = createContext<{ selected: Claim | null; select: (claim: Clai
 function ClaimText({ claim, label = claim.text }: { claim: Claim; label?: string }) {
   const picker = useContext(ClaimPicker);
   if (!picker || claim.evidence.length === 0) return <>{label}</>;
-  const selected = picker.selected?.text === claim.text;
   return (
-    <button
+    <ClaimLink selected={picker.selected?.text === claim.text} onClick={() => picker.select(claim)}>
+      {label}
+    </ClaimLink>
+  );
+}
+
+// A span rather than a button, so a Claim that wraps stays inline text, its bullet beside it.
+function ClaimLink({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: string }) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
       aria-pressed={selected}
-      onClick={() => picker.select(claim)}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onClick();
+      }}
       style={{
-        display: "inline",
-        font: "inherit",
-        color: "inherit",
-        padding: 0,
-        margin: 0,
-        border: 0,
         borderBottom: "1px dotted #1f5fbf",
-        background: selected ? "#e3edff" : "none",
-        textAlign: "left",
+        background: selected ? "#e3edff" : undefined,
         cursor: "pointer",
       }}
     >
-      {label}
-    </button>
+      {children}
+    </span>
   );
 }
 
@@ -380,20 +388,22 @@ function EvidencePanel({ pack, selected, onSelect, onAddToProfile }: PanelProps)
                 <div>
                   {using.length > 0 ? (
                     <>
-                      Used in:{" "}
-                      {using.map((claim, at) => (
-                        <span key={at}>
-                          {at > 0 && "; "}
-                          <button
-                            onClick={() => {
-                              onSelect(claim);
-                              setView("evidence");
-                            }}
-                          >
-                            {claim.text}
-                          </button>
-                        </span>
-                      ))}
+                      Used in:
+                      <ul style={{ margin: "2px 0", paddingLeft: 18 }}>
+                        {using.map((claim, at) => (
+                          <li key={at}>
+                            <ClaimLink
+                              selected={false}
+                              onClick={() => {
+                                onSelect(claim);
+                                setView("evidence");
+                              }}
+                            >
+                              {claim.text}
+                            </ClaimLink>
+                          </li>
+                        ))}
+                      </ul>
                     </>
                   ) : r.result === "missing" || r.result === "unknown" ? (
                     <>
