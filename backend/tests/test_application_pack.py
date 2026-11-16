@@ -363,3 +363,36 @@ def test_each_person_sees_only_their_own_applications(
         )
     finally:
         app.dependency_overrides.clear()
+
+
+def test_a_certification_no_evidence_names_never_reaches_the_pack_even_if_called_reworded(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting_id, ids = rated_match(client, provider)
+    rag = ids["retrieval"]
+    certification = "AWS Certified Machine Learning Specialty"
+    provider.tasks = {
+        "resume": json.dumps(
+            {"skills": [claim("Python", rag), claim(certification, rag)], "experience": []}
+        ),
+        "cover_letter": json.dumps(
+            {"paragraphs": [{"sentences": [claim(f"I hold the {certification}.", rag)]}]}
+        ),
+        # Verification is fooled: it calls both certification lines reworded.
+        "verify": json.dumps(
+            {
+                "statements": [
+                    judgement("s0", "reworded", rag),
+                    judgement("s1", "reworded", rag),
+                    judgement("c0s0", "reworded", rag),
+                ]
+            }
+        ),
+    }
+    started = apply(client, posting_id)
+    run_worker()
+
+    pack = client.get(f"/api/applications/{started['id']}").json()["pack"]
+    assert certification not in json.dumps(pack["resume"]) + json.dumps(pack["cover_letter"])
+    removed = {r["text"]: r for r in pack["removed_claims"]}
+    assert removed[certification]["reason"] == f"Your Evidence doesn't show {certification}."

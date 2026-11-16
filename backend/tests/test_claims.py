@@ -47,3 +47,40 @@ def test_every_number_link_and_email_in_a_claim_must_be_in_its_evidence(
     claim: str, evidence: list[str], unsupported: str | None
 ) -> None:
     assert unsupported_detail(claim, evidence, TODAY) == unsupported
+
+
+@pytest.mark.parametrize(
+    ("claim", "evidence", "unsupported"),
+    [
+        # A certification the posting asks for, which no Evidence names.
+        (
+            "AWS Certified Machine Learning Specialty",
+            ["Built retrieval with Python"],
+            "AWS Certified Machine Learning Specialty",
+        ),
+        (
+            "I hold the AWS Certified Machine Learning Specialty.",
+            ["Earned the AWS Certified Solutions Architect certification"],
+            "AWS Certified Machine Learning Specialty",
+        ),
+        ("AWS Certified Solutions Architect", ["AWS Certified Solutions Architect, 2023"], None),
+        # Case and punctuation don't matter; the credential's words do.
+        ("aws certified solutions architect", ["AWS Certified Solutions Architect"], None),
+        (
+            "Master's in Computer Science",
+            ["Education: BSc Computer Science"],
+            "Master's in Computer Science",
+        ),
+        ("MSc Data Science", ["Education: BSc Computer Science"], "MSc Data Science"),
+        ("BSc Computer Science", ["Education: BSc Computer Science, Example University"], None),
+        ("PhD in Machine Learning", ["Wrote evaluation suites"], "PhD in Machine Learning"),
+        ("Licensed Professional Engineer", ["Built APIs"], "Licensed Professional Engineer"),
+        # Words that only look like credentials aren't checked.
+        ("Certified the release process for the team", ["Ran the release process"], None),
+        ("Built APIs for a Masters programme website", ["Built APIs"], None),
+    ],
+)
+def test_a_certification_licence_or_degree_must_be_named_by_its_evidence(
+    claim: str, evidence: list[str], unsupported: str | None
+) -> None:
+    assert unsupported_detail(claim, evidence, TODAY) == unsupported
