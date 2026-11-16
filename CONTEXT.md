@@ -152,6 +152,10 @@ _Avoid_: Cover letter, bid
 The status a person sets after sending an application themselves on the employer's site.
 _Avoid_: Applied, sent
 
+**Submitted, no Pack**:
+A Submitted Application sent with the person's own resume, because no Application Pack was ready. It counts in the Funnel like any other Submitted Application.
+_Avoid_: Manual submission, Pack-less
+
 **Change Request**:
 A person's instruction to regenerate an Application Pack differently. It can't add a fact without verification.
 _Avoid_: Prompt, edit, feedback
@@ -259,6 +263,10 @@ _Avoid_: Active model, override
 **Fallback List**:
 The ordered models a step tries, using the first that can take the call: the paid model when there's a key with credit and the cap isn't reached, then Free models. Limited by what data the step handles.
 _Avoid_: Backup chain, failover
+
+**Paused step**:
+A model step whose whole Fallback List failed three times in a row. Its queued work waits, spending nothing, for 30 minutes or until Retry; reaching the cap doesn't count as a failure, and other steps carry on.
+_Avoid_: Circuit breaker, blocked, disabled
 
 **Free models**:
 Models with no charge that may receive personal data because their terms rule out training on it: Groq once Zero Data Retention is confirmed, and Cloudflare Workers AI. Free models whose terms allow training get posting text and invented eval data only.
