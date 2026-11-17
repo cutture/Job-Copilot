@@ -113,8 +113,12 @@ A person's pursuit of one Job Posting, starting when they click Apply.
 _Avoid_: Submission, job application record
 
 **Application Pack**:
-The tailored resume, cover letter and form answers prepared for one Application. Each regeneration makes a new version.
+The tailored resume and cover letter prepared for one Application. Each regeneration makes a new version.
 _Avoid_: Documents, package, bundle
+
+**Form answer**:
+An answer prepared for one question on an Application's form, with a copy button. Only free-text questions are written, from Evidence, and every sentence is verified like a Claim; contact fields come from the Profile, demographic questions are always left blank, and legal or personal ones are left for the person. Form answers belong to the Application, not to a Pack version.
+_Avoid_: Autofill, form data
 
 **Styled pair**:
 The resume and cover letter of an Application Pack in the default look: one column, a two-tone name, accent headings on a light band, right-aligned dates and Skills in two columns. It reads cleanly in an ATS.
