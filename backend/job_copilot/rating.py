@@ -37,9 +37,10 @@ RatingState = Literal["rated", "rating", "waiting"]
 # A rating job is already queued for posting `p`.
 RATING_QUEUED = """EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'rate_match'
                            AND j.payload ->> 'job_posting_id' = p.id::text)"""
-# A Rescore is already queued for posting `p`.
-RESCORE_QUEUED = """EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'rescore_match'
-                            AND j.payload ->> 'job_posting_id' = p.id::text)"""
+# A Rescore was asked for posting `p`'s Match and hasn't finished.
+# ponytail: a worker crash mid-Rescore leaves it marked, as a crash leaves a rating queued; add a
+# lease when jobs need retries.
+RESCORING = "m.rescore_requested_at IS NOT NULL"
 # The most Matches one Rescore takes.
 MAX_RESCORE = 200
 # Typical answer lengths, in tokens, for a cost estimate.
@@ -424,7 +425,7 @@ def _save(
                profile_prompts = EXCLUDED.profile_prompts, requirements = EXCLUDED.requirements,
                rubric_version = EXCLUDED.rubric_version, seniority = EXCLUDED.seniority,
                previous_band = EXCLUDED.previous_band, rated_at = now(),
-               profile_changed = false""",
+               profile_changed = false, rescore_requested_at = NULL""",
         (
             posting_id,
             user_id,
@@ -491,10 +492,18 @@ def rescore_match(user_id: UUID, payload: dict[str, Any]) -> None:
         if conn.execute(RESCORABLE, (user_id, [payload["job_posting_id"]])).fetchone():
             changed = row["band"] if row["band"] != match.band else None
             _save(conn, user_id, payload["job_posting_id"], match, changed)
+        else:
+            rescore_failed(user_id, payload)
 
 
 def rescore_failed(user_id: UUID, payload: dict[str, Any]) -> None:
-    """A failed Rescore leaves the Match's rating as it was."""
+    """A failed Rescore leaves the Match's rating as it was, and no longer shows as running."""
+    with connect() as conn:
+        conn.execute(
+            """UPDATE matches SET rescore_requested_at = NULL
+               WHERE job_posting_id = %s AND user_id = %s""",
+            (payload["job_posting_id"], user_id),
+        )
 
 
 class RescoreEstimate(BaseModel):
@@ -541,13 +550,19 @@ def queue_rescores(user_id: UUID, posting_ids: list[UUID]) -> int:
     with connect() as conn:
         rows = conn.execute(RESCORABLE, (user_id, posting_ids)).fetchall()
         for row in rows:
-            conn.execute(
-                f"""INSERT INTO jobs (user_id, kind, payload)
-                    SELECT %s, 'rescore_match', jsonb_build_object('job_posting_id', %s::text)
-                    WHERE NOT EXISTS (SELECT 1 FROM job_postings p
-                                      WHERE p.id = %s AND {RESCORE_QUEUED})""",
-                (user_id, row["job_posting_id"], row["job_posting_id"]),
-            )
+            # A Match whose Rescore is still running isn't asked again.
+            marked = conn.execute(
+                """UPDATE matches SET rescore_requested_at = now()
+                   WHERE job_posting_id = %s AND user_id = %s AND rescore_requested_at IS NULL""",
+                (row["job_posting_id"], user_id),
+            ).rowcount
+            if marked:
+                conn.execute(
+                    """INSERT INTO jobs (user_id, kind, payload)
+                       VALUES (%s, 'rescore_match',
+                               jsonb_build_object('job_posting_id', %s::text))""",
+                    (user_id, row["job_posting_id"]),
+                )
     return len(rows)
 
 

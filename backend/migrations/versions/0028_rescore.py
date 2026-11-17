@@ -14,9 +14,15 @@ def upgrade() -> None:
         ALTER TABLE matches ADD COLUMN seniority jsonb;
         -- The Band before the latest Rescore, so the person sees what changed.
         ALTER TABLE matches ADD COLUMN previous_band text;
+        -- When a Rescore was asked for, until it's saved or fails: the worker takes the job off
+        -- the queue before its model call, so the queue alone can't say one is running.
+        ALTER TABLE matches ADD COLUMN rescore_requested_at timestamptz;
         """
     )
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE matches DROP COLUMN previous_band, DROP COLUMN seniority;")
+    op.execute(
+        "ALTER TABLE matches DROP COLUMN rescore_requested_at, DROP COLUMN previous_band, "
+        "DROP COLUMN seniority;"
+    )

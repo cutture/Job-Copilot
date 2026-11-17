@@ -146,3 +146,40 @@ def test_several_matches_rescore_together(client: TestClient, provider: FakeProv
         match = listed(client, posting_id)["match"]
         # The Band didn't change, so there's no "was" to show.
         assert (match["band"], match["previous_band"]) == ("High", None)
+
+
+def test_a_rescore_shows_as_running_until_its_saved_not_just_while_queued(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posting, _ = rated(client, provider)
+    seen: list[bool] = []
+    judging = rating.rejudge
+
+    def watched(*args: Any, **kwargs: Any) -> Any:
+        # The worker has taken the job off the queue by now; the Match still says Rescoring.
+        seen.append(listed(client, posting["id"])["rescoring"])
+        return judging(*args, **kwargs)
+
+    monkeypatch.setattr(rating, "rejudge", watched)
+    provider.answers[rating.RATING_MODEL] = judged("met", "met", "met")
+    client.post("/api/rescore", json={"job_posting_ids": [posting["id"]]})
+    # Asking again while it's running queues nothing more.
+    client.post("/api/rescore", json={"job_posting_ids": [posting["id"]]})
+    with psycopg.connect(TEST_DB) as conn:
+        assert conn.execute("SELECT count(*) FROM jobs").fetchone() == (1,)
+    run_worker()
+
+    assert seen == [True]
+    assert listed(client, posting["id"])["rescoring"] is False
+
+
+def test_a_failed_rescore_leaves_the_rating_and_stops_showing_as_running(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting, _ = rated(client, provider)
+    provider.answers[rating.RATING_MODEL] = "not JSON"
+    client.post("/api/rescore", json={"job_posting_ids": [posting["id"]]})
+    run_worker()
+
+    after = listed(client, posting["id"])
+    assert (after["rescoring"], after["match"]["band"]) == (False, "High")
