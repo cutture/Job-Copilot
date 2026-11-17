@@ -636,8 +636,26 @@ type FinishProps = {
   downloadError: string;
 };
 
+// The cover letter as plain text for pasting into a form: its paragraphs, signed with the name.
+export function letterText(letter: NonNullable<Pack["cover_letter"]>, name: string | null): string {
+  const paragraphs = letter.paragraphs.map((paragraph) => paragraph.map((sentence) => sentence.text).join(" "));
+  return [...paragraphs, ...(name ? [name] : [])].join("\n\n");
+}
+
 function Finish({ application, pair, onReview, onSubmitted, onOutcome, onDownload, downloadError }: FinishProps) {
   const { reviewed, submitted_at } = application;
+  const [copied, setCopied] = useState("");
+  // Copying is another way of sending the letter out, so it waits for the review like downloads.
+  async function copyLetter() {
+    const letter = application.pack?.cover_letter;
+    if (!letter) return;
+    try {
+      await navigator.clipboard.writeText(letterText(letter, application.name));
+      setCopied("Cover letter copied.");
+    } catch {
+      setCopied("We couldn't copy it. Select the letter's text in the preview and copy it instead.");
+    }
+  }
   const download = (path: string, label: string) => (
     <button disabled={!reviewed} onClick={() => onDownload(`${path}?pair=${pair}`)}>
       {label}
@@ -663,8 +681,14 @@ function Finish({ application, pair, onReview, onSubmitted, onOutcome, onDownloa
       </label>
       <div style={{ margin: "6px 0" }}>
         {download("resume.docx", `Resume DOCX${suffix}`)}{" "}
-        {download("cover-letter.docx", `Cover letter DOCX${suffix}`)}
+        {download("cover-letter.docx", `Cover letter DOCX${suffix}`)}{" "}
+        {download("resume.pdf", `Resume PDF${suffix}`)}{" "}
+        {download("cover-letter.pdf", `Cover letter PDF${suffix}`)}{" "}
+        <button disabled={!reviewed} onClick={copyLetter}>
+          Copy cover letter
+        </button>
       </div>
+      {copied && <p role="status">{copied}</p>}
       {downloadError && <p role="alert">{downloadError}</p>}
       <div>
         {application.apply_url &&

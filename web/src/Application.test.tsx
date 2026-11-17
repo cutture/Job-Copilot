@@ -502,6 +502,45 @@ describe("Application", () => {
     saved.mockRestore();
   });
 
+  it("downloads the PDF of the pair shown, and copies the cover letter once reviewed", async () => {
+    vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:file", revokeObjectURL: () => {} });
+    const saved = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (text: string) => void copied.push(text) },
+    });
+    const pdf = () =>
+      new Response("%PDF-", {
+        headers: { "content-disposition": "attachment; filename*=UTF-8''Sam-Rivera-Cover-letter.pdf" },
+      });
+    const calls = serve({
+      "GET /api/applications/a": () => application("ready"),
+      "PUT /api/applications/a/review": () => application("ready", { reviewed: true }),
+      "GET /api/applications/a/cover-letter.pdf?pair=styled": pdf,
+    });
+    render(<Application id="a" onBack={() => {}} />);
+
+    // Locked until the review, like every way of taking the documents out.
+    expect((await screen.findByRole<HTMLButtonElement>("button", { name: "Copy cover letter" })).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Resume PDF" }).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("I've reviewed this Application Pack"));
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole<HTMLButtonElement>("button", { name: "Copy cover letter" }).disabled).toBe(false),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cover letter PDF" }));
+    await vi.waitFor(() => expect(saved).toHaveBeenCalled());
+    expect(calls).toContain("GET /api/applications/a/cover-letter.pdf?pair=styled");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy cover letter" }));
+    expect(await screen.findByText("Cover letter copied.")).toBeTruthy();
+    expect(copied).toEqual([
+      "Dear Northwind Labs hiring team,\n\nI mentor junior engineers every week.\n\nSam Rivera",
+    ]);
+    saved.mockRestore();
+  });
+
   it("explains a file the ATS check refused instead of downloading it", async () => {
     serve({
       "GET /api/applications/a": () => application("ready", { reviewed: true }),

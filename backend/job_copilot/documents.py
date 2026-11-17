@@ -1,4 +1,5 @@
-"""The document renderer: DOCX files of a verified Application Pack, in two pairs.
+"""The document renderer: DOCX files of a verified Application Pack, in two pairs, and the
+download routes for them and their PDFs, which pdf.py draws in the same two layouts.
 
 It takes only the saved documents, which hold verified Claims and no Removed Claims, and writes
 only their text: no Evidence, labels, tables, text boxes, headers, footers or images. Both pairs
@@ -45,6 +46,8 @@ router = APIRouter()
 MAX_FILENAME_PART = 60
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 Pair = Literal["styled", "plain"]
+Format = Literal["docx", "pdf"]
+MEDIA_TYPES: dict[Format, str] = {"docx": DOCX, "pdf": "application/pdf"}
 # Each accent colour: its text colour, and the light band behind headings. Text stays dark on
 # light, so every pairing keeps its contrast.
 ACCENTS: dict[AccentColour, tuple[str, str]] = {
@@ -308,36 +311,46 @@ def styled_cover_letter_docx(
 # --- Downloads ---------------------------------------------------------------------------
 
 
-def filename(name: str | None, role: str, employer: str | None, document: str) -> str:
+def filename(
+    name: str | None, role: str, employer: str | None, document: str, extension: Format = "docx"
+) -> str:
     """`Name-Role-Employer`, then which document it is, e.g. `Sam-Rivera-...-Resume.docx`."""
     # A pasted posting's title often names the employer already.
     if employer and employer.casefold() in role.casefold():
         employer = None
     parts = (name, role, employer, document)
     safe = [re.sub(r"[^\w]+", "-", part).strip("-_")[:MAX_FILENAME_PART] for part in parts if part]
-    return "-".join(part for part in safe if part) + ".docx"
+    return "-".join(part for part in safe if part) + f".{extension}"
 
 
 def _rendered(
-    pack: Any, which: Literal["Resume", "Cover letter"], pair: Pair, photo: bytes | None = None
+    pack: Any,
+    which: Literal["Resume", "Cover letter"],
+    pair: Pair,
+    photo: bytes | None = None,
+    extension: Format = "docx",
 ) -> tuple[bytes, list[str]]:
     """The file, and the lines an ATS must read back from it in order."""
+    # pdf.py draws from this module's colours and text, so it's imported once both exist.
+    from job_copilot import pdf
+
     name, contact, accent = pack["name"], pack["contact"], pack["accent_colour"]
     signature = [line for line in (name, contact) if line]
+    styled, as_pdf = pair == "styled", extension == "pdf"
     if which == "Resume":
         resume = Resume(**pack["resume"])
-        content = (
-            styled_resume_docx(resume, name, contact, accent, photo)
-            if pair == "styled"
-            else resume_docx(resume, name, contact)
-        )
+        if styled:
+            draw = pdf.styled_resume_pdf if as_pdf else styled_resume_docx
+            content = draw(resume, name, contact, accent, photo)
+        else:
+            content = (pdf.resume_pdf if as_pdf else resume_docx)(resume, name, contact)
         return content, [*signature, *(claim.text for claim in resume.all_claims())]
     letter = CoverLetter(**pack["cover_letter"])
-    content = (
-        styled_cover_letter_docx(letter, name, contact, accent)
-        if pair == "styled"
-        else cover_letter_docx(letter, name, contact)
-    )
+    if styled:
+        draw_letter = pdf.styled_cover_letter_pdf if as_pdf else styled_cover_letter_docx
+        content = draw_letter(letter, name, contact, accent)
+    else:
+        content = (pdf.cover_letter_pdf if as_pdf else cover_letter_docx)(letter, name, contact)
     return content, [*signature, *(s.text for paragraph in letter.paragraphs for s in paragraph)]
 
 
@@ -349,7 +362,11 @@ NEXT_STEP = {
 
 
 def _download(
-    user_id: UUID, application_id: UUID, which: Literal["Resume", "Cover letter"], pair: Pair
+    user_id: UUID,
+    application_id: UUID,
+    which: Literal["Resume", "Cover letter"],
+    pair: Pair,
+    extension: Format = "docx",
 ) -> Response:
     with connect() as conn:
         pack = latest_pack(conn, user_id, application_id)
@@ -361,8 +378,8 @@ def _download(
         )
     check_reviewed(pack)
     photo = bytes(stored["photo"]) if stored and stored["photo"] else None
-    content, lines = _rendered(pack, which, pair, photo)
-    found = ats.problems(content, lines)
+    content, lines = _rendered(pack, which, pair, photo, extension)
+    found = (ats.pdf_problems if extension == "pdf" else ats.problems)(content, lines)
     if found:
         raise HTTPException(
             409,
@@ -370,10 +387,10 @@ def _download(
             + NEXT_STEP[pair],
         )
     document = which if pair == "styled" else f"{which} plain"
-    name = filename(pack["name"], pack["title"], pack["employer"], document)
+    name = filename(pack["name"], pack["title"], pack["employer"], document, extension)
     return Response(
         content,
-        media_type=DOCX,
+        media_type=MEDIA_TYPES[extension],
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
     )
 
@@ -386,3 +403,15 @@ def download_resume(application_id: UUID, user_id: UserId, pair: Pair = "styled"
 @router.get("/api/applications/{application_id}/cover-letter.docx")
 def download_cover_letter(application_id: UUID, user_id: UserId, pair: Pair = "styled") -> Response:
     return _download(user_id, application_id, "Cover letter", pair)
+
+
+@router.get("/api/applications/{application_id}/resume.pdf")
+def download_resume_pdf(application_id: UUID, user_id: UserId, pair: Pair = "styled") -> Response:
+    return _download(user_id, application_id, "Resume", pair, "pdf")
+
+
+@router.get("/api/applications/{application_id}/cover-letter.pdf")
+def download_cover_letter_pdf(
+    application_id: UUID, user_id: UserId, pair: Pair = "styled"
+) -> Response:
+    return _download(user_id, application_id, "Cover letter", pair, "pdf")

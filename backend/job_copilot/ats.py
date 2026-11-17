@@ -1,15 +1,18 @@
-"""The ATS parsing check: read a DOCX the way an applicant tracking system does.
+"""The ATS parsing check: read a DOCX or PDF the way an applicant tracking system does.
 
 An ATS reads the body text in order and often drops tables, text boxes, headers and footers. A
-file passes when it has none of those and every expected line comes back intact, in order and
-within one paragraph. Lines are compared as words, so punctuation, and the tab or line break
-before right-aligned dates, don't count.
+DOCX passes when it has none of those and every expected line comes back intact, in order and
+within one paragraph. A PDF passes when its extracted text gives back every expected line, in
+order. Lines are compared as words, so punctuation, and the tab or line break before
+right-aligned dates or where a line wraps, don't count.
 """
 
 import html
 import re
 import zipfile
 from io import BytesIO
+
+from pypdf import PdfReader
 
 WORD = re.compile(r"\w+")
 # ponytail: the file is read with patterns, not an XML parser, and hidden text, footnotes and
@@ -66,4 +69,18 @@ def problems(content: bytes, lines: list[str]) -> list[str]:
                 break
         else:
             found.append(f"“{line}” doesn't read back")
+    return found
+
+
+def pdf_problems(content: bytes, lines: list[str]) -> list[str]:
+    """Why an ATS would misread the PDF, or nothing when its text reads back cleanly."""
+    words = _words(" ".join(page.extract_text() for page in PdfReader(BytesIO(content)).pages))
+    found: list[str] = []
+    at = 0
+    for line in lines:
+        match = _find(words, _words(line), at)
+        if match is None:
+            found.append(f"“{line}” doesn't read back")
+        else:
+            at = match + len(_words(line))
     return found
