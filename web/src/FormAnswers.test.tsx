@@ -19,7 +19,9 @@ const written = {
     a.id === 3
       ? {
           ...a,
-          sentences: [{ text: "I have shipped retrieval systems to production." }],
+          sentences: [
+            { text: "I have shipped retrieval systems to production.", evidence: [{ text: "Shipped retrieval systems" }] },
+          ],
           removed: [{ text: "I led a team of 20.", kind: "invented", reason: "Nothing in your resume or Profile mentions this." }],
         }
       : a,
@@ -71,8 +73,10 @@ describe("FormAnswers", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Prepare answers" }));
 
-    expect(await screen.findByText(/I have shipped retrieval systems to production\./)).toBeTruthy();
+    // Once in the answer, and again beside its Evidence.
+    expect(await screen.findAllByText(/I have shipped retrieval systems to production\./)).toHaveLength(2);
     expect(screen.getByText("I led a team of 20.").tagName).toBe("S");
+    expect(screen.getByText(/From: “Shipped retrieval systems”/)).toBeTruthy();
     expect(calls).toContain("POST /api/applications/a/form-answers/prepare");
     expect(screen.queryByRole("button", { name: "Prepare answers" })).toBeNull();
   });

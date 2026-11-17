@@ -52,21 +52,43 @@ FORM_PROMPT = (
 )
 WRITE_MAX_OUTPUT_TOKENS = 2000
 MAX_QUESTION_LENGTH = 500
-NOTHING_ANSWERS = "Nothing in your Evidence answers this. Write it yourself."
 
-# Questions whose answers are the person's own to give: demographic ones always stay blank.
+# Where the questions came from, or why common fields stand in.
+GREENHOUSE_FORM = "These are the questions on this Job Posting's Greenhouse form."
+NOT_PUBLISHED = "This Source doesn't publish its form, so here are common fields."
+OFF_WATCHLIST = (
+    "This Job Posting's employer isn't on your Watchlist any more, so here are common fields."
+)
+UNREACHABLE = (
+    "Greenhouse didn't answer, so here are common fields. Its form is tried again next time, "
+    "until you write or paste an answer."
+)
+NO_QUESTIONS = "Greenhouse lists no questions for this Job Posting, so here are common fields."
+
+# Questions whose answers are the person's own to give, matched broadly: leaving one blank by
+# mistake is safe, writing one isn't. Nothing writes nationality, marital status, birth date or
+# religion.
 DEMOGRAPHIC = re.compile(
-    r"\b(gender|sex|race|racial|ethnic\w*|veteran|disabilit\w*|pronouns?|sexual orientation|"
-    r"transgender|hispanic|latino|age|date of birth)\b",
+    r"\b(gender(?: identity)?|sex|sexual orientation|race(?!\s+conditions?)|racial|ethnic\w*|"
+    r"veteran|disabilit\w*|pronouns?|transgender|hispanic|latin[oax]|nationality|national origin|"
+    r"marital status|married|religio\w*|faith|date of birth|birth ?date|born|how old|your age|"
+    r"age range|age group)\b",
     re.IGNORECASE,
 )
-# Legal, personal or practical questions a person answers for themselves, never a model.
+# Legal, personal or practical questions a person answers for themselves, matched as phrases so
+# technical questions, such as about high availability or authorization systems, are still written.
 YOURSELF = re.compile(
-    r"\b(linkedin|website|portfolio|github|url|address|city|location|country|salary|"
-    r"compensation|pay|start date|notice|availab\w*|authori[sz]\w*|sponsor\w*|visa|relocat\w*|"
-    r"refer\w*|how did you hear|legal|criminal|convict\w*|background check|citizen\w*|"
-    r"right to work|clearance|non-compete|preferred name|name you'?d prefer|nickname|"
-    r"accommodat\w*|accessib\w*|adjustments?)\b",
+    r"\b(linkedin|github|portfolio|personal website|your website|website url|url|"
+    r"(?:home|postal|mailing|street) address|your address|where are you (?:located|based)|"
+    r"country of residence|current (?:location|country|city)|located in|relocat\w*|salary|"
+    r"compensation expectations?|expected (?:pay|compensation)|desired (?:pay|salary)|"
+    r"start date|when can you start|notice period|authori[sz]ed to work|"
+    r"work authori[sz]ation|right to work|sponsorship|sponsor you|visas?|citizenship|"
+    r"how did you hear|referred|referral|criminal|convict\w*|background check|"
+    r"security clearance|non-compete|employment agreements?|post-employment|"
+    r"previously (?:worked|been employed)|worked at or consulted|preferred name|"
+    r"name you'?d prefer|nickname|accommodations?|reasonable adjustments?|"
+    r"adjustments to the interview)\b",
     re.IGNORECASE,
 )
 CONTACT_FIELDS = {"first_name", "last_name", "email", "phone"}
@@ -176,35 +198,25 @@ def write_answers(
 ) -> dict[str, Written]:
     """Answers to free-text questions by ID, written from Evidence and verified sentence by
     sentence like the documents; a question nothing in the Evidence answers gets no sentences."""
-    state = PackState(
-        user_id=user_id,
-        application_id=application_id,
-        posting=posting,
-        requirements=[],
-        evidence=evidence,
-    )
+    state = PackState(user_id=user_id, application_id=application_id, evidence=evidence)
     task = {
         "task": "form_answers",
         "posting": posting,
         "questions": [{"id": key, "question": text} for key, text in questions.items()],
-        "evidence": applications._numbered(evidence),
+        "evidence": applications.numbered_evidence(evidence),
     }
-    answer, _ = applications._ask(state, "form_answers", FORM_PROMPT, task, WRITE_MAX_OUTPUT_TOKENS)
+    answer, _ = applications.ask_model(
+        state, "form_answers", FORM_PROMPT, task, WRITE_MAX_OUTPUT_TOKENS
+    )
     drafted: dict[str, list[DraftClaim]] = {key: [] for key in questions}
     for item in answer.get("answers") or [] if isinstance(answer, dict) else []:
         key = item.get("id") if isinstance(item, dict) else None
         if key in drafted and not drafted[key]:
-            drafted[key] = applications._drafts(item.get("sentences"), f"{key}s", evidence)
+            drafted[key] = applications.draft_claims(item.get("sentences"), f"{key}s", evidence)
     # Verification sees each answer as a letter paragraph: a sentence may state nothing about
     # the person, but every one that does must be supported.
     checked = applications.verify(
-        PackState(
-            user_id=user_id,
-            application_id=application_id,
-            evidence=evidence,
-            resume=[],
-            cover_letter=[d for d in drafted.values() if d],
-        )
+        PackState(**state, resume=[], cover_letter=[d for d in drafted.values() if d])
     )
     supported, removals = checked["supported"], checked["removed"]
     written: dict[str, Written] = {}
@@ -256,17 +268,18 @@ class Pasted(BaseModel):
         return cleaned
 
 
-def _application(conn: Any, user_id: UUID, application_id: UUID) -> Any:
-    """The Application, locked, with its posting's Source details and the Profile signature."""
+def _application(conn: Any, user_id: UUID, application_id: UUID, lock: bool = False) -> Any:
+    """The Application, with its posting's Source details and the Profile signature; locked
+    only to change which questions it has."""
     found = conn.execute(
-        """SELECT a.id, p.text AS posting, p.source, p.external_id, w.api_host, w.token,
-                  pr.name, pr.contact
+        """SELECT a.id, a.form_note, p.text AS posting, p.source, p.external_id, w.api_host,
+                  w.token, pr.name, pr.contact
            FROM applications a
            JOIN job_postings p ON p.id = a.job_posting_id AND p.user_id = a.user_id
            LEFT JOIN watchlist w ON w.id = p.watchlist_id AND w.user_id = a.user_id
            LEFT JOIN profiles pr ON pr.user_id = a.user_id
-           WHERE a.id = %s AND a.user_id = %s
-           FOR UPDATE OF a""",
+           WHERE a.id = %s AND a.user_id = %s"""
+        + (" FOR UPDATE OF a" if lock else ""),
         (application_id, user_id),
     ).fetchone()
     if found is None:
@@ -278,28 +291,26 @@ def _source_questions(app: Any) -> tuple[list[Question], Origin, str]:
     """The questions to offer, where they came from, and a note saying so."""
     common = [Question(question=q, kind=k, field=f) for q, k, f in COMMON]
     if app["source"] != sources.GREENHOUSE.source:
-        return common, "common", "This Source doesn't publish its form, so here are common fields."
-    if not app["token"] or not str(app["external_id"] or "").isdigit():
-        return (
-            common,
-            "common",
-            "This posting's Greenhouse board isn't on your Watchlist any more, so here are "
-            "common fields.",
-        )
+        return common, "common", NOT_PUBLISHED
+    job = str(app["external_id"] or "")
+    # The stored parts are checked again before they make a URL: a known Greenhouse API host,
+    # a valid board token and a job number.
+    if (
+        app["api_host"] not in set(sources.Greenhouse.HOSTS.values())
+        or not sources.TOKEN.match(str(app["token"] or ""))
+        or not (job.isascii() and job.isdigit())
+    ):
+        return common, "common", OFF_WATCHLIST
     board = sources.Board(sources.GREENHOUSE.source, app["api_host"], app["token"])
     try:
-        form = sources.GREENHOUSE.questions(board, app["external_id"])
+        form = sources.GREENHOUSE.questions(board, job)
     except (httpx.HTTPError, ValueError) as error:
         log.warning("Greenhouse questions unavailable: %s", type(error).__name__)
-        return common, "common", "Greenhouse didn't answer, so here are common fields."
+        return common, "common", UNREACHABLE
     found = greenhouse_questions(form if isinstance(form, dict) else {})
     if not found:
-        return (
-            common,
-            "common",
-            "Greenhouse lists no questions for this job, so here are common fields.",
-        )
-    return found, "greenhouse", "These are the questions on this job's Greenhouse form."
+        return common, "common", NO_QUESTIONS
+    return found, "greenhouse", GREENHOUSE_FORM
 
 
 def _rows(conn: Any, user_id: UUID, application_id: UUID) -> list[Any]:
@@ -310,18 +321,12 @@ def _rows(conn: Any, user_id: UUID, application_id: UUID) -> list[Any]:
     return rows
 
 
-def _view(user_id: UUID, application_id: UUID, note: str | None = None) -> FormView:
+def _view(user_id: UUID, application_id: UUID) -> FormView:
     with connect() as conn:
         app = _application(conn, user_id, application_id)
         rows = _rows(conn, user_id, application_id)
-    origins = {row["origin"] for row in rows}
-    note = note or (
-        "These are the questions on this job's Greenhouse form."
-        if "greenhouse" in origins
-        else "This Source doesn't publish its form, so here are common fields."
-    )
     return FormView(
-        note=note,
+        note=app["form_note"] or NOT_PUBLISHED,
         answers=[
             AnswerView(
                 id=row["id"],
@@ -343,16 +348,37 @@ def _view(user_id: UUID, application_id: UUID, note: str | None = None) -> FormV
 
 @router.get("/api/applications/{application_id}/form-answers")
 def get_form_answers(application_id: UUID, user_id: UserId) -> FormView:
-    """The Application's form questions, fetched from the Source the first time."""
+    """The Application's form questions, fetched from the Source the first time, and again
+    after Greenhouse didn't answer until the person writes or pastes an answer. The Source is
+    called with nothing locked."""
     with connect() as conn:
         app = _application(conn, user_id, application_id)
-        if _rows(conn, user_id, application_id):
-            note = None
-        else:
-            questions, origin, note = _source_questions(app)
+        rows = _rows(conn, user_id, application_id)
+    if rows and not _retry(app, rows):
+        return _view(user_id, application_id)
+    questions, origin, note = _source_questions(app)
+    with connect() as conn:
+        app = _application(conn, user_id, application_id, lock=True)
+        rows = _rows(conn, user_id, application_id)
+        if not rows or _retry(app, rows):
+            conn.execute(
+                "DELETE FROM form_answers WHERE application_id = %s AND user_id = %s",
+                (application_id, user_id),
+            )
             for position, q in enumerate(questions):
                 _insert(conn, user_id, application_id, position, q, origin)
-    return _view(user_id, application_id, note)
+            conn.execute(
+                "UPDATE applications SET form_note = %s WHERE id = %s AND user_id = %s",
+                (note, application_id, user_id),
+            )
+    return _view(user_id, application_id)
+
+
+def _retry(app: Any, rows: list[Any]) -> bool:
+    """Whether to ask Greenhouse again: it didn't answer, and nothing's been written or pasted."""
+    return app["form_note"] == UNREACHABLE and not any(
+        r["answer"] is not None or r["origin"] == "pasted" for r in rows
+    )
 
 
 def _insert(
@@ -392,19 +418,26 @@ def _write(user_id: UUID, application_id: UUID, ids: list[int] | None = None) ->
         return
     # The Profile name and contact line never go to a model, so a question naming them is masked.
     questions = {
-        f"q{r['id']}": applications._without_signature(r["question"], app["name"], app["contact"])
+        f"q{r['id']}": applications.without_signature(r["question"], app["name"], app["contact"])
         for r in rows
     }
     try:
         written = write_answers(
-            user_id, application_id, app["posting"], questions, applications._evidence(user_id)
+            user_id, application_id, app["posting"], questions, applications.pack_evidence(user_id)
         )
-    except (gateway.GatewayError, ValueError, KeyError, TypeError) as error:
+    except gateway.GatewayError as error:
         log.warning("Form answers not written: %s", type(error).__name__)
         raise HTTPException(
             503,
             "We couldn't write these answers: our AI models aren't responding right now. Try "
             "again later, or answer them yourself.",
+        ) from error
+    except (ValueError, KeyError, TypeError) as error:
+        log.warning("Form answers unusable: %s", type(error).__name__)
+        raise HTTPException(
+            502,
+            "The model's answer couldn't be used, so nothing was saved. Try again, or answer "
+            "these yourself.",
         ) from error
     with connect() as conn:
         for r in rows:
@@ -443,7 +476,7 @@ def add_question(application_id: UUID, pasted: Pasted, user_id: UserId) -> FormV
     elif YOURSELF.search(question.question):
         question = question.model_copy(update={"kind": "yourself"})
     with connect() as conn:
-        _application(conn, user_id, application_id)
+        _application(conn, user_id, application_id, lock=True)
         rows = _rows(conn, user_id, application_id)
         position = max((r["position"] for r in rows), default=-1) + 1
         added = _insert(conn, user_id, application_id, position, question, "pasted")

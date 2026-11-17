@@ -459,7 +459,7 @@ class NewApplication(BaseModel):
 # --- Writing -----------------------------------------------------------------------------
 
 
-def _ask(
+def ask_model(
     state: PackState, step: str, prompt: str, task: dict[str, Any], tokens: int
 ) -> tuple[Any, str]:
     """The model's parsed answer, and the model that gave it."""
@@ -478,7 +478,7 @@ def _ask(
     return gateway.parse_json(completion.text), completion.model
 
 
-def _numbered(evidence: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+def numbered_evidence(evidence: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"number": n, "text": e["text"]} for n, e in evidence.items()]
 
 
@@ -490,7 +490,7 @@ def _writing_task(state: PackState, task: str, kinds: set[str] | None = None) ->
         "requirements": [
             {"requirement": r["requirement"], "kind": r["kind"]} for r in requirements
         ],
-        "evidence": _numbered(state["evidence"]),
+        "evidence": numbered_evidence(state["evidence"]),
     }
     if state.get("change_requests"):
         written["change_requests"] = state["change_requests"]
@@ -517,7 +517,7 @@ def _draft(raw: Any, claim_id: str, evidence: dict[int, Any]) -> DraftClaim | No
     return DraftClaim(id=claim_id, text=text, evidence=_cited(raw, evidence))
 
 
-def _drafts(items: Any, prefix: str, evidence: dict[int, Any]) -> list[DraftClaim]:
+def draft_claims(items: Any, prefix: str, evidence: dict[int, Any]) -> list[DraftClaim]:
     listed = items[:MAX_ITEMS] if isinstance(items, list) else []
     found = (_draft(raw, f"{prefix}{n}", evidence) for n, raw in enumerate(listed))
     return [d for d in found if d]
@@ -552,7 +552,7 @@ def write_resume(state: PackState) -> PackState:
     task = _writing_task(state, "resume")
     keyed = _keyed(state["sections"])
     task["sections"] = [k.task for k in keyed]
-    answer, model = _ask(state, "pack_resume", RESUME_PROMPT, task, WRITE_MAX_OUTPUT_TOKENS)
+    answer, model = ask_model(state, "pack_resume", RESUME_PROMPT, task, WRITE_MAX_OUTPUT_TOKENS)
     answer = answer if isinstance(answer, dict) else {}
     evidence = state["evidence"]
     roles: list[DraftRole] = []
@@ -562,7 +562,9 @@ def write_resume(state: PackState) -> PackState:
         heading = _draft(raw.get("heading"), f"e{n}", evidence)
         if heading:
             roles.append(
-                DraftRole(heading=heading, lines=_drafts(raw.get("bullets"), f"e{n}b", evidence))
+                DraftRole(
+                    heading=heading, lines=draft_claims(raw.get("bullets"), f"e{n}b", evidence)
+                )
             )
     resume = []
     for key, prefix, _, wanted in keyed:
@@ -584,10 +586,10 @@ def write_resume(state: PackState) -> PackState:
                 for sentence in SENTENCE_END.split(item["text"])
             ]
         grouped = [item for item in items if isinstance(item, dict) and "group" in item]
-        claims = _drafts([item for item in items if item not in grouped], prefix, evidence)
+        claims = draft_claims([item for item in items if item not in grouped], prefix, evidence)
         groups: list[DraftGroup] = []
         for n, item in enumerate(grouped if kind == "skills" else []):
-            skills = _drafts(item.get("skills"), f"g{n}s", evidence)
+            skills = draft_claims(item.get("skills"), f"g{n}s", evidence)
             heading = _draft(item.get("group"), f"g{n}", evidence)
             if heading:
                 groups.append(DraftGroup(heading=heading, claims=skills))
@@ -605,7 +607,7 @@ def write_resume(state: PackState) -> PackState:
 
 
 def write_cover_letter(state: PackState) -> PackState:
-    answer, _ = _ask(
+    answer, _ = ask_model(
         state,
         "pack_cover_letter",
         COVER_LETTER_PROMPT,
@@ -617,7 +619,7 @@ def write_cover_letter(state: PackState) -> PackState:
     for n, paragraph in enumerate(raw[:MAX_PARAGRAPHS] if isinstance(raw, list) else []):
         sentences = paragraph.get("sentences") if isinstance(paragraph, dict) else None
         listed = sentences[:MAX_SENTENCES] if isinstance(sentences, list) else []
-        paragraphs.append(_drafts(listed, f"c{n}s", state["evidence"]))
+        paragraphs.append(draft_claims(listed, f"c{n}s", state["evidence"]))
     letter = [p for p in paragraphs if p]
     if not letter:
         raise ValueError("The cover letter answer had no paragraphs")
@@ -671,11 +673,11 @@ def _judgements(
 ) -> dict[str, tuple[Verdict, list[int]]]:
     """Verification's verdict and cited Evidence for each statement it judged."""
     evidence = state["evidence"]
-    answer, _ = _ask(
+    answer, _ = ask_model(
         state,
         "pack_check_again" if state.get("check_again") else "pack_verification",
         VERIFY_PROMPT,
-        {"task": "verify", "evidence": _numbered(evidence), "statements": statements},
+        {"task": "verify", "evidence": numbered_evidence(evidence), "statements": statements},
         VERIFY_MAX_OUTPUT_TOKENS,
     )
     asked = {s["id"] for s in statements}
@@ -877,7 +879,7 @@ def _documents(state: PackState) -> tuple[Resume, CoverLetter, list[RemovedClaim
     return resume, letter, taken_out
 
 
-def _evidence(user_id: UUID) -> dict[int, dict[str, Any]]:
+def pack_evidence(user_id: UUID) -> dict[int, dict[str, Any]]:
     items: dict[int, dict[str, Any]] = {
         e.id: {"text": e.text, "origin": e.origin, "id": e.id} for e in confirmed_evidence(user_id)
     }
@@ -978,7 +980,7 @@ def generate_pack(user_id: UUID, payload: dict[str, Any]) -> None:
         ).fetchone()
     if row is None:
         return
-    evidence = _evidence(user_id)
+    evidence = pack_evidence(user_id)
     with connect() as conn:
         profile: Any = conn.execute(
             "SELECT resume_sections, custom_sections FROM profiles WHERE user_id = %s",
@@ -1474,7 +1476,7 @@ def _next_version(conn: Any, user_id: UUID, application_id: UUID) -> int:
     return version
 
 
-def _without_signature(text: str, name: str | None, contact: str | None) -> str:
+def without_signature(text: str, name: str | None, contact: str | None) -> str:
     """A Change Request with the person's name and contact line masked: neither goes to any
     model, so a request that names them can't send them."""
     parts = [(p, "[your contact line]") for p in re.split(r"\s*[|,;·•]\s*", contact or "")]
@@ -1547,7 +1549,7 @@ def check_again(application_id: UUID, claim_id: str, user_id: UserId) -> Applica
         assert saved.draft is not None
         drafted, in_letter = _draft_claim(saved.draft, claim_id)
     candidate = DraftClaim(id=claim_id, text=drafted["text"], evidence=[])
-    evidence = _evidence(user_id)
+    evidence = pack_evidence(user_id)
     alone = DraftSection(kind="custom", heading="Claim", claims=[candidate], groups=[], roles=[])
     try:
         result = verify(
@@ -1610,7 +1612,7 @@ def request_changes(
     """Write a new Pack version with this Change Request and every earlier one."""
     with connect() as conn:
         pack = _changeable(conn, user_id, application_id)
-        request = _without_signature(change.request, pack["name"], pack["contact"])
+        request = without_signature(change.request, pack["name"], pack["contact"])
         asked = [*pack["change_requests"], request]
         if len(asked) > MAX_CHANGE_REQUESTS:
             raise HTTPException(

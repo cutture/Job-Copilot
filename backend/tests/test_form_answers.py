@@ -293,3 +293,87 @@ def test_personal_questions_on_real_forms_are_left_for_the_person(label: str) ->
     question = form_answers.classify(label, [{"name": "question_9", "type": "textarea"}])
 
     assert question.kind == "yourself"
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "How do you debug race conditions?",
+        "Describe a high availability system you built.",
+        "Tell us about an authorization system you designed.",
+        "How do you make user interfaces accessible?",
+        "What's your experience with location-based services?",
+        "Have you worked on legal tech products?",
+        "How do you refer to past incidents in a postmortem?",
+    ],
+)
+def test_technical_questions_that_share_a_word_with_personal_ones_are_still_written(
+    label: str,
+) -> None:
+    assert form_answers.classify(label, [{"name": "q", "type": "textarea"}]).kind == "write"
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "What is your nationality?",
+        "What is your marital status?",
+        "What is your religion?",
+        "When were you born?",
+        "What is your race or ethnicity?",
+    ],
+)
+def test_questions_nothing_may_write_are_always_left_blank(label: str) -> None:
+    assert form_answers.classify(label, [{"name": "q", "type": "textarea"}]).kind == "demographic"
+
+
+def test_greenhouse_is_asked_again_after_an_outage_until_an_answer_is_written(
+    client: TestClient, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    application_id = ready_pack(client, provider)
+    as_greenhouse(application_id)
+    up = False
+
+    def fetch(url: str) -> Any:
+        if not up:
+            raise httpx.ConnectError("down")
+        return FORM
+
+    monkeypatch.setattr(sources, "fetch_json", fetch)
+    first = form(client, application_id)
+    assert "Greenhouse didn't answer" in first["note"]
+    # The note stays true on a later visit, while Greenhouse is still down.
+    assert form(client, application_id)["note"] == first["note"]
+
+    up = True
+    again = form(client, application_id)
+
+    assert again["note"] == form_answers.GREENHOUSE_FORM
+    assert "First Name" in by_question(again)
+
+
+def test_a_greenhouse_url_is_built_only_from_checked_parts(
+    client: TestClient, provider: FakeProvider, greenhouse: list[str]
+) -> None:
+    application_id = ready_pack(client, provider)
+    as_greenhouse(application_id)
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        conn.execute("UPDATE job_postings SET external_id = '４００１'")
+
+    view = form(client, application_id)
+
+    assert greenhouse == []
+    assert view["note"] == form_answers.OFF_WATCHLIST
+
+
+def test_an_unusable_model_answer_is_reported_as_such(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    application_id = ready_pack(client, provider)
+    form(client, application_id)
+    provider.tasks["form_answers"] = "not JSON at all"
+
+    response = client.post(f"/api/applications/{application_id}/form-answers/prepare")
+
+    assert response.status_code == 502
+    assert response.json()["detail"].startswith("The model's answer couldn't be used")

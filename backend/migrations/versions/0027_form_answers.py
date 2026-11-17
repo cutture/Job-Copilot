@@ -31,9 +31,12 @@ def upgrade() -> None:
             removed jsonb NOT NULL DEFAULT '[]'
         );
         CREATE INDEX form_answers_application ON form_answers (application_id, position);
+
+        -- Where the Application's form questions came from, or why common fields stand in.
+        ALTER TABLE applications ADD COLUMN form_note text;
         """
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE form_answers;")
+    op.execute("ALTER TABLE applications DROP COLUMN form_note; DROP TABLE form_answers;")

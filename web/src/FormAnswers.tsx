@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
-type Sentence = { text: string };
+// A verified sentence, with the Evidence it rests on; none for one stating nothing about the person.
+type Sentence = { text: string; evidence: { text: string }[] };
 type Removed = { text: string; kind: string; reason: string };
 type Answer = {
   id: number;
@@ -113,6 +114,19 @@ export function FormAnswers({ applicationId }: { applicationId: string }) {
               <div>
                 {answer.sentences.map((s) => s.text).join(" ")}{" "}
                 <CopyButton text={answer.sentences.map((s) => s.text).join(" ")} />
+                <details style={muted}>
+                  <summary>Evidence</summary>
+                  <ul style={{ margin: "2px 0" }}>
+                    {answer.sentences.map((s) => (
+                      <li key={s.text}>
+                        {s.text}{" "}
+                        {s.evidence.length
+                          ? `From: ${s.evidence.map((e) => `“${e.text}”`).join("; ")}`
+                          : "(states nothing about you)"}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               </div>
             ) : (
               <div style={muted}>Nothing in your Evidence answers this. Write it yourself.</div>
