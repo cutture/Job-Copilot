@@ -257,6 +257,7 @@ def styled_cover_letter_pdf(
 ) -> bytes:
     page = _Page(name, "Cover letter", STYLED_MARGINS)
     _styled_header(page, name, contact, accent)
+    page.ln(8)
     for paragraph in letter.paragraphs:
         page.para(paragraph_text(paragraph), 10.5, after=8)
     if name:
