@@ -65,7 +65,8 @@ YOURSELF = re.compile(
     r"\b(linkedin|website|portfolio|github|url|address|city|location|country|salary|"
     r"compensation|pay|start date|notice|availab\w*|authori[sz]\w*|sponsor\w*|visa|relocat\w*|"
     r"refer\w*|how did you hear|legal|criminal|convict\w*|background check|citizen\w*|"
-    r"right to work|clearance|non-compete)\b",
+    r"right to work|clearance|non-compete|preferred name|name you'?d prefer|nickname|"
+    r"accommodat\w*|accessib\w*|adjustments?)\b",
     re.IGNORECASE,
 )
 CONTACT_FIELDS = {"first_name", "last_name", "email", "phone"}

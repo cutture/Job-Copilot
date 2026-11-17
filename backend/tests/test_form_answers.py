@@ -278,3 +278,18 @@ def test_the_export_holds_each_applications_form_answers(
         [name] = [n for n in export.namelist() if n.endswith("form-answers.json")]
         questions = [a["question"] for a in json.loads(export.read(name))]
     assert questions == [q for q, _, _ in form_answers.COMMON]
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "What's the name you'd prefer us to use throughout the interview process?",
+        "It is important to us to create an accessible and inclusive interview process. Do you "
+        "need any accommodations?",
+        "Will you now or in the future require sponsorship for a visa?",
+    ],
+)
+def test_personal_questions_on_real_forms_are_left_for_the_person(label: str) -> None:
+    question = form_answers.classify(label, [{"name": "question_9", "type": "textarea"}])
+
+    assert question.kind == "yourself"
