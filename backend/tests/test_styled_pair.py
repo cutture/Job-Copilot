@@ -9,7 +9,7 @@ from docx.enum.text import WD_TAB_ALIGNMENT
 from docx.oxml.ns import qn
 from fastapi.testclient import TestClient
 
-from job_copilot import ats, documents
+from job_copilot import ats, documents, downloads
 from job_copilot.applications import Claim, CoverLetter, EvidenceRef, Resume, Role, Section
 from job_copilot.documents import split_dates, styled_cover_letter_docx, styled_resume_docx
 from tests.conftest import FakeProvider
@@ -202,7 +202,9 @@ def test_a_file_that_fails_the_ats_check_is_refused_with_the_reason(
         document.save(out)
         return out.getvalue()
 
-    monkeypatch.setattr(documents, "styled_resume_docx", boxed_in)
+    monkeypatch.setitem(
+        downloads.FORMATS, "docx", downloads.FORMATS["docx"]._replace(styled_resume=boxed_in)
+    )
 
     refused = client.get(f"{base}/resume.docx")
 

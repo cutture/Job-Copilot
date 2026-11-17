@@ -22,10 +22,14 @@ FONTS = Path(__file__).parent / "fonts"
 # Carlito is metric-compatible with Calibri, which the DOCX files use, under the SIL OFL.
 FONT = "Carlito"
 DARK = (0x33, 0x33, 0x33)
-# Letter size, in points, as the DOCX files use.
+# Letter size, as the DOCX files use; every measure below is in points.
 PAGE = "Letter"
 PHOTO_SIZE = 54  # Three quarters of an inch, as on the styled DOCX resume.
 PHOTO_GAP = 8
+NAME_SIZE = 24
+# ponytail: a name too long even at this size still runs past the margin; wrap it onto a second
+# line if that's ever seen.
+MIN_NAME_SIZE = 12
 BULLET = "•"
 
 
@@ -49,7 +53,7 @@ class _Page(FPDF):
         self.add_page()
         self.set_text_color(*DARK)
 
-    def para(self, text: str, size: float, bold: bool = False, after: float = 2) -> None:
+    def paragraph(self, text: str, size: float, bold: bool = False, after: float = 2) -> None:
         """A paragraph of text, wrapped to the page."""
         self.set_font(FONT, "B" if bold else "", size)
         self.multi_cell(0, size * 1.25, text, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -72,9 +76,9 @@ PLAIN_MARGINS = (72.0, 72.0)
 
 def _plain_header(page: _Page, name: str | None, contact: str | None) -> None:
     if name:
-        page.para(name, 11, bold=True)
+        page.paragraph(name, 11, bold=True)
     if contact:
-        page.para(contact, 11, after=6)
+        page.paragraph(contact, 11, after=6)
 
 
 def resume_pdf(resume: Resume, name: str | None, contact: str | None) -> bytes:
@@ -82,19 +86,21 @@ def resume_pdf(resume: Resume, name: str | None, contact: str | None) -> bytes:
     _plain_header(page, name, contact)
     for section in resume.sections:
         page.ln(4)
-        page.para(section.heading, 13, bold=True)
+        page.paragraph(section.heading, 13, bold=True)
         if section.kind == "summary":
-            page.para(summary_text(section), 11)
+            page.paragraph(summary_text(section), 11)
         elif section.kind == "skills":
             if section.claims:
-                page.para(", ".join(skill.text for skill in section.claims), 11)
+                page.paragraph(", ".join(skill.text for skill in section.claims), 11)
             for group in section.groups:
-                page.para(f"{group.heading.text}: " + ", ".join(s.text for s in group.claims), 11)
+                page.paragraph(
+                    f"{group.heading.text}: " + ", ".join(s.text for s in group.claims), 11
+                )
         else:
             for claim in section.claims:
-                page.para(claim.text, 11)
+                page.paragraph(claim.text, 11)
         for role in section.roles:
-            page.para(role.heading.text, 11, bold=True)
+            page.paragraph(role.heading.text, 11, bold=True)
             for line in role.lines:
                 page.bullet(line.text, 11)
     return page.content()
@@ -104,9 +110,9 @@ def cover_letter_pdf(letter: CoverLetter, name: str | None, contact: str | None)
     page = _Page(name, "Cover letter", PLAIN_MARGINS)
     _plain_header(page, name, contact)
     for paragraph in letter.paragraphs:
-        page.para(paragraph_text(paragraph), 11, after=8)
+        page.paragraph(paragraph_text(paragraph), 11, after=8)
     if name:
-        page.para(name, 11)
+        page.paragraph(name, 11)
     return page.content()
 
 
@@ -116,16 +122,14 @@ STYLED_MARGINS = (54.0, 43.2)
 
 
 def round_photo(photo: bytes) -> bytes:
-    """The photo cropped to a centred circle, as a PNG with the corners left clear."""
+    """The stored photo, already square and checked, as a circle: a PNG with clear corners."""
     with Image.open(BytesIO(photo)) as image:
-        square = min(image.size)
-        left, top = (image.width - square) // 2, (image.height - square) // 2
-        cropped = image.convert("RGBA").crop((left, top, left + square, top + square))
-    mask = Image.new("L", cropped.size, 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, square - 1, square - 1), fill=255)
-    cropped.putalpha(mask)
+        rounded = image.convert("RGBA")
+    mask = Image.new("L", rounded.size, 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, rounded.width - 1, rounded.height - 1), fill=255)
+    rounded.putalpha(mask)
     out = BytesIO()
-    cropped.save(out, "PNG")
+    rounded.save(out, "PNG")
     return out.getvalue()
 
 
@@ -138,11 +142,18 @@ def _styled_header(
 ) -> None:
     colour = _rgb(ACCENTS[accent][0])
     first, _, surname = (name or "").rpartition(" ")
-    page.set_font(FONT, "B", 24)
-    width = page.get_string_width(f"{first} " if first else "") + page.get_string_width(surname)
     # The round photo sits beside the name, the pair centred together, as on the DOCX.
     beside = PHOTO_SIZE + PHOTO_GAP if photo else 0
-    x = (page.w - beside - width) / 2
+    room = page.w - page.l_margin - page.r_margin - beside
+    # A long name shrinks until it fits on its line, never past the margins.
+    size = NAME_SIZE
+    while True:
+        page.set_font(FONT, "B", size)
+        width = page.get_string_width(f"{first} " if first else "") + page.get_string_width(surname)
+        if width <= room or size <= MIN_NAME_SIZE:
+            break
+        size -= 1
+    x = (page.w - beside - min(width, room)) / 2
     top = page.get_y()
     line = max(30.0, PHOTO_SIZE if photo else 0)
     if photo:
@@ -212,23 +223,23 @@ def styled_resume_pdf(
     for section in resume.sections:
         _heading(page, section.heading, accent)
         if section.kind == "summary":
-            page.para(summary_text(section), 10.5)
+            page.paragraph(summary_text(section), 10.5)
         elif section.kind == "skills":
             if section.claims:
                 _skill_columns(page, section.claims)
             for group in section.groups:
-                page.para(group.heading.text, 10.5, bold=True, after=1)
+                page.paragraph(group.heading.text, 10.5, bold=True, after=1)
                 _skill_columns(page, group.claims)
         else:
             for claim in section.claims:
-                page.para(claim.text, 10.5)
+                page.paragraph(claim.text, 10.5)
         for role in section.roles:
             title, dates = split_dates(role.heading.text)
             page.ln(4)
             page.set_font(FONT, "B", 10.5)
             if dates:
-                # The dates at the right margin, on the title's line, after it in reading order.
-                top = page.get_y()
+                # The dates at the right margin, on the title's last line: read in drawing order
+                # or by position on the page, they come right after the title.
                 page.set_font(FONT, "", 10)
                 room = page.get_string_width(dates) + 6
                 page.set_font(FONT, "B", 10.5)
@@ -241,12 +252,12 @@ def styled_resume_pdf(
                     new_y=YPos.NEXT,
                 )
                 below = page.get_y()
-                page.set_xy(page.w - page.r_margin - room, top)
+                page.set_xy(page.w - page.r_margin - room, below - 13)
                 page.set_font(FONT, "", 10)
                 page.cell(room, 13, dates, align="R")
                 page.set_y(below)
             else:
-                page.para(title, 10.5, bold=True, after=0)
+                page.paragraph(title, 10.5, bold=True, after=0)
             for bullet in role.lines:
                 page.bullet(bullet.text, 10.5)
     return page.content()
@@ -259,7 +270,7 @@ def styled_cover_letter_pdf(
     _styled_header(page, name, contact, accent)
     page.ln(8)
     for paragraph in letter.paragraphs:
-        page.para(paragraph_text(paragraph), 10.5, after=8)
+        page.paragraph(paragraph_text(paragraph), 10.5, after=8)
     if name:
-        page.para(name, 10.5)
+        page.paragraph(name, 10.5)
     return page.content()

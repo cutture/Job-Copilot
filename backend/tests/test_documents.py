@@ -7,7 +7,8 @@ from docx import Document
 from pydantic import ValidationError
 
 from job_copilot.applications import Claim, CoverLetter, EvidenceRef, Resume, Role, Section
-from job_copilot.documents import cover_letter_docx, filename, resume_docx
+from job_copilot.documents import cover_letter_docx, resume_docx
+from job_copilot.downloads import filename
 
 SOURCE = [EvidenceRef(text="Resume line the Claim came from", origin="self_reported")]
 

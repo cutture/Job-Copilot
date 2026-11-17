@@ -11,7 +11,7 @@ from job_copilot import (
     applications,
     challengers,
     deletion,
-    documents,
+    downloads,
     eval_runs,
     export,
     gateway,
@@ -32,7 +32,7 @@ app = FastAPI(title="Job Copilot")
 app.include_router(profile.router)
 app.include_router(search.router)
 app.include_router(applications.router)
-app.include_router(documents.router)
+app.include_router(downloads.router)
 app.include_router(deletion.router)
 app.include_router(export.router)
 app.include_router(eval_runs.router)

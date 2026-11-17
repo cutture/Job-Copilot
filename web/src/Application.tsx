@@ -644,16 +644,24 @@ export function letterText(letter: NonNullable<Pack["cover_letter"]>, name: stri
 
 function Finish({ application, pair, onReview, onSubmitted, onOutcome, onDownload, downloadError }: FinishProps) {
   const { reviewed, submitted_at } = application;
-  const [copied, setCopied] = useState("");
+  // What was copied, so "copied" shows only while that's still the letter shown and reviewed.
+  const [copied, setCopied] = useState<{ text: string; failed: boolean } | null>(null);
+  const letter = application.pack?.cover_letter;
+  const current = letter ? letterText(letter, application.name) : "";
+  const copyStatus =
+    copied && reviewed && copied.text === current
+      ? copied.failed
+        ? "We couldn't copy it. Select the letter's text in the preview and copy it instead."
+        : "Cover letter copied."
+      : "";
   // Copying is another way of sending the letter out, so it waits for the review like downloads.
   async function copyLetter() {
-    const letter = application.pack?.cover_letter;
-    if (!letter) return;
+    if (!current) return;
     try {
-      await navigator.clipboard.writeText(letterText(letter, application.name));
-      setCopied("Cover letter copied.");
+      await navigator.clipboard.writeText(current);
+      setCopied({ text: current, failed: false });
     } catch {
-      setCopied("We couldn't copy it. Select the letter's text in the preview and copy it instead.");
+      setCopied({ text: current, failed: true });
     }
   }
   const download = (path: string, label: string) => (
@@ -688,7 +696,7 @@ function Finish({ application, pair, onReview, onSubmitted, onOutcome, onDownloa
           Copy cover letter
         </button>
       </div>
-      {copied && <p role="status">{copied}</p>}
+      {copyStatus && <p role="status">{copyStatus}</p>}
       {downloadError && <p role="alert">{downloadError}</p>}
       <div>
         {application.apply_url &&

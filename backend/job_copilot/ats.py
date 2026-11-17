@@ -15,6 +15,8 @@ from io import BytesIO
 from pypdf import PdfReader
 
 WORD = re.compile(r"\w+")
+# ponytail: a PDF is read with pypdf, whose two readings stand in for an ATS's; a line needn't
+# stay in one paragraph, as a PDF has none. Check with pdftotext too if an ATS ever misreads one.
 # ponytail: the file is read with patterns, not an XML parser, and hidden text, footnotes and
 # frames aren't checked; the renderer writes none of them. Parse with xml.etree if files from
 # elsewhere are ever checked.
@@ -73,14 +75,23 @@ def problems(content: bytes, lines: list[str]) -> list[str]:
 
 
 def pdf_problems(content: bytes, lines: list[str]) -> list[str]:
-    """Why an ATS would misread the PDF, or nothing when its text reads back cleanly."""
-    words = _words(" ".join(page.extract_text() for page in PdfReader(BytesIO(content)).pages))
+    """Why an ATS would misread the PDF, or nothing when its text reads back cleanly.
+
+    It's read twice, in the order the text was drawn and by its position on the page, as ATS
+    tools do one or the other; every line must read back in order both ways.
+    """
+    pages = PdfReader(BytesIO(content)).pages
     found: list[str] = []
-    at = 0
-    for line in lines:
-        match = _find(words, _words(line), at)
-        if match is None:
-            found.append(f"“{line}” doesn't read back")
-        else:
-            at = match + len(_words(line))
+    for mode in ("plain", "layout"):
+        words = _words(" ".join(page.extract_text(extraction_mode=mode) for page in pages))
+        at = 0
+        for line in lines:
+            wanted = _words(line)
+            match = _find(words, wanted, at)
+            if match is None:
+                problem = f"“{line}” doesn't read back"
+                if problem not in found:
+                    found.append(problem)
+            else:
+                at = match + len(wanted)
     return found

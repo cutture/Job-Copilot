@@ -510,13 +510,15 @@ describe("Application", () => {
       configurable: true,
       value: { writeText: async (text: string) => void copied.push(text) },
     });
+    let reviews = 0;
     const pdf = () =>
       new Response("%PDF-", {
         headers: { "content-disposition": "attachment; filename*=UTF-8''Sam-Rivera-Cover-letter.pdf" },
       });
     const calls = serve({
       "GET /api/applications/a": () => application("ready"),
-      "PUT /api/applications/a/review": () => application("ready", { reviewed: true }),
+      // Ticked, then unticked again.
+      "PUT /api/applications/a/review": () => application("ready", { reviewed: (reviews += 1) === 1 }),
       "GET /api/applications/a/cover-letter.pdf?pair=styled": pdf,
     });
     render(<Application id="a" onBack={() => {}} />);
@@ -538,6 +540,13 @@ describe("Application", () => {
     expect(copied).toEqual([
       "Dear Northwind Labs hiring team,\n\nI mentor junior engineers every week.\n\nSam Rivera",
     ]);
+
+    // Unticking the review locks copying again, and "copied" no longer shows.
+    fireEvent.click(screen.getByLabelText("I've reviewed this Application Pack"));
+    await vi.waitFor(() =>
+      expect(screen.getByRole<HTMLButtonElement>("button", { name: "Copy cover letter" }).disabled).toBe(true),
+    );
+    expect(screen.queryByText("Cover letter copied.")).toBeNull();
     saved.mockRestore();
   });
 
