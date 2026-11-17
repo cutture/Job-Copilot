@@ -34,7 +34,15 @@ os.environ.pop("CONFIDENT_API_KEY", None)
 from deepeval.metrics import BaseMetric  # noqa: E402
 from deepeval.test_case import LLMTestCase  # noqa: E402
 
-from job_copilot import applications, bands, eval_runs, filter, gateway, rating  # noqa: E402
+from job_copilot import (  # noqa: E402
+    applications,
+    bands,
+    eval_runs,
+    filter,
+    form_answers,
+    gateway,
+    rating,
+)
 from job_copilot.db import EVAL_USER_ID, connect, current_user_id  # noqa: E402
 from job_copilot.tracked_scores import (  # noqa: E402
     CaseScores,
@@ -315,6 +323,19 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
             "origin": "profile",
             "id": None,
         }
+        if case.get("form_questions"):
+            # Form answers go through the same Claim rules, so their traps are judged the same.
+            questions = {f"q{n}": q for n, q in enumerate(case["form_questions"])}
+            answers = form_answers.write_answers(
+                EVAL_USER_ID, None, posting, questions, pack_evidence
+            )
+            outcome.letter = "\n".join(s.text for a in answers.values() for s in a.sentences)
+            outcome.removed_kinds = [r.kind for a in answers.values() for r in a.removed]
+            outcome.removed_texts = [r.text for a in answers.values() for r in a.removed]
+            outcome.claims_written = sum(
+                len(a.sentences) + len(a.removed) for a in answers.values()
+            )
+            return outcome
         requirements = [r.model_dump() for r in match.requirements]
         pack = applications.write_pack(
             EVAL_USER_ID,

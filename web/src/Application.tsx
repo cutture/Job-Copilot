@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { ConfirmDelete } from "./ConfirmDelete";
+import { FormAnswers } from "./FormAnswers";
 import { ACCENTS, KINDS as REQUIREMENT_KINDS, OUTCOMES, PHOTO_STYLE, RESULTS, dollars, splitDates } from "./labels";
 import type { AccentColour, Kind, Outcome, Result } from "./labels";
 
@@ -959,6 +960,7 @@ export function Application({
           )}
         </>
       )}
+      {application && <FormAnswers applicationId={application.id} />}
       {application && (
         <p>
           {pack && pack.status !== "generating" && !application.submitted_at && (

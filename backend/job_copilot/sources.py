@@ -115,6 +115,11 @@ class Greenhouse:
         )
         return f"https://{host}/{board.token}"
 
+    def questions(self, board: Board, external_id: str) -> dict[str, Any]:
+        """The job's application form: its questions, and its compliance and demographic ones."""
+        found: dict[str, Any] = fetch_json(f"{self._api(board)}/jobs/{external_id}?questions=true")
+        return found
+
     def postings(self, board: Board) -> list[SourcePosting]:
         answer = fetch_json(f"{self._api(board)}/jobs?content=true")
         postings = []

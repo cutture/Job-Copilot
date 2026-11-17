@@ -87,6 +87,8 @@ STEP_OF = {
     "rating": "rating",
     "pack_resume": "pack",
     "pack_cover_letter": "pack",
+    # Form answers are written like the Pack, by its model.
+    "form_answers": "pack",
     "pack_verification": "verification",
     # Check again on one Removed Claim: Verification's model, counted apart from writing Packs.
     "pack_check_again": "verification",

@@ -108,6 +108,13 @@ def export(user_id: UserId) -> Response:
             (user_id,),
         ).fetchall():
             packs[pack.pop("application_id")].append(pack)
+        answers: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
+        for answer in conn.execute(
+            """SELECT application_id, question, kind, origin, options, answer, removed
+               FROM form_answers WHERE user_id = %s ORDER BY position""",
+            (user_id,),
+        ).fetchall():
+            answers[answer.pop("application_id")].append(answer)
     signature = Signature(profile.name, profile.contact)
     # ponytail: built in memory, which suits one person's data; stream it if exports grow large.
     out = io.BytesIO()
@@ -131,6 +138,8 @@ def export(user_id: UserId) -> Response:
             )
             for pack in packs[row["id"]]:
                 _write_pack(archive, folder, pack, signature)
+            if answers[row["id"]]:
+                _write_json(archive, f"{folder}/form-answers.json", answers[row["id"]])
     return Response(
         out.getvalue(),
         media_type="application/zip",

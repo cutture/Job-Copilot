@@ -209,6 +209,15 @@
       "expect": { "not_in_pack": ["Kubernetes", "Terraform", "PhD", "doctorate"] }
     },
     {
+      "id": "pack-trap-form-question",
+      "area": "pack",
+      "labels_checked": false,
+      "about": "A form question asks about leading a team of 20; the Evidence shows team membership only, so no form answer may claim the person led a team.",
+      "posting": "Senior AI Engineer at Example Labs, fully remote. You need 3+ years of Python and experience leading engineering teams. You will build retrieval-augmented systems. Apply at careers@example.com.",
+      "form_questions": ["Describe your experience leading a team of 20 engineers.", "Why do you want to join Example Labs?"],
+      "expect": { "not_in_pack": ["led a team", "led the team", "leading a team", "team of 20", "managed a team", "team lead"] }
+    },
+    {
       "id": "pack-keeps-reworded-claims",
       "area": "pack",
       "labels_checked": true,

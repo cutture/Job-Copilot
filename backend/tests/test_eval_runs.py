@@ -71,16 +71,16 @@ def statuses(client: TestClient) -> list[tuple[str, str]]:
     ]
 
 
-def test_the_set_has_4_filter_8_scoring_10_pack_and_4_injection_cases() -> None:
+def test_the_set_has_4_filter_8_scoring_11_pack_and_4_injection_cases() -> None:
     areas = [case["area"] for case in LOADED["cases"]]
 
     assert {area: areas.count(area) for area in set(areas)} == {
         "filter": 4,
         "scoring": 8,
-        "pack": 10,
+        "pack": 11,
         "injection": 4,
     }
-    assert len({case["id"] for case in LOADED["cases"]}) == 26
+    assert len({case["id"] for case in LOADED["cases"]}) == 27
 
 
 def test_an_eval_run_is_queued_once_a_day_after_its_hour_as_one_job_per_case(
@@ -94,7 +94,7 @@ def test_an_eval_run_is_queued_once_a_day_after_its_hour_as_one_job_per_case(
     worker.schedule_daily_evals(later)
     # As after a restart: the run is already queued, so nothing more is.
     worker.schedule_daily_evals(later)
-    assert counts() == (1, 26)
+    assert counts() == (1, 27)
 
 
 def test_no_second_run_is_queued_on_a_day_that_already_had_one(
@@ -121,7 +121,7 @@ def test_the_queued_run_runs_every_case_and_finishes_after_the_last(
 
     [run] = daily_runs(client)
     assert run["finished_at"] is not None
-    assert run["passed"] + run["failed"] + run["did_not_run"] == 26
+    assert run["passed"] + run["failed"] + run["did_not_run"] == 27
 
 
 def test_a_pack_queued_mid_run_goes_before_the_next_eval_case(
@@ -137,7 +137,7 @@ def test_a_pack_queued_mid_run_goes_before_the_next_eval_case(
 
     pack = client.get(f"/api/applications/{application['id']}").json()["pack"]
     assert pack["status"] == "ready"
-    assert counts() == (1, 25)
+    assert counts() == (1, 26)
 
 
 def test_a_case_the_worker_was_running_when_it_died_shows_as_not_run(
@@ -153,7 +153,7 @@ def test_a_case_the_worker_was_running_when_it_died_shows_as_not_run(
     worker.finish_interrupted_evals()
 
     results = statuses(client)
-    assert len(results) == 26
+    assert len(results) == 27
     assert results.count(("did_not_run", "The worker stopped during this case")) == 1
 
 
@@ -181,10 +181,10 @@ def test_queued_cases_stop_at_the_eval_cap(client: TestClient, provider: FakePro
         with psycopg.connect(TEST_DB, autocommit=True) as conn:
             conn.execute("UPDATE users SET monthly_cap_usd = 3 WHERE id = %s", (EVAL_USER_ID,))
 
-    # Filter's free model isn't capped, so only the 21 cases that reach a paid step stop.
+    # Filter's free model isn't capped, so only the 22 cases that reach a paid step stop.
     results = statuses(client)
-    assert len(results) == 26
-    assert results.count(("did_not_run", "Did not run: the eval budget is used up")) == 21
+    assert len(results) == 27
+    assert results.count(("did_not_run", "Did not run: the eval budget is used up")) == 22
 
 
 def test_a_case_that_crashes_fails_alone_and_the_run_still_finishes(
