@@ -161,7 +161,7 @@ describe("Rescore", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("shows the estimate first, and Rescores one Match only once it's confirmed", async () => {
-    const calls = serve({ count: 1, full_ratings: 0, cost_usd: "0.0012", model: "Claude Haiku 5.5", free: false });
+    const calls = serve({ ids: ["1"], count: 1, full_ratings: 0, cost_usd: "0.0012", model: "Claude Haiku 5.5", free: false });
     const rescored = vi.fn();
     render(
       <Matches
@@ -188,7 +188,7 @@ describe("Rescore", () => {
   });
 
   it("selects every Match not applied to, and says what a free or full Rescore means", async () => {
-    const calls = serve({ count: 2, full_ratings: 1, cost_usd: "0", model: "Groq GPT-OSS 120B", free: true });
+    const calls = serve({ ids: ["1", "2"], count: 2, full_ratings: 1, cost_usd: "0", model: "Groq GPT-OSS 120B", free: true });
     const applied = { ...rated("3", "Data Engineer", "Medium"), application_id: "a" };
     render(
       <Matches
@@ -207,6 +207,25 @@ describe("Rescore", () => {
     expect(await screen.findByText(/Rescore 2 Matches free with Groq GPT-OSS 120B\?/)).toBeTruthy();
     expect(screen.getByText(/rated in full this once/)).toBeTruthy();
     expect(calls[0]).toBe('/api/rescore/estimate {"job_posting_ids":["1","2"]}');
+  });
+
+  it("Rescores from a Match's own row, sending only the Matches that can be Rescored", async () => {
+    // One of the two ticked was applied to meanwhile, so the estimate leaves it out.
+    const calls = serve({ ids: ["2"], count: 1, full_ratings: 0, cost_usd: "0.0004", model: "Claude Haiku 5.5", free: false });
+    render(
+      <Matches
+        postings={[rated("1", "Applied AI Engineer", "High"), rated("2", "ML Engineer", "High")]}
+        onAddToProfile={noop}
+        onApply={noop}
+        onDelete={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Rescore ML Engineer" }));
+    expect(await screen.findByText(/If that model fails, the next one on your Fallback List takes over/)).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Rescore" }));
+
+    await vi.waitFor(() => expect(calls.at(-1)).toBe('/api/rescore {"job_posting_ids":["2"]}'));
   });
 
   it("shows a Rescore under way and what a Rescore changed", () => {

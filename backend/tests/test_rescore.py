@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from job_copilot import rating, worker
 from tests.conftest import TEST_DB, FakeProvider
 from tests.test_rating import POSTING, add_evidence, answer, rate_posting, set_profile, three_met
+from tests.test_rating import requirement as rating_requirement
 
 
 def judged(*results: str, evidence: int | None = None) -> str:
@@ -71,10 +72,8 @@ def test_a_rescore_judges_the_saved_requirements_again_without_reading_the_posti
     assert [r["quote"] for r in match["requirements"] if r["profile_field"] != "languages"] == [
         r["quote"] for r in posting["match"]["requirements"] if r["profile_field"] != "languages"
     ]
-    [call] = provider.received
-    assert call["messages"][0]["content"] == rating.JUDGE_PROMPT
-    task = json.loads(call["messages"][1]["content"])
-    assert "posting" not in task and POSTING not in call["messages"][1]["content"]
+    # Judging only: the posting itself never reaches a model again.
+    assert POSTING not in json.dumps([r["messages"] for r in provider.received])
 
 
 def test_an_applied_match_keeps_its_saved_rating(
@@ -125,7 +124,6 @@ def test_a_match_rated_before_seniority_was_kept_is_rated_in_full_once(
     client.post("/api/rescore", json={"job_posting_ids": [posting["id"]]})
     run_worker()
 
-    assert provider.received[0]["messages"][0]["content"] == rating.PROMPT
     match = listed(client, posting["id"])["match"]
     assert match["seniority"]["level"] == "Senior" and match["previous_band"] is None
 
@@ -183,3 +181,83 @@ def test_a_failed_rescore_leaves_the_rating_and_stops_showing_as_running(
 
     after = listed(client, posting["id"])
     assert (after["rescoring"], after["match"]["band"]) == (False, "High")
+
+
+def test_a_posting_stating_no_seniority_is_judged_only_not_rated_in_full_again(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    set_profile(client)
+    evidence_id = add_evidence(client)
+    unstated = {"level": None, "quote": None, "firm_minimum": False}
+    posting = rate_posting(client, provider, answer(*three_met(evidence_id), seniority=unstated))
+    assert posting["match"]["seniority"] == {}
+
+    estimate = client.post("/api/rescore/estimate", json={"job_posting_ids": [posting["id"]]})
+
+    assert estimate.json()["full_ratings"] == 0
+
+
+def test_a_rescore_judges_against_the_years_kept_with_the_requirement(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    set_profile(client)
+    evidence_id = add_evidence(client)
+    rating_answer = answer(
+        rating_requirement(
+            "Python",
+            "5+ years of Python",
+            evidence=[evidence_id],
+            years_required=5,
+            years_in_evidence=6,
+        )
+    )
+    posting = rate_posting(client, provider, rating_answer)
+    assert posting["match"]["requirements"][0]["years_required"] == 5
+
+    # The judging answer shows 2 years and gives no years asked: the kept 5 still applies.
+    provider.answers[rating.RATING_MODEL] = json.dumps(
+        {
+            "requirements": [
+                {"id": 0, "result": "met", "evidence": [evidence_id], "years_in_evidence": 2}
+            ]
+        }
+    )
+    client.post("/api/rescore", json={"job_posting_ids": [posting["id"]]})
+    run_worker()
+
+    assert listed(client, posting["id"])["match"]["requirements"][0]["result"] == "partial"
+
+
+def test_an_apply_between_asking_and_running_keeps_the_rating_and_clears_rescoring(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting, _ = rated(client, provider)
+    provider.answers[rating.RATING_MODEL] = judged("missing", "missing", "missing")
+    client.post("/api/rescore", json={"job_posting_ids": [posting["id"]]})
+    client.post("/api/applications", json={"job_posting_id": posting["id"]})
+
+    while worker.run_once():
+        pass
+
+    after = listed(client, posting["id"])
+    assert (after["rescoring"], after["match"]["band"]) == (False, "High")
+
+
+def test_the_estimate_names_a_paid_model_only_if_the_rescore_fits_under_the_cap(
+    client: TestClient, provider: FakeProvider
+) -> None:
+    posting, _ = rated(client, provider)
+    client.put("/api/model-settings/groq-zdr", json={"confirmed": True})
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        # Spent all but a hundredth of a cent of the cap.
+        conn.execute(
+            """INSERT INTO model_calls (user_id, model, step, input_tokens, output_tokens, cost_usd)
+               SELECT id, 'seed', 'seed', 0, 0, monthly_cap_usd - 0.0001 FROM users
+               WHERE id = '00000000-0000-0000-0000-000000000001'"""
+        )
+
+    estimate = client.post("/api/rescore/estimate", json={"job_posting_ids": [posting["id"]]})
+
+    found = estimate.json()
+    assert found["free"] is True and found["model"] != "Claude Haiku 5.5"
+    assert found["ids"] == [posting["id"]]

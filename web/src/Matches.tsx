@@ -54,7 +54,15 @@ export type RatedPosting = PostingOrigin & {
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
-type Estimate = { count: number; full_ratings: number; cost_usd: string; model: string | null; free: boolean };
+type Estimate = {
+  // The Matches that may be Rescored: all a confirmed Rescore sends.
+  ids: string[];
+  count: number;
+  full_ratings: number;
+  cost_usd: string;
+  model: string | null;
+  free: boolean;
+};
 
 // Rescoring costs model calls, so the estimate comes first and nothing runs until it's confirmed.
 function RescoreDialog({ ids, onDone, onCancel }: { ids: string[]; onDone: () => void; onCancel: () => void }) {
@@ -69,7 +77,10 @@ function RescoreDialog({ ids, onDone, onCancel }: { ids: string[]; onDone: () =>
   }, [body]);
 
   async function confirm() {
-    const response = await fetch("/api/rescore", { method: "POST", headers: JSON_HEADERS, body }).catch(() => null);
+    const rescorable = JSON.stringify({ job_posting_ids: estimate!.ids });
+    const response = await fetch("/api/rescore", { method: "POST", headers: JSON_HEADERS, body: rescorable }).catch(
+      () => null,
+    );
     if (!response?.ok) {
       setError("We couldn't start the Rescore. Try again.");
       return;
@@ -95,7 +106,8 @@ function RescoreDialog({ ids, onDone, onCancel }: { ids: string[]; onDone: () =>
                   {estimate.free ? `free with ${estimate.model}` : `for about ${dollars(estimate.cost_usd)} with ${estimate.model}`}
                   ?
                 </b>{" "}
-                It judges the Requirements already read from each posting against your Profile now.
+                It judges the Requirements already read from each posting against your Profile now. If that model
+                fails, the next one on your Fallback List takes over, which may cost more.
               </>
             )}
           </p>
@@ -285,7 +297,8 @@ export function Matches({
 }) {
   const [showLow, setShowLow] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
-  const [rescoring, setRescoring] = useState<string[] | null>(null);
+  // The Matches the Rescore dialog is open for.
+  const [dialogIds, setDialogIds] = useState<string[] | null>(null);
   const sorted = [...postings].sort(
     (a, b) => BANDS.indexOf(a.match.band) - BANDS.indexOf(b.match.band) || b.match.nice_met - a.match.nice_met,
   );
@@ -315,6 +328,11 @@ export function Matches({
       )}{" "}
       <b>{posting.title}</b>
       {posting.rescoring && <span style={{ fontSize: 13 }}> Rescoring…</span>}
+      {!posting.application_id && !posting.rescoring && (
+        <button aria-label={`Rescore ${posting.title}`} onClick={() => setDialogIds([posting.id])}>
+          Rescore
+        </button>
+      )}
       <div>
         <Badges posting={posting} />
         <span style={{ fontSize: 13 }}>{age(posting)}</span>
@@ -338,18 +356,18 @@ export function Matches({
             />{" "}
             Select all you haven't applied to
           </label>{" "}
-          <button disabled={ticked.size === 0} onClick={() => setRescoring([...ticked])}>
+          <button disabled={ticked.size === 0} onClick={() => setDialogIds([...ticked])}>
             Rescore selected ({ticked.size})
           </button>{" "}
           <span style={{ fontSize: 13 }}>Nothing rescores automatically.</span>
         </p>
       )}
-      {rescoring && (
+      {dialogIds && (
         <RescoreDialog
-          ids={rescoring}
-          onCancel={() => setRescoring(null)}
+          ids={dialogIds}
+          onCancel={() => setDialogIds(null)}
           onDone={() => {
-            setRescoring(null);
+            setDialogIds(null);
             setTicked(new Set());
             onRescored?.();
           }}
@@ -379,7 +397,7 @@ export function Matches({
           onAddToProfile={onAddToProfile}
           onApply={onApply}
           onDelete={onDelete}
-          onRescore={setRescoring}
+          onRescore={setDialogIds}
         />
       </div>
       <p style={{ fontSize: 13 }}>

@@ -486,7 +486,7 @@ def has_keys(model: str) -> bool:
     return all(os.environ.get(name) for name in PROVIDER_KEYS[provider])
 
 
-def _is_paid(model: str) -> bool:
+def is_paid(model: str) -> bool:
     rule = MODELS[model]
     return bool(rule.input_usd_per_million or rule.output_usd_per_million)
 
@@ -526,22 +526,19 @@ def _skip(model: str, data_class: DataClass, settings: Any) -> bool:
     if model.startswith("groq/") and data_class is DataClass.PERSONAL:
         return not settings["groq_zdr_confirmed"]
     until = settings["paid_unavailable_until"]
-    return _is_paid(model) and until is not None and until > datetime.now(UTC)
+    return is_paid(model) and until is not None and until > datetime.now(UTC)
 
 
-def likely_model(
+def usable_models(
     user_id: UUID, step: str, models: Sequence[str], data_class: DataClass
-) -> str | None:
-    """The model a call would use now, by complete_first's own rules, for a cost estimate: the
-    first one that can take it, skipping a paid model once this month's cap is reached."""
+) -> tuple[list[str], Decimal]:
+    """For a cost estimate: the models a call could use now, in complete_first's order, and
+    what's left under this month's cap for paid ones."""
     settings = model_settings(user_id)
     with connect() as conn:
         cap, spent = cap_and_spent(conn, settings_owner(user_id))
-    for model in _ordered(user_id, STEP_OF.get(step, step), models):
-        if _skip(model, data_class, settings) or (_is_paid(model) and spent >= cap):
-            continue
-        return model
-    return None
+    ordered = _ordered(user_id, STEP_OF.get(step, step), models)
+    return [m for m in ordered if not _skip(m, data_class, settings)], cap - spent
 
 
 def model_status(user_id: UUID) -> ModelStatus:
@@ -560,7 +557,7 @@ def model_status(user_id: UUID) -> ModelStatus:
     free_ready = any(
         not _skip(model, DataClass.PERSONAL, settings)
         for model in PERSONAL_MODELS
-        if not _is_paid(model)
+        if not is_paid(model)
     )
     return ModelStatus(
         paid=note is None,
@@ -682,7 +679,7 @@ def complete_first(
                     # ponytail: waits in the worker, holding the queue; fine for one person.
                     time.sleep(RATE_LIMIT_WAIT_SECONDS)
                     continue
-                if error.out_of_credit and _is_paid(model):
+                if error.out_of_credit and is_paid(model):
                     _paid_out_until_tomorrow(user_id)
                 rate_limited = rate_limited or error.rate_limited
                 called_and_failed = True

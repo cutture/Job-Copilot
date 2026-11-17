@@ -203,7 +203,8 @@ def list_postings(user_id: UserId) -> list[JobPosting]:
                             WHEN {rating.RATING_QUEUED} THEN 'rating'
                             ELSE 'waiting' END AS rating_state,
                        COALESCE({rating.RESCORING}, false) AS rescoring
-                FROM job_postings p LEFT JOIN matches m ON m.job_posting_id = p.id
+                FROM job_postings p
+                LEFT JOIN matches m ON m.job_posting_id = p.id AND m.user_id = p.user_id
                 LEFT JOIN applications a ON a.job_posting_id = p.id AND a.user_id = p.user_id
                 WHERE p.user_id = %s AND p.expired_at IS NULL
                 ORDER BY p.created_at DESC""",

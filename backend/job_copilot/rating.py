@@ -36,6 +36,7 @@ MAX_TEXT_LENGTH = 300
 RatingState = Literal["rated", "rating", "waiting"]
 # A rating job is already queued for posting `p`.
 RATING_QUEUED = """EXISTS (SELECT 1 FROM jobs j WHERE j.kind = 'rate_match'
+                           AND j.user_id = p.user_id
                            AND j.payload ->> 'job_posting_id' = p.id::text)"""
 # A Rescore was asked for posting `p`'s Match and hasn't finished.
 # ponytail: a worker crash mid-Rescore leaves it marked, as a crash leaves a rating queued; add a
@@ -98,7 +99,8 @@ JUDGE_PROMPT = (
     '  - "gap": for "partial", what the Evidence lacks; otherwise null\n'
     '  - "profile_field": "work_authorization", "lives_in" or "education" if that fact decides '
     "it, else null\n"
-    '  - "years_required": the years of experience its quote asks for, or null\n'
+    '  - "years_required": only for a Requirement given without one: the years of experience '
+    "its quote asks for, or null\n"
     '  - "years_in_evidence": the years the cited Evidence shows, or null'
 )
 # What a role offers, as a model may still name it on its own. The whole name must match, so a
@@ -144,6 +146,8 @@ class RequirementView(BaseModel):
     profile_field: str | None = None
     # The IDs of the Evidence items cited, so deleting one finds the Matches it changes.
     evidence_ids: list[int] = []
+    # The years of experience it asks for, kept so a Rescore judges against the same number.
+    years_required: float | None = None
 
 
 class MatchView(BaseModel):
@@ -155,7 +159,8 @@ class MatchView(BaseModel):
     requirements: list[RequirementView]
     # Evidence this rating relied on has since been deleted.
     profile_changed: bool = False
-    # The posting's own seniority statement, kept so a Rescore can judge it again.
+    # The posting's own seniority statement, kept so a Rescore can judge it again: {} when it
+    # states none, None for a Match rated before it was kept.
     seniority: dict[str, Any] | None = None
     # The Band before the latest Rescore, when that Rescore changed it.
     previous_band: bands.Band | None = None
@@ -220,6 +225,7 @@ def _judge(
         gap=_short_safe(gap) if gap else None,
         profile_field=fact,
         evidence_ids=cited_ids,
+        years_required=raw.years_required,
     )
 
 
@@ -247,18 +253,19 @@ def _languages(answer: dict[str, Any], posting: str, spoken: list[str]) -> list[
     ]
 
 
-def _stated_seniority(answer: dict[str, Any], posting: str) -> dict[str, Any] | None:
-    """The seniority the posting states, with its quote checked against the posting, or None."""
+def _stated_seniority(answer: dict[str, Any], posting: str) -> dict[str, Any]:
+    """The seniority the posting states, with its quote checked against the posting, or {}
+    when it states none."""
     stated = answer.get("seniority")
     stated = stated if isinstance(stated, dict) else {}
     level, quote = stated.get("level"), _verified_quote(stated.get("quote"), posting)
     if level not in SENIORITY_LEVELS or not quote:
-        return None
+        return {}
     return {"level": level, "quote": quote, "firm_minimum": stated.get("firm_minimum") is True}
 
 
-def _seniority(stated: dict[str, Any] | None, mine: str | None) -> bands.Seniority:
-    if stated is None:
+def _seniority(stated: dict[str, Any], mine: str | None) -> bands.Seniority:
+    if not stated:
         return "fits"
     level = stated["level"]
     if mine not in SENIORITY_LEVELS:
@@ -343,6 +350,30 @@ def rate_posting(
     return judge(gateway.parse_json(completion.text), posting, evidence, facts)
 
 
+def _judged(requirements: list[RequirementView]) -> list[RequirementView]:
+    """The Requirements a model judges: languages are checked in code."""
+    return [r for r in requirements if r.profile_field != "languages"]
+
+
+def _judging_task(
+    asked: list[RequirementView], evidence: dict[int, str], facts: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "requirements": [
+            {
+                "id": n,
+                "requirement": r.requirement,
+                "kind": r.kind,
+                "quote": r.quote,
+                "years_required": r.years_required,
+            }
+            for n, r in enumerate(asked)
+        ],
+        "evidence": [{"number": n, "text": text} for n, text in evidence.items()],
+        "facts": {name: facts[name] for name in FACT_NAMES},
+    }
+
+
 def rejudge(
     user_id: UUID,
     posting: str,
@@ -353,15 +384,8 @@ def rejudge(
 ) -> MatchView:
     """Judge a Match again: the same Requirements and seniority statement, read from the
     posting before, against this Evidence and these facts. Only judging calls a model."""
-    asked = [r for r in requirements if r.profile_field != "languages"]
-    task = {
-        "requirements": [
-            {"id": n, "requirement": r.requirement, "kind": r.kind, "quote": r.quote}
-            for n, r in enumerate(asked)
-        ],
-        "evidence": [{"number": n, "text": text} for n, text in evidence.items()],
-        "facts": {name: facts[name] for name in FACT_NAMES},
-    }
+    asked = _judged(requirements)
+    task = _judging_task(asked, evidence, facts)
     completion = gateway.complete_first(
         user_id=user_id,
         models=RATING_MODELS,
@@ -380,20 +404,25 @@ def rejudge(
         if isinstance(item, dict)
     }
     # Each Requirement keeps its name, kind and quote; one left unjudged reads as unknown.
-    merged = [
-        {
-            "result": judged.get(n, {}).get("result", "unknown"),
-            "evidence": judged.get(n, {}).get("evidence") or [],
-            **{
-                key: judged.get(n, {}).get(key)
-                for key in ("gap", "profile_field", "years_required", "years_in_evidence")
-            },
-            "requirement": r.requirement,
-            "kind": r.kind,
-            "quote": r.quote,
-        }
-        for n, r in enumerate(asked)
-    ]
+    merged = []
+    for n, r in enumerate(asked):
+        item = judged.get(n, {})
+        merged.append(
+            {
+                "result": item.get("result", "unknown"),
+                "evidence": item.get("evidence") or [],
+                "gap": item.get("gap"),
+                "profile_field": item.get("profile_field"),
+                # The years kept with the Requirement; a model reads them only for older Matches.
+                "years_required": r.years_required
+                if r.years_required is not None
+                else item.get("years_required"),
+                "years_in_evidence": item.get("years_in_evidence"),
+                "requirement": r.requirement,
+                "kind": r.kind,
+                "quote": r.quote,
+            }
+        )
     languages = [
         {"language": r.requirement, "quote": r.quote}
         for r in requirements
@@ -413,8 +442,18 @@ def _save(
     posting_id: Any,
     match: MatchView,
     previous_band: str | None = None,
-) -> None:
-    conn.execute(
+    unless_applied: bool = False,
+) -> bool:
+    """Save a rating; a Rescore's, with unless_applied, only while the Match has no Application,
+    checked in the same statement. Returns whether it was saved."""
+    guard = (
+        """ WHERE NOT EXISTS (SELECT 1 FROM applications a
+                             WHERE a.job_posting_id = matches.job_posting_id
+                               AND a.user_id = matches.user_id)"""
+        if unless_applied
+        else ""
+    )
+    saved: int = conn.execute(
         """INSERT INTO matches (job_posting_id, user_id, band, nice_met, reasons, gaps,
                                 profile_prompts, requirements, rubric_version, seniority,
                                 previous_band)
@@ -425,7 +464,8 @@ def _save(
                profile_prompts = EXCLUDED.profile_prompts, requirements = EXCLUDED.requirements,
                rubric_version = EXCLUDED.rubric_version, seniority = EXCLUDED.seniority,
                previous_band = EXCLUDED.previous_band, rated_at = now(),
-               profile_changed = false, rescore_requested_at = NULL""",
+               profile_changed = false, rescore_requested_at = NULL"""
+        + guard,
         (
             posting_id,
             user_id,
@@ -436,10 +476,11 @@ def _save(
             Jsonb(match.profile_prompts),
             Jsonb([r.model_dump() for r in match.requirements]),
             RUBRIC_VERSION,
-            Jsonb(match.seniority) if match.seniority else None,
+            Jsonb(match.seniority) if match.seniority is not None else None,
             previous_band,
         ),
-    )
+    ).rowcount
+    return saved > 0
 
 
 def rate_match(user_id: UUID, payload: dict[str, Any]) -> None:
@@ -479,6 +520,8 @@ def rescore_match(user_id: UUID, payload: dict[str, Any]) -> None:
     with connect() as conn:
         row: Any = conn.execute(RESCORABLE, (user_id, [payload["job_posting_id"]])).fetchone()
     if row is None:
+        # Applied to since it was asked for: the saved rating stays.
+        rescore_failed(user_id, payload)
         return
     evidence = {item.id: item.text for item in confirmed_evidence(user_id)}
     facts = _facts(user_id)
@@ -487,13 +530,12 @@ def rescore_match(user_id: UUID, payload: dict[str, Any]) -> None:
     else:
         saved = [RequirementView.model_validate(r) for r in row["requirements"]]
         match = rejudge(user_id, row["posting"], saved, row["seniority"], evidence, facts)
+    previous_band = row["band"] if row["band"] != match.band else None
     with connect() as conn:
+        stored = _save(conn, user_id, payload["job_posting_id"], match, previous_band, True)
+    if not stored:
         # Applied to meanwhile: the saved rating stays as it was at Apply.
-        if conn.execute(RESCORABLE, (user_id, [payload["job_posting_id"]])).fetchone():
-            changed = row["band"] if row["band"] != match.band else None
-            _save(conn, user_id, payload["job_posting_id"], match, changed)
-        else:
-            rescore_failed(user_id, payload)
+        rescore_failed(user_id, payload)
 
 
 def rescore_failed(user_id: UUID, payload: dict[str, Any]) -> None:
@@ -507,6 +549,8 @@ def rescore_failed(user_id: UUID, payload: dict[str, Any]) -> None:
 
 
 class RescoreEstimate(BaseModel):
+    # The Matches asked for that may be Rescored, which is all a confirmed Rescore sends.
+    ids: list[UUID]
     count: int
     # Matches rated before their seniority statement was kept, so rated in full this once.
     full_ratings: int
@@ -520,28 +564,50 @@ def rescore_estimate(user_id: UUID, posting_ids: list[UUID]) -> RescoreEstimate:
     """What Rescoring these Matches should cost now, priced at the model that would take it."""
     with connect() as conn:
         rows = conn.execute(RESCORABLE, (user_id, posting_ids)).fetchall()
-    model = gateway.likely_model(user_id, "rescore", RATING_MODELS, DataClass.PERSONAL)
-    rule = gateway.MODELS.get(model or "")
-    evidence = sum(len(item.text) + 20 for item in confirmed_evidence(user_id))
-    cost = Decimal(0)
+    evidence = {item.id: item.text for item in confirmed_evidence(user_id)}
+    facts = _facts(user_id)
+    # Each call's request, in characters, and its typical answer, in tokens.
+    calls: list[tuple[int, int]] = []
     full = 0
     for row in rows:
-        asked = len(row["requirements"])
+        saved = [RequirementView.model_validate(r) for r in row["requirements"]]
         if row["seniority"] is None:
             full += 1
-            chars = len(PROMPT) + len(row["posting"]) + evidence
-            out = RATED_TOKENS_PER_REQUIREMENT * asked + ANSWER_TOKENS
+            person = {"evidence": evidence, "facts": {n: facts[n] for n in FACT_NAMES}}
+            chars = len(PROMPT) + len(row["posting"]) + len(json.dumps(person))
+            calls.append((chars, RATED_TOKENS_PER_REQUIREMENT * len(saved) + ANSWER_TOKENS))
         else:
-            chars = len(JUDGE_PROMPT) + len(json.dumps(row["requirements"])) + evidence
-            out = JUDGED_TOKENS_PER_REQUIREMENT * asked + ANSWER_TOKENS
-        if rule:
-            cost += gateway.price_of(rule, chars // gateway.CHARS_PER_TOKEN_ESTIMATE + 1, out)
+            asked = _judged(saved)
+            chars = len(JUDGE_PROMPT) + len(json.dumps(_judging_task(asked, evidence, facts)))
+            calls.append((chars, JUDGED_TOKENS_PER_REQUIREMENT * len(asked) + ANSWER_TOKENS))
+    usable, room = gateway.usable_models(user_id, "rescore", RATING_MODELS, DataClass.PERSONAL)
+    for model in usable:
+        rule = gateway.MODELS[model]
+        cost = sum(
+            (
+                gateway.price_of(rule, chars // gateway.CHARS_PER_TOKEN_ESTIMATE + 1, out)
+                for chars, out in calls
+            ),
+            Decimal(0),
+        )
+        # A paid model is named only if the whole Rescore fits under this month's cap.
+        if gateway.is_paid(model) and cost > room:
+            continue
+        return RescoreEstimate(
+            ids=[row["job_posting_id"] for row in rows],
+            count=len(rows),
+            full_ratings=full,
+            cost_usd=cost,
+            model=gateway.model_name(model),
+            free=not cost,
+        )
     return RescoreEstimate(
+        ids=[row["job_posting_id"] for row in rows],
         count=len(rows),
         full_ratings=full,
-        cost_usd=cost,
-        model=gateway.model_name(model) if model else None,
-        free=bool(model) and not cost,
+        cost_usd=Decimal(0),
+        model=None,
+        free=False,
     )
 
 
