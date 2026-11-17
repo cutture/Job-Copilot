@@ -26,6 +26,7 @@ class CaseScores(BaseModel):
     stretched: int = 0
     invented: int = 0
     same_band_reordered: bool | None = None
+    same_band_rescored: bool | None = None
     # Of the Traps the writer wrote, how many Verification removed.
     traps_caught: int = 0
     traps_written: int = 0
@@ -84,6 +85,7 @@ def scores_for(results: Sequence[dict[str, Any]]) -> list[TrackedScore]:
 
     banded = [c.band_exact for c in trusted if c.band_exact is not None]
     reordered = [c.same_band_reordered for c in trusted if c.same_band_reordered is not None]
+    rescored = [c.same_band_rescored for c in trusted if c.same_band_rescored is not None]
     written = total(trusted, lambda c: c.claims_written)
     supported = total(trusted, lambda c: c.supported_labelled)
 
@@ -117,6 +119,7 @@ def scores_for(results: Sequence[dict[str, Any]]) -> list[TrackedScore]:
         reported(
             "Same Band after reordering Requirements", _percent(sum(reordered), len(reordered))
         ),
+        reported("Same Band after Rescore", _percent(sum(rescored), len(rescored))),
         reported(
             "Traps caught",
             _percent(

@@ -25,6 +25,8 @@ type JobPosting = PostingOrigin & {
   rating_state?: RatingState | null;
   match?: Match | null;
   application_id?: string | null;
+  // A Rescore of its Match is queued or running.
+  rescoring?: boolean;
 };
 
 const stateCard = { border: "1px solid #ddd", borderRadius: 8, padding: "8px 12px", margin: "8px 0" };
@@ -131,7 +133,9 @@ export function App() {
   }, []);
 
   const processing =
-    postings?.some((posting) => posting.status === "queued" || posting.rating_state === "rating") ?? false;
+    postings?.some(
+      (posting) => posting.status === "queued" || posting.rating_state === "rating" || posting.rescoring,
+    ) ?? false;
   const rated = postings?.filter((posting): posting is RatedPosting & JobPosting => !!posting.match) ?? [];
   const waiting = postings?.filter((posting) => posting.rating_state === "waiting").length ?? 0;
   const shown =
@@ -324,7 +328,7 @@ export function App() {
       {profileChanged > 0 && (
         <p role="status" style={{ ...stateCard, background: "#fff8e1" }}>
           <b>Your Profile changed.</b> {profileChanged} open {profileChanged === 1 ? "Match shows" : "Matches show"}{" "}
-          Profile changed. Nothing rescores automatically.
+          Profile changed. Nothing rescores automatically: tick the ones to Rescore, and you'll see the cost first.
         </p>
       )}
       <Matches
@@ -335,6 +339,7 @@ export function App() {
         }}
         onApply={applyTo}
         onDelete={deletePosting}
+        onRescored={refreshPostings}
       />
       {waiting > 0 && (
         <p>

@@ -85,6 +85,8 @@ class Outcome:
     requirements: list[ExtractedRequirement] = field(default_factory=list)
     # The Band for the same posting with its sentences in reverse order.
     reordered_band: bands.Band | None = None
+    # The Band from judging the same Requirements again, as a Rescore does.
+    rescored_band: bands.Band | None = None
     resume: str = ""
     letter: str = ""
     # How many Claims the writer wrote, and each one Verification removed, with its kind.
@@ -161,6 +163,9 @@ def case_scores(expect: dict[str, Any], outcome: Outcome) -> CaseScores:
         invented=outcome.removed_kinds.count("invented"),
         same_band_reordered=(
             outcome.reordered_band == outcome.band if outcome.reordered_band else None
+        ),
+        same_band_rescored=(
+            outcome.rescored_band == outcome.band if outcome.rescored_band else None
         ),
         traps_caught=len([trap for trap in removed if trap not in leaked]),
         traps_written=len(set(removed) | set(leaked)),
@@ -313,6 +318,20 @@ def run_case(case: dict[str, Any], profile: dict[str, Any]) -> Outcome:
         except Exception as error:
             # A report-only check never changes the case's own result.
             log.warning("Reordered rating failed: %s", type(error).__name__)
+        # Report only: judging the same Requirements again, against the same Evidence, as a
+        # Rescore does, should give the same Band.
+        try:
+            rescored = rating.rejudge(
+                EVAL_USER_ID,
+                posting,
+                match.requirements,
+                match.seniority,
+                evidence,
+                profile["facts"],
+            )
+            outcome.rescored_band = rescored.band
+        except Exception as error:
+            log.warning("Rescore check failed: %s", type(error).__name__)
     # A case labelled with what a Pack may or must hold goes on to write one.
     if {"not_in_resume", "not_in_pack", "in_pack"} & case["expect"].keys():
         pack_evidence: dict[int, dict[str, Any]] = {

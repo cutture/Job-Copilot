@@ -85,6 +85,8 @@ STEP_OF = {
     "filter": "filter",
     "resume_evidence": "evidence",
     "rating": "rating",
+    # A Rescore judges with the rating's model.
+    "rescore": "rating",
     "pack_resume": "pack",
     "pack_cover_letter": "pack",
     # Form answers are written like the Pack, by its model.
@@ -117,6 +119,7 @@ JOB_STEPS = {
     "extract_evidence": ["evidence"],
     "rate_match": ["rating"],
     "generate_pack": ["pack", "verification"],
+    "rescore_match": ["rating"],
 }
 
 # The Challenger a run is trying; calls for its step use it alone.
@@ -524,6 +527,21 @@ def _skip(model: str, data_class: DataClass, settings: Any) -> bool:
         return not settings["groq_zdr_confirmed"]
     until = settings["paid_unavailable_until"]
     return _is_paid(model) and until is not None and until > datetime.now(UTC)
+
+
+def likely_model(
+    user_id: UUID, step: str, models: Sequence[str], data_class: DataClass
+) -> str | None:
+    """The model a call would use now, by complete_first's own rules, for a cost estimate: the
+    first one that can take it, skipping a paid model once this month's cap is reached."""
+    settings = model_settings(user_id)
+    with connect() as conn:
+        cap, spent = cap_and_spent(conn, settings_owner(user_id))
+    for model in _ordered(user_id, STEP_OF.get(step, step), models):
+        if _skip(model, data_class, settings) or (_is_paid(model) and spent >= cap):
+            continue
+        return model
+    return None
 
 
 def model_status(user_id: UUID) -> ModelStatus:

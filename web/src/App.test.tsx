@@ -155,7 +155,9 @@ describe("pasting a Job Posting", () => {
     respondWith([[stale]]);
     render(<App />);
 
-    expect(await screen.findByText(/1 open Match shows Profile changed\. Nothing rescores automatically\./)).toBeTruthy();
+    expect(
+      await screen.findByText(/1 open Match shows Profile changed\. Nothing rescores automatically: tick the ones/),
+    ).toBeTruthy();
   });
 
   it("retries rating a posting that couldn't be rated", async () => {

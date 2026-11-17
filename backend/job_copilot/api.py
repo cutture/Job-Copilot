@@ -96,6 +96,8 @@ class JobPosting(BaseModel):
     application_id: UUID | None = None
     rating_state: rating.RatingState | None = None
     match: rating.MatchView | None = None
+    # A Rescore of its Match is queued or running.
+    rescoring: bool = False
 
 
 POSTING_FIELDS = (
@@ -123,6 +125,8 @@ MATCH_FIELDS = (
     "nice_met",
     "requirements",
     "profile_changed",
+    "seniority",
+    "previous_band",
 )
 
 
@@ -156,6 +160,30 @@ def retry_rating(posting_id: UUID, user_id: UserId) -> None:
     rating.queue_ratings(user_id)
 
 
+class RescoreRequest(BaseModel):
+    job_posting_ids: list[UUID] = Field(min_length=1, max_length=rating.MAX_RESCORE)
+
+
+@app.post("/api/rescore/estimate")
+def estimate_rescore(request: RescoreRequest, user_id: UserId) -> rating.RescoreEstimate:
+    """What Rescoring these Matches should cost, shown before anything runs."""
+    return rating.rescore_estimate(user_id, request.job_posting_ids)
+
+
+@app.post("/api/rescore", status_code=202)
+def rescore(request: RescoreRequest, user_id: UserId) -> None:
+    """Judge these Matches again against the Profile now. Never automatic; a Match already
+    applied to keeps the rating saved at Apply."""
+    if rating.rescorable(user_id, request.job_posting_ids) != len(set(request.job_posting_ids)):
+        raise HTTPException(
+            409,
+            "Only rated Matches you haven't applied to can be Rescored. An applied Match keeps "
+            "the rating it had when you applied.",
+        )
+    gateway.resume_steps(user_id, gateway.JOB_STEPS["rescore_match"])
+    rating.queue_rescores(user_id, request.job_posting_ids)
+
+
 def _credit_text(source: str) -> str | None:
     adapter = sources.ADAPTERS.get(source)
     return adapter.credit_text if adapter else None
@@ -173,7 +201,8 @@ def list_postings(user_id: UserId) -> list[JobPosting]:
                        CASE WHEN p.status <> 'received' THEN NULL
                             WHEN m.job_posting_id IS NOT NULL THEN 'rated'
                             WHEN {rating.RATING_QUEUED} THEN 'rating'
-                            ELSE 'waiting' END AS rating_state
+                            ELSE 'waiting' END AS rating_state,
+                       {rating.RESCORE_QUEUED} AS rescoring
                 FROM job_postings p LEFT JOIN matches m ON m.job_posting_id = p.id
                 LEFT JOIN applications a ON a.job_posting_id = p.id AND a.user_id = p.user_id
                 WHERE p.user_id = %s AND p.expired_at IS NULL
@@ -188,6 +217,7 @@ def list_postings(user_id: UserId) -> list[JobPosting]:
             application_id=row["application_id"],
             credit_text=_credit_text(row["source"]),
             rating_state=row["rating_state"],
+            rescoring=row["rescoring"],
             match=rating.MatchView(**{f: row[f] for f in MATCH_FIELDS})
             if row["rating_state"] == "rated"
             else None,

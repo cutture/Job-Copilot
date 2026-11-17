@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Matches, Origin } from "./Matches";
 import type { RatedPosting } from "./Matches";
@@ -139,5 +139,86 @@ describe("Matches", () => {
     fireEvent.click(screen.getByRole("button", { name: "View Some Medium" }));
 
     expect(screen.getByRole("heading", { name: "Some Medium" })).toBeTruthy();
+  });
+});
+
+describe("Rescore", () => {
+  function serve(estimate: unknown) {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push(`${url} ${init?.body ?? ""}`);
+        return url === "/api/rescore/estimate"
+          ? new Response(JSON.stringify(estimate))
+          : new Response(null, { status: 202 });
+      }),
+    );
+    return calls;
+  }
+  const noop = () => {};
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows the estimate first, and Rescores one Match only once it's confirmed", async () => {
+    const calls = serve({ count: 1, full_ratings: 0, cost_usd: "0.0012", model: "Claude Haiku 5.5", free: false });
+    const rescored = vi.fn();
+    render(
+      <Matches
+        postings={[rated("1", "Applied AI Engineer", "High")]}
+        onAddToProfile={noop}
+        onApply={noop}
+        onDelete={noop}
+        onRescored={rescored}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Rescore" }));
+    expect(await screen.findByText(/Rescore 1 Match for about \$0\.0012 with Claude Haiku 5\.5\?/)).toBeTruthy();
+    expect(calls).toEqual(['/api/rescore/estimate {"job_posting_ids":["1"]}']);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Rescore" }));
+    await screen.findByText(/Rescore 1 Match for about/);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Rescore" }));
+
+    await vi.waitFor(() => expect(rescored).toHaveBeenCalled());
+    expect(calls.at(-1)).toBe('/api/rescore {"job_posting_ids":["1"]}');
+  });
+
+  it("selects every Match not applied to, and says what a free or full Rescore means", async () => {
+    const calls = serve({ count: 2, full_ratings: 1, cost_usd: "0", model: "Groq GPT-OSS 120B", free: true });
+    const applied = { ...rated("3", "Data Engineer", "Medium"), application_id: "a" };
+    render(
+      <Matches
+        postings={[rated("1", "Applied AI Engineer", "High"), rated("2", "ML Engineer", "High"), applied]}
+        onAddToProfile={noop}
+        onApply={noop}
+        onDelete={noop}
+      />,
+    );
+
+    // An applied Match keeps its rating, so it can't be ticked.
+    expect(screen.queryByLabelText("Select Data Engineer")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Select all you haven't applied to"));
+    fireEvent.click(screen.getByRole("button", { name: "Rescore selected (2)" }));
+
+    expect(await screen.findByText(/Rescore 2 Matches free with Groq GPT-OSS 120B\?/)).toBeTruthy();
+    expect(screen.getByText(/rated in full this once/)).toBeTruthy();
+    expect(calls[0]).toBe('/api/rescore/estimate {"job_posting_ids":["1","2"]}');
+  });
+
+  it("shows a Rescore under way and what a Rescore changed", () => {
+    const changed = rated("1", "Applied AI Engineer", "High");
+    changed.match.previous_band = "Medium";
+    const running = { ...rated("2", "ML Engineer", "High"), rescoring: true };
+    const applied = { ...rated("3", "Data Engineer", "High"), application_id: "a" };
+    render(<Matches postings={[changed, running, applied]} onAddToProfile={noop} onApply={noop} onDelete={noop} />);
+
+    expect(screen.getByText("Rescored: was Medium.")).toBeTruthy();
+    expect(screen.getByText(/Rescoring…/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View Data Engineer" }));
+    expect(screen.queryByRole("button", { name: "Rescore" })).toBeNull();
   });
 });

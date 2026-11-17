@@ -109,6 +109,18 @@ def test_same_band_after_reordering_is_report_only() -> None:
     assert (score.value, score.target, score.met) == (50, "Report only", None)
 
 
+def test_same_band_after_rescore_is_report_only() -> None:
+    results = [
+        checked(CaseScores(same_band_rescored=True)),
+        checked(CaseScores(same_band_rescored=True)),
+        checked(CaseScores(same_band_rescored=False)),
+        checked(CaseScores(same_band_rescored=True)),
+    ]
+
+    score = by_name(results)["Same Band after Rescore"]
+    assert (score.value, score.target, score.met) == (75, "Report only", None)
+
+
 def test_a_score_with_nothing_to_count_has_no_value_and_isnt_judged() -> None:
     score = by_name([])["Exact Band"]
 

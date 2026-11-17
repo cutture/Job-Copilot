@@ -150,6 +150,7 @@ HANDLERS: dict[str, tuple[Handler, Handler]] = {
     "process_posting": (_process_posting_job, _posting_failed),
     "extract_evidence": (profile.extract_evidence, profile.mark_extraction_failed),
     "rate_match": (rating.rate_match, rating.mark_not_rated),
+    "rescore_match": (rating.rescore_match, rating.rescore_failed),
     "search": (search.run_search, search.finish_search),
     "generate_pack": (applications.generate_pack, applications.pack_failed),
     eval_runs.EVAL_CASE_JOB: (_run_eval_case, _eval_case_failed),
